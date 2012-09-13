@@ -58,7 +58,7 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:CancelUssd:Return:OK",
   "RIL:CancelUssd:Return:KO",
   "RIL:IccOpenChannel",
-  "RIL:IccExchangeApdu",
+  "RIL:IccExchangeAPDU",
   "RIL:IccCloseChannel"
 ];
 
@@ -507,7 +507,7 @@ RILContentHelper.prototype = {
     let requestId = this.getRequestId(request);
 
     //Potentially you need serialization here and can't pass the jsval through
-    cpmm.sendAsyncMessage("RIL:IccExchangeApdu", {requestId: requestId, channel: channel, apdu: apdu});
+    cpmm.sendAsyncMessage("RIL:IccExchangeAPDU", {requestId: requestId, channel: channel, apdu: apdu});
     return request;
   },
 
@@ -630,7 +630,9 @@ RILContentHelper.prototype = {
       case "RIL:IccCloseChannel":
         this.handleIccCloseChannel(msg.json);
         break;
-      //TODO exchange apdu callback handling
+      case "RIL:IccExchangeAPDU":
+        this.handleIccExchangeAPDU(msg.json);
+        break;
       case "RIL:SelectNetworkAuto":
         this.handleSelectNetwork(msg.json,
                                  RIL.GECKO_NETWORK_SELECTION_AUTOMATIC);
@@ -750,7 +752,7 @@ RILContentHelper.prototype = {
     if (message.error) {
       this.fireRequestError(message.requestId, message.error);
     } else {
-      this.fireRequestSuccess(message.requestId, null);
+      this.fireRequestSuccess(message.requestId, message.channel);
     }
   },
 
@@ -759,6 +761,16 @@ RILContentHelper.prototype = {
       this.fireRequestError(message.requestId, message.error);
     } else {
       this.fireRequestSuccess(message.requestId, null);
+    }
+  },
+
+  handleIccExchangeAPDU: function handleIccExchangeAPDU(message) {
+    if (message.error) {
+      this.fireRequestError(message.requestId, message.error);
+    } else {
+      // FIXME: Using Array. Cannot pass a JSON string in callback.
+      var result = [message.sw1, message.sw2, message.simResponse];
+      this.fireRequestSuccess(message.requestId, result);
     }
   },
 

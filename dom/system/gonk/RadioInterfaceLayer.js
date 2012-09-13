@@ -64,7 +64,7 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:SendUSSD",
   "RIL:CancelUSSD",
   "RIL:IccOpenChannel",
-  "RIL:IccExchangeApdu",
+  "RIL:IccExchangeAPDU",
   "RIL:IccCloseChannel"
 ];
 
@@ -310,13 +310,13 @@ RadioInterfaceLayer.prototype = {
         this.saveRequestTarget(msg);
         this.iccOpenChannel(msg.json);
         break;
-      case "RIL:IccExchangeApdu":
-        this.saveRequestTarget(msg);
-        this.iccExchangeApdu(msg.json);
-        break;
       case "RIL:IccCloseChannel":
         this.saveRequestTarget(msg);
         this.iccCloseChannel(msg.json);
+        break;
+      case "RIL:IccExchangeAPDU":
+        this.saveRequestTarget(msg);
+        this.iccExchangeAPDU(msg.json);
         break;
     }
   },
@@ -365,7 +365,9 @@ RadioInterfaceLayer.prototype = {
       case "iccCloseChannel":
         this.handleIccCloseChannel(message);
         break;
-      //TODO handle callback for exchange apdu
+      case "iccExchangeAPDU":
+        this.handleIccExchangeAPDU(message);
+        break;
       case "selectNetworkAuto":
         this.handleSelectNetworkAuto(message);
         break;
@@ -831,6 +833,11 @@ RadioInterfaceLayer.prototype = {
     this._sendRequestResults("RIL:IccCloseChannel", message);
   },
 
+  handleIccExchangeAPDU: function handleIccExchangeAPDU(message) {
+    debug("handleIccExchangeAPDU: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:IccExchangeAPDU", message);
+  },
+
   /**
    * Handle "automatic" network selection request.
    */
@@ -1220,15 +1227,15 @@ RadioInterfaceLayer.prototype = {
     this.worker.postMessage(message);
   },
 
-  iccExchangeAPDU: function iccExchangeAPDU(message) {
-    debug("ICC Exchange APDU");
-    message.rilMessageType = "iccExchangeAPDU";
-    this.worker.postMessage(message);
-  },
-
   iccCloseChannel: function iccCloseChannel(message) {
     debug("ICC Close Channel");
     message.rilMessageType = "iccCloseChannel";
+    this.worker.postMessage(message);
+  },
+
+  iccExchangeAPDU: function iccExchangeAPDU(message) {
+    debug("ICC Exchange APDU");
+    message.rilMessageType = "iccExchangeAPDU";
     this.worker.postMessage(message);
   },
 
