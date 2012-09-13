@@ -45,6 +45,7 @@ const DOM_SMS_DELIVERY_RECEIVED          = "received";
 const DOM_SMS_DELIVERY_SENT              = "sent";
 
 const RIL_IPC_TELEPHONY_MSG_NAMES = [
+  "RIL:GetRilContext",
   "RIL:EnumerateCalls",
   "RIL:GetMicrophoneMuted",
   "RIL:SetMicrophoneMuted",
@@ -74,6 +75,9 @@ const RIL_IPC_MOBILECONNECTION_MSG_NAMES = [
   "RIL:SendStkResponse",
   "RIL:SendStkMenuSelection",
   "RIL:SendStkEventDownload",
+  "RIL:IccOpenChannel",
+  "RIL:IccExchangeAPDU",
+  "RIL:IccCloseChannel",
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "gSmsService",
@@ -388,6 +392,18 @@ RadioInterfaceLayer.prototype = {
       case "RIL:SendStkEventDownload":
         this.sendStkEventDownload(msg.json);
         break;
+      case "RIL:IccOpenChannel":
+        this.saveRequestTarget(msg);
+        this.iccOpenChannel(msg.json);
+        break;
+      case "RIL:IccCloseChannel":
+        this.saveRequestTarget(msg);
+        this.iccCloseChannel(msg.json);
+        break;
+      case "RIL:IccExchangeAPDU":
+        this.saveRequestTarget(msg);
+        this.iccExchangeAPDU(msg.json);
+        break;
     }
   },
 
@@ -428,6 +444,15 @@ RadioInterfaceLayer.prototype = {
         break;
       case "selectNetwork":
         this.handleSelectNetwork(message);
+        break;
+      case "iccOpenChannel":
+        this.handleIccOpenChannel(message);
+        break;
+      case "iccCloseChannel":
+        this.handleIccCloseChannel(message);
+        break;
+      case "iccExchangeAPDU":
+        this.handleIccExchangeAPDU(message);
         break;
       case "selectNetworkAuto":
         this.handleSelectNetworkAuto(message);
@@ -1041,6 +1066,21 @@ RadioInterfaceLayer.prototype = {
     this._sendRequestResults("RIL:SelectNetwork", message);
   },
 
+  handleIccOpenChannel: function handleIccOpenChannel(message) {
+    debug("handleIccOpenChannel: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:IccOpenChannel", message);
+  },
+
+  handleIccCloseChannel: function handleIccCloseChannel(message) {
+    debug("handleIccCloseChannel: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:IccCloseChannel", message);
+  },
+
+  handleIccExchangeAPDU: function handleIccExchangeAPDU(message) {
+    debug("handleIccExchangeAPDU: " + JSON.stringify(message));
+    this._sendRequestResults("RIL:IccExchangeAPDU", message);
+  },
+
   /**
    * Handle "automatic" network selection request.
    */
@@ -1568,6 +1608,24 @@ RadioInterfaceLayer.prototype = {
     this.worker.postMessage(message);
   },
 
+  iccOpenChannel: function iccOpenChannel(message) {
+    debug("ICC Open Channel");
+    message.rilMessageType = "iccOpenChannel";
+    this.worker.postMessage(message);
+  },
+
+  iccCloseChannel: function iccCloseChannel(message) {
+    debug("ICC Close Channel");
+    message.rilMessageType = "iccCloseChannel";
+    this.worker.postMessage(message);
+  },
+
+  iccExchangeAPDU: function iccExchangeAPDU(message) {
+    debug("ICC Exchange APDU");
+    message.rilMessageType = "iccExchangeAPDU";
+    this.worker.postMessage(message);
+  },
+
   get microphoneMuted() {
     return gAudioManager.microphoneMuted;
   },
@@ -1575,6 +1633,9 @@ RadioInterfaceLayer.prototype = {
     if (value == this.microphoneMuted) {
       return;
     }
+    gAudioManager.phoneState = value ?
+      nsIAudioManager.PHONE_STATE_IN_COMMUNICATION :
+      nsIAudioManager.PHONE_STATE_IN_CALL;  //XXX why is this needed?
     gAudioManager.microphoneMuted = value;
 
     if (!this._activeCall) {
@@ -1590,6 +1651,7 @@ RadioInterfaceLayer.prototype = {
     if (value == this.speakerEnabled) {
       return;
     }
+    gAudioManager.phoneState = nsIAudioManager.PHONE_STATE_IN_CALL; // XXX why is this needed?
     let force = value ? nsIAudioManager.FORCE_SPEAKER :
                         nsIAudioManager.FORCE_NONE;
     gAudioManager.setForceForUse(nsIAudioManager.USE_COMMUNICATION, force);
@@ -2213,6 +2275,7 @@ RILNetworkInterface.prototype = {
   NETWORK_STATE_UNKNOWN:       Ci.nsINetworkInterface.NETWORK_STATE_UNKNOWN,
   NETWORK_STATE_CONNECTING:    Ci.nsINetworkInterface.CONNECTING,
   NETWORK_STATE_CONNECTED:     Ci.nsINetworkInterface.CONNECTED,
+  NETWORK_STATE_SUSPENDED:     Ci.nsINetworkInterface.SUSPENDED,
   NETWORK_STATE_DISCONNECTING: Ci.nsINetworkInterface.DISCONNECTING,
   NETWORK_STATE_DISCONNECTED:  Ci.nsINetworkInterface.DISCONNECTED,
 
@@ -2330,6 +2393,13 @@ RILNetworkInterface.prototype = {
 
   // APN failed connections. Retry counter
   apnRetryCounter: 0,
+
+  get mRIL() {
+    delete this.mRIL;
+    return this.mRIL = Cc["@mozilla.org/telephony/system-worker-manager;1"]
+                         .getService(Ci.nsIInterfaceRequestor)
+                         .getInterface(Ci.nsIRadioInterfaceLayer);
+  },
 
   get connected() {
     return this.state == RIL.GECKO_NETWORK_STATE_CONNECTED;
