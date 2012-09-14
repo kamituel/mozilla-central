@@ -3458,7 +3458,6 @@ RIL[REQUEST_SIM_TRANSMIT_CHANNEL] = function REQUEST_SIM_TRANSMIT_CHANNEL(length
     this.sendDOMMessage(options);
   }
 
-  debug("UUUUU length: " + length);
   options.sw1 = Buf.readUint32();
   options.sw2 = Buf.readUint32();
   options.simResponse = Buf.readString();
