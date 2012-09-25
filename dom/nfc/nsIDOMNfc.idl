@@ -11,6 +11,7 @@ interface nsIDOMNfc : nsIDOMEventTarget {
 
   attribute nsIDOMEventListener onndefdiscovered;
   attribute nsIDOMEventListener ontaglost;
+  attribute nsIDOMEventListener onsecureelementtransaction;
 
   [implicit_jscontext]
   boolean validateNdefTag(in jsval records);

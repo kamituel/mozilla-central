@@ -18,7 +18,7 @@ namespace nfc {
 class NfcNdefEvent : public nsDOMEvent,
                      public nsIDOMNfcNdefEvent
 {
-  const JS::Value& mNdefMessages;
+  const JS::Value& mNfcMessages;
 
 public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -27,7 +27,7 @@ public:
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(NfcNdefEvent, nsDOMEvent)
 
   static already_AddRefed<nsDOMEvent>
-  Create(const JS::Value& aNdefMessages);
+  Create(const JS::Value& aNfcMessages);
 
   nsresult
   Dispatch(nsIDOMEventTarget* aTarget, const nsAString& aEventType)
@@ -52,8 +52,8 @@ public:
   }
 
 private:
-  NfcNdefEvent(const JS::Value& aNdefMessages)
-  : nsDOMEvent(nullptr, nullptr), mNdefMessages(aNdefMessages)
+  NfcNdefEvent(const JS::Value& aNfcMessages)
+  : nsDOMEvent(nullptr, nullptr), mNfcMessages(aNfcMessages)
   { }
 
   ~NfcNdefEvent()

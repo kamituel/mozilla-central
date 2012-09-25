@@ -29,7 +29,8 @@ const NFCCONTENTHELPER_CID =
 const NFC_IPC_MSG_NAMES = [
   "NFC:NdefDiscovered",
   "NFC:TagLost",
-  "NFC:RequestStatus"
+  "NFC:RequestStatus",
+  "NFC:SecureElementTransaction"
 ];
  
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -147,6 +148,9 @@ NfcContentHelper.prototype = {
       case "NFC:RequestStatus":
         this.handleRequestStatus(message.json);
         break;
+      case "NFC:SecureElementTransaction":
+        this.handleSecureElementTransaction(message.json);
+        break;
     }
   },
  
@@ -175,6 +179,12 @@ NfcContentHelper.prototype = {
     } else {
       this.fireRequestError(requestId, response.message);
     }
+  },
+
+  handleSecureElementTransaction: function handleSecureElementTransaction(message) {
+    let response = message.content;
+    debug("handleSecureElementTransaction (" + message.aid + ", " + message.data + ")");
+    this._deliverCallback("secureElementTransaction", message);
   },
 
   fireRequestSuccess: function fireRequestSuccess(requestId, result) {

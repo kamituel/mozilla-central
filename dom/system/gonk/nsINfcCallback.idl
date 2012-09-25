@@ -9,4 +9,5 @@ interface nsINfcCallback : nsISupports
 {
   void ndefDiscovered(in AString aNdefRecords);
   void tagLost(in AString aNfcHandle);
+  void secureElementTransaction(in AString aTransactionMessage);
 };
