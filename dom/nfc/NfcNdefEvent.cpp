@@ -12,9 +12,9 @@ using namespace mozilla::dom::nfc;
 
 // static
 already_AddRefed<nsDOMEvent>
-NfcNdefEvent::Create(const JS::Value& aNdefMessages)
+NfcNdefEvent::Create(const JS::Value& aNfcMessages)
 {
-  nsRefPtr<nsDOMEvent> event = new NfcNdefEvent(aNdefMessages);
+  nsRefPtr<nsDOMEvent> event = new NfcNdefEvent(aNfcMessages);
 
   return event.forget();
 }
@@ -40,8 +40,8 @@ NS_IMPL_RELEASE_INHERITED(NfcNdefEvent, nsDOMEvent)
 DOMCI_DATA(NfcNdefEvent, NfcNdefEvent)
 
 NS_IMETHODIMP
-NfcNdefEvent::GetNdefMessages(jsval* aNdefMessages)
+NfcNdefEvent::GetNfcMessages(jsval* aNfcMessages)
 {
-  aNdefMessages->setObjectOrNull(JSVAL_TO_OBJECT(mNdefMessages));
+  aNfcMessages->setObjectOrNull(JSVAL_TO_OBJECT(mNfcMessages));
   return NS_OK;
 }

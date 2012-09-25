@@ -80,6 +80,9 @@ Nfc.prototype = {
       case "requestStatus":
         ppmm.broadcastAsyncMessage("NFC:RequestStatus", message);
         break;
+      case "secureElementTransaction":
+        ppmm.broadcastAsyncMessage("NFC:SecureElementTransaction", message);
+        break;
       default:
         throw new Error("Don't know about this message type: " + message.type);
     }

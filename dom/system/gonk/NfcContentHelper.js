@@ -146,6 +146,7 @@ NfcContentHelper.prototype = {
  
   receiveMessage: function receiveMessage(message) {
     let request;
+    debug("Received message '" + message.name + "': " + JSON.stringify(message));
     switch (message.name) {
       case "NFC:NdefConnected":
         this.handleNdefConnected(message.json);
@@ -173,6 +174,8 @@ NfcContentHelper.prototype = {
   handleNdefDisconnected: function handleNdefDisconnected(message) {
      this._deliverCallback("_nfcCallbacks", "disconnected", [JSON.stringify(message)]);
   },
+
+  requestMap: null,
 
   handleRequestStatus: function handleRequestStatus(message) {
     let response = message.content; // Subfields of content: requestId, status, optional message

@@ -9,4 +9,5 @@ interface nsINfcCallback : nsISupports
 {
   void connected(in AString aNdefRecords);
   void disconnected(in AString aNfcHandle);
+  void secureElementTransaction(in AString aTransactionMessage);
 };
