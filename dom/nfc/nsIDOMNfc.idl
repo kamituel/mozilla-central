@@ -12,6 +12,8 @@ interface nsIDOMNfc : nsIDOMEventTarget {
   [implicit_jscontext] attribute jsval onconnected;
   [implicit_jscontext] attribute jsval ondisconnected;
   [implicit_jscontext] attribute jsval onsecureelementtransaction;
+  [implicit_jscontext] attribute jsval onsecureelementdeactivated;
+  [implicit_jscontext] attribute jsval onsecureelementtransaction;
 
   [implicit_jscontext]
   boolean validateNdefTag(in jsval records);
