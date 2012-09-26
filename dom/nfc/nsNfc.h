@@ -32,6 +32,8 @@ class nsNfc : public nsDOMEventTargetHelper,
 
   NS_DECL_EVENT_HANDLER(ndefdiscovered)
   NS_DECL_EVENT_HANDLER(taglost)
+  NS_DECL_EVENT_HANDLER(secureelementactivated)
+  NS_DECL_EVENT_HANDLER(secureelementdeactivated)
   NS_DECL_EVENT_HANDLER(secureelementtransaction)
 
 public:

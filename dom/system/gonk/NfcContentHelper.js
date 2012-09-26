@@ -30,6 +30,8 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:NdefDiscovered",
   "NFC:TagLost",
   "NFC:RequestStatus",
+  "NFC:SecureElementActivated",
+  "NFC:SecureElementDeactivated",
   "NFC:SecureElementTransaction"
 ];
  
@@ -148,6 +150,12 @@ NfcContentHelper.prototype = {
       case "NFC:RequestStatus":
         this.handleRequestStatus(message.json);
         break;
+      case "NFC:SecureElementActivated":
+        this.handleSecureElementActivated(message.json);
+        break;
+      case "NFC:SecureElementDeactivated":
+        this.handleSecureElementDeactivated(message.json);
+        break;
       case "NFC:SecureElementTransaction":
         this.handleSecureElementTransaction(message.json);
         break;
@@ -181,9 +189,15 @@ NfcContentHelper.prototype = {
     }
   },
 
+  handleSecureElementActivated: function handleSecureElementActivated(message) {
+    this._deliverCallback("secureElementActivated", message);
+  },
+
+  handleSecureElementDeactivated: function handleSecureElementDeactivated(message) {
+    this._deliverCallback("secureElementDeactivated", message);
+  },
+
   handleSecureElementTransaction: function handleSecureElementTransaction(message) {
-    let response = message.content;
-    debug("handleSecureElementTransaction (" + message.aid + ", " + message.data + ")");
     this._deliverCallback("secureElementTransaction", message);
   },
 

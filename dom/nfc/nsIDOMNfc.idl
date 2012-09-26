@@ -11,6 +11,8 @@ interface nsIDOMNfc : nsIDOMEventTarget {
 
   attribute nsIDOMEventListener onndefdiscovered;
   attribute nsIDOMEventListener ontaglost;
+  attribute nsIDOMEventListener onsecureelementactivated;
+  attribute nsIDOMEventListener onsecureelementdeactivated;
   attribute nsIDOMEventListener onsecureelementtransaction;
 
   [implicit_jscontext]
