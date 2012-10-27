@@ -149,6 +149,7 @@ NfcContentHelper.prototype = {
  
   receiveMessage: function receiveMessage(message) {
     let request;
+    debug("=================== NfcContentHelper.js: ============= ");
     debug("Received message '" + message.name + "': " + JSON.stringify(message));
     switch (message.name) {
       case "NFC:NdefConnected":
@@ -201,15 +202,15 @@ NfcContentHelper.prototype = {
   },
 
   handleSecureElementActivated: function handleSecureElementActivated(message) {
-    this._deliverCallback("secureElementActivated", message);
+    this._deliverCallback("_nfcCallbacks", "secureElementActivated", [JSON.stringify(message)]);
   },
 
   handleSecureElementDeactivated: function handleSecureElementDeactivated(message) {
-    this._deliverCallback("secureElementDeactivated", message);
+    this._deliverCallback("_nfcCallbacks", "ssecureElementDeactivated", [JSON.stringify(message)]);
   },
 
   handleSecureElementTransaction: function handleSecureElementTransaction(message) {
-    this._deliverCallback("secureElementTransaction", message);
+    this._deliverCallback("_nfcCallbacks", "secureElementTransaction", [JSON.stringify(message)]);
   },
 
   fireRequestSuccess: function fireRequestSuccess(requestId, result) {

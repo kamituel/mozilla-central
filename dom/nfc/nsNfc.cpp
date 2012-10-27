@@ -92,9 +92,9 @@ NS_IMPL_ISUPPORTS1(nsNfc::NfcCallback, nsINfcCallback)
 
 NS_IMPL_EVENT_HANDLER(nsNfc, connected)
 NS_IMPL_EVENT_HANDLER(nsNfc, disconnected)
-NS_IMPL_EVENT_HANDLER(nsNfc, secureelementactivated)
-NS_IMPL_EVENT_HANDLER(nsNfc, secureelementdeactivated)
-NS_IMPL_EVENT_HANDLER(nsNfc, secureelementtransaction)
+NS_IMPL_EVENT_HANDLER(nsNfc, mozsecureelementactivated)
+NS_IMPL_EVENT_HANDLER(nsNfc, mozsecureelementdeactivated)
+NS_IMPL_EVENT_HANDLER(nsNfc, mozsecureelementtransaction)
 
 NS_IMETHODIMP
 nsNfc::Connected(const nsAString &aNdefRecords)
@@ -105,6 +105,7 @@ nsNfc::Connected(const nsAString &aNdefRecords)
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
   NS_ENSURE_SUCCESS(rv, rv);
  
+  LOG("============ DOM: nsNfc::Connected ==========");
   if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aNdefRecords).get()),
        aNdefRecords.Length(), &result)) {
     LOG("DOM: Couldn't parse JSON for NDEF discovered");
@@ -131,7 +132,8 @@ nsNfc::Disconnected(const nsAString &aNfcHandle) {
   nsresult rv;
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
   NS_ENSURE_SUCCESS(rv, rv);
-
+  
+  LOG("============ DOM: nsNfc::Disconnected ==========");
   int length = aNfcHandle.Length();
   if (!length || !JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aNfcHandle).get()),
        aNfcHandle.Length(), &result)) {
@@ -247,7 +249,7 @@ nsNfc::NdefPush(const jsval& aRecords, JSContext* aCx, nsIDOMDOMRequest** aReque
 }
 
 NS_IMETHODIMP
-nsNfc::SecureElementActivated(const nsAString& aSEMessage) {
+nsNfc::MozSecureElementActivated(const nsAString& aSEMessage) {
   jsval result;
   nsresult rv;
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
@@ -263,7 +265,7 @@ nsNfc::SecureElementActivated(const nsAString& aSEMessage) {
   nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
   NS_ASSERTION(event, "This should never fail!");
 
-  rv = event->InitEvent(NS_LITERAL_STRING("secureelementactivated"), false, false);
+  rv = event->InitEvent(NS_LITERAL_STRING("mozsecureelementactivated"), false, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool dummy;
@@ -274,7 +276,7 @@ nsNfc::SecureElementActivated(const nsAString& aSEMessage) {
 }
 
 NS_IMETHODIMP
-nsNfc::SecureElementDeactivated(const nsAString& aSEMessage) {
+nsNfc::MozSecureElementDeactivated(const nsAString& aSEMessage) {
   jsval result;
   nsresult rv;
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
@@ -290,7 +292,7 @@ nsNfc::SecureElementDeactivated(const nsAString& aSEMessage) {
   nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
   NS_ASSERTION(event, "This should never fail!");
 
-  rv = event->InitEvent(NS_LITERAL_STRING("secureelementdeactivated"), false, false);
+  rv = event->InitEvent(NS_LITERAL_STRING("mozsecureelementdeactivated"), false, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool dummy;
@@ -301,7 +303,7 @@ nsNfc::SecureElementDeactivated(const nsAString& aSEMessage) {
 }
 
 NS_IMETHODIMP
-nsNfc::SecureElementTransaction(const nsAString& aSETransactionMessage)
+nsNfc::MozSecureElementTransaction(const nsAString& aSETransactionMessage)
 {
   // Parse JSON
   jsval result;
@@ -319,7 +321,7 @@ nsNfc::SecureElementTransaction(const nsAString& aSETransactionMessage)
   nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
   NS_ASSERTION(event, "This should never fail!");
 
-  rv = event->InitEvent(NS_LITERAL_STRING("secureelementtransaction"), false, false);
+  rv = event->InitEvent(NS_LITERAL_STRING("mozsecureelementtransaction"), false, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool dummy;

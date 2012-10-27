@@ -37,6 +37,7 @@ let Nfc = {
    *        nfc JSON message
    */
   processIncoming: function processIncoming(incoming) {
+    debug("XXXXXXXXXXXXX Received: " + incoming + "XXXXXXXXXXX");
     if (DEBUG) {
       debug("Received: " + incoming);
     }
@@ -100,6 +101,7 @@ function onNfcMessage(data) {
 };
 
 onmessage = function onmessage(event) {
+  debug("XXXXXXXXXXXXX Nfc worker onmessage Received XXXXXXXXXXX");
   Nfc.handleDOMMessage(event.data);
 };
 

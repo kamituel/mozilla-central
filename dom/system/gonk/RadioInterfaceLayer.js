@@ -45,7 +45,6 @@ const DOM_SMS_DELIVERY_RECEIVED          = "received";
 const DOM_SMS_DELIVERY_SENT              = "sent";
 
 const RIL_IPC_TELEPHONY_MSG_NAMES = [
-  "RIL:GetRilContext",
   "RIL:EnumerateCalls",
   "RIL:GetMicrophoneMuted",
   "RIL:SetMicrophoneMuted",
@@ -1633,9 +1632,6 @@ RadioInterfaceLayer.prototype = {
     if (value == this.microphoneMuted) {
       return;
     }
-    gAudioManager.phoneState = value ?
-      nsIAudioManager.PHONE_STATE_IN_COMMUNICATION :
-      nsIAudioManager.PHONE_STATE_IN_CALL;  //XXX why is this needed?
     gAudioManager.microphoneMuted = value;
 
     if (!this._activeCall) {
@@ -1651,7 +1647,6 @@ RadioInterfaceLayer.prototype = {
     if (value == this.speakerEnabled) {
       return;
     }
-    gAudioManager.phoneState = nsIAudioManager.PHONE_STATE_IN_CALL; // XXX why is this needed?
     let force = value ? nsIAudioManager.FORCE_SPEAKER :
                         nsIAudioManager.FORCE_NONE;
     gAudioManager.setForceForUse(nsIAudioManager.USE_COMMUNICATION, force);
@@ -2275,7 +2270,6 @@ RILNetworkInterface.prototype = {
   NETWORK_STATE_UNKNOWN:       Ci.nsINetworkInterface.NETWORK_STATE_UNKNOWN,
   NETWORK_STATE_CONNECTING:    Ci.nsINetworkInterface.CONNECTING,
   NETWORK_STATE_CONNECTED:     Ci.nsINetworkInterface.CONNECTED,
-  NETWORK_STATE_SUSPENDED:     Ci.nsINetworkInterface.SUSPENDED,
   NETWORK_STATE_DISCONNECTING: Ci.nsINetworkInterface.DISCONNECTING,
   NETWORK_STATE_DISCONNECTED:  Ci.nsINetworkInterface.DISCONNECTED,
 
@@ -2393,13 +2387,6 @@ RILNetworkInterface.prototype = {
 
   // APN failed connections. Retry counter
   apnRetryCounter: 0,
-
-  get mRIL() {
-    delete this.mRIL;
-    return this.mRIL = Cc["@mozilla.org/telephony/system-worker-manager;1"]
-                         .getService(Ci.nsIInterfaceRequestor)
-                         .getInterface(Ci.nsIRadioInterfaceLayer);
-  },
 
   get connected() {
     return this.state == RIL.GECKO_NETWORK_STATE_CONNECTED;

@@ -1874,7 +1874,7 @@ let RIL = {
       debug("iccOpenChannel: " + JSON.stringify(options));
     }
 
-    let token = Buf.newParcel(REQUEST_SIM_OPEN_CHANNEL, options); // obtain
+    Buf.newParcel(REQUEST_SIM_OPEN_CHANNEL, options);
     Buf.writeString(options.aid);
     Buf.sendParcel();
   },
