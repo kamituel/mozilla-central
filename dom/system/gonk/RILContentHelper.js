@@ -62,7 +62,10 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:CancelMMI:Return:KO",
   "RIL:StkCommand",
   "RIL:StkSessionEnd",
-  "RIL:DataError"
+  "RIL:DataError",
+  "RIL:IccOpenChannel",
+  "RIL:IccCloseChannel",
+  "RIL:IccExchangeAPDU"
 ];
 
 const kVoiceChangedTopic     = "mobile-connection-voice-changed";
@@ -854,7 +857,6 @@ RILContentHelper.prototype = {
   },
 
   handleIccOpenChannel: function handleIccOpenChannel(message) {
-    //TODO give back channel id
     if (message.error) {
       this.fireRequestError(message.requestId, message.error);
     } else {
@@ -874,7 +876,6 @@ RILContentHelper.prototype = {
     if (message.error) {
       this.fireRequestError(message.requestId, message.error);
     } else {
-      // FIXME: Using Array. Cannot pass a JSON string in callback.
       var result = [message.sw1, message.sw2, message.simResponse];
       this.fireRequestSuccess(message.requestId, result);
     }

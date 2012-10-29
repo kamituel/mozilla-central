@@ -149,7 +149,6 @@ NfcContentHelper.prototype = {
  
   receiveMessage: function receiveMessage(message) {
     let request;
-    debug("=================== NfcContentHelper.js: ============= ");
     debug("Received message '" + message.name + "': " + JSON.stringify(message));
     switch (message.name) {
       case "NFC:NdefConnected":

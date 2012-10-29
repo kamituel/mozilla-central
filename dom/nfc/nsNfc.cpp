@@ -105,7 +105,6 @@ nsNfc::Connected(const nsAString &aNdefRecords)
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
   NS_ENSURE_SUCCESS(rv, rv);
  
-  LOG("============ DOM: nsNfc::Connected ==========");
   if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aNdefRecords).get()),
        aNdefRecords.Length(), &result)) {
     LOG("DOM: Couldn't parse JSON for NDEF discovered");
@@ -133,7 +132,6 @@ nsNfc::Disconnected(const nsAString &aNfcHandle) {
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
   NS_ENSURE_SUCCESS(rv, rv);
   
-  LOG("============ DOM: nsNfc::Disconnected ==========");
   int length = aNfcHandle.Length();
   if (!length || !JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aNfcHandle).get()),
        aNfcHandle.Length(), &result)) {
@@ -364,20 +362,6 @@ NS_NewNfc(nsPIDOMWindow* aWindow, nsIDOMNfc** aNfc)
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 	 
-  nsCOMPtr<nsIDocument> document =
-    do_QueryInterface(innerWindow->GetExtantDocument());
-  NS_ENSURE_TRUE(document, NS_NOINTERFACE);
- 
-  // Do security checks.
-  nsCOMPtr<nsIURI> uri;
-  document->NodePrincipal()->GetURI(getter_AddRefs(uri));
-
-#if 0  // FIXME: Function no longer exists
-  if (!nsContentUtils::URIIsChromeOrInPref(uri, "dom.nfc.whitelist")) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
-#endif
- 
   // Security checks passed, make a NFC object.
   nsCOMPtr<nsINfcContentHelper> nfc =
     do_GetService(NS_NFCCONTENTHELPER_CONTRACTID);
