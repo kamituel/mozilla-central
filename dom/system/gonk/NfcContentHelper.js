@@ -201,15 +201,15 @@ NfcContentHelper.prototype = {
   },
 
   handleSecureElementActivated: function handleSecureElementActivated(message) {
-    this._deliverCallback("_nfcCallbacks", "secureElementActivated", [JSON.stringify(message)]);
+    this._deliverCallback("_nfcCallbacks", "mozsecureelementactivated", [JSON.stringify(message)]);
   },
 
   handleSecureElementDeactivated: function handleSecureElementDeactivated(message) {
-    this._deliverCallback("_nfcCallbacks", "ssecureElementDeactivated", [JSON.stringify(message)]);
+    this._deliverCallback("_nfcCallbacks", "mozsecureelementdeactivated", [JSON.stringify(message)]);
   },
 
   handleSecureElementTransaction: function handleSecureElementTransaction(message) {
-    this._deliverCallback("_nfcCallbacks", "secureElementTransaction", [JSON.stringify(message)]);
+    this._deliverCallback("_nfcCallbacks", "mozsecureelementtransaction", [JSON.stringify(message)]);
   },
 
   fireRequestSuccess: function fireRequestSuccess(requestId, result) {
