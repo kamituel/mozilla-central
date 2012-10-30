@@ -30,12 +30,6 @@ class nsNfc : public nsDOMEventTargetHelper,
   nsCOMPtr<nsINfcContentHelper> mNfc;
   nsCOMPtr<nsINfcCallback> mNfcCallback;
 
-  NS_DECL_EVENT_HANDLER(ndefdiscovered)
-  NS_DECL_EVENT_HANDLER(taglost)
-  NS_DECL_EVENT_HANDLER(secureelementactivated)
-  NS_DECL_EVENT_HANDLER(secureelementdeactivated)
-  NS_DECL_EVENT_HANDLER(secureelementtransaction)
-
 public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_NSIDOMNFC

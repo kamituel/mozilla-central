@@ -39,7 +39,7 @@ nsNfc::nsNfc()
 nsNfc::~nsNfc()
 {
   if (mNfc && mNfcCallback) {
-    mNfc->UnregisterCallback(mNfcCallback);
+    mNfc->UnregisterNfcCallback(mNfcCallback);
   }
 }
  
@@ -70,9 +70,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsNfc,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
   NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(ndefdiscovered)
   NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(taglost)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(secureelementactivated)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(secureelementdeactivated)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(secureelementtransaction)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(nsNfc,
@@ -83,9 +80,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsNfc,
                                                 nsDOMEventTargetHelper)
   NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(ndefdiscovered)
   NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(taglost)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(secureelementactivated)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(secureelementdeactivated)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(secureelementtransaction)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsNfc)
@@ -102,9 +96,6 @@ NS_IMPL_ISUPPORTS1(nsNfc::NfcCallback, nsINfcCallback)
 
 NS_IMPL_EVENT_HANDLER(nsNfc, ndefdiscovered)
 NS_IMPL_EVENT_HANDLER(nsNfc, taglost)
-NS_IMPL_EVENT_HANDLER(nsNfc, secureelementactivated)
-NS_IMPL_EVENT_HANDLER(nsNfc, secureelementdeactivated)
-NS_IMPL_EVENT_HANDLER(nsNfc, secureelementtransaction)
 
 NS_IMETHODIMP
 nsNfc::NdefDiscovered(const nsAString &aNdefRecords)
@@ -253,89 +244,6 @@ nsNfc::NdefPush(const jsval& aRecords, JSContext* aCx, nsIDOMDOMRequest** aReque
   LOG("Calling NdefPush");
   nsresult rv = mNfc->NdefPush(GetOwner(), aRecords, aRequest);
   NS_ENSURE_SUCCESS(rv, rv);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNfc::SecureElementActivated(const nsAString& aSEMessage) {
-  jsval result;
-  nsresult rv;
-  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aSEMessage).get()),
-       aSEMessage.Length(), &result)) {
-    LOG("DOM: Couldn't parse JSON for NFC Secure Element Activated");
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  // Dispatch incoming event.
-  nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
-  NS_ASSERTION(event, "This should never fail!");
-
-  rv = event->InitEvent(NS_LITERAL_STRING("secureelementactivated"), false, false);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  bool dummy;
-  rv = DispatchEvent(event, &dummy);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNfc::SecureElementDeactivated(const nsAString& aSEMessage) {
-  jsval result;
-  nsresult rv;
-  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aSEMessage).get()),
-       aSEMessage.Length(), &result)) {
-    LOG("DOM: Couldn't parse JSON for NFC Secure Element Deactivated");
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  // Dispatch incoming event.
-  nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
-  NS_ASSERTION(event, "This should never fail!");
-
-  rv = event->InitEvent(NS_LITERAL_STRING("secureelementdeactivated"), false, false);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  bool dummy;
-  rv = DispatchEvent(event, &dummy);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsNfc::SecureElementTransaction(const nsAString& aSETransactionMessage)
-{
-  // Parse JSON
-  jsval result;
-  nsresult rv;
-  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aSETransactionMessage).get()),
-       aSETransactionMessage.Length(), &result)) {
-    LOG("DOM: Couldn't parse JSON for NFC Secure Element Transaction");
-    return NS_ERROR_UNEXPECTED;
-  }
-
-  // Dispatch incoming event.
-  nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
-  NS_ASSERTION(event, "This should never fail!");
-
-  rv = event->InitEvent(NS_LITERAL_STRING("secureelementtransaction"), false, false);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  bool dummy;
-  rv = DispatchEvent(event, &dummy);
-  NS_ENSURE_SUCCESS(rv, rv);
-
   return NS_OK;
 }
 

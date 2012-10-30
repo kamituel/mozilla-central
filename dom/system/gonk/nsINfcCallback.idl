@@ -7,10 +7,10 @@
 [scriptable, uuid(999fa430-6180-11e1-b86c-0800200c9a66)]
 interface nsINfcCallback : nsISupports
 {
-  void ndefDiscovered(in AString aNdefRecords);
-  void tagLost(in AString aNfcHandle);
+  void connected(in AString aNdefRecords);
+  void disconnected(in AString aNfcHandle);
 
-  void secureElementActivated(in AString aSEMessage);
-  void secureElementDeactivated(in AString aSEMessage);
-  void secureElementTransaction(in AString aSETransactionMessage);
+  void mozSecureElementActivated(in AString aSEMessage);
+  void mozSecureElementDeactivated(in AString aSEMessage);
+  void mozSecureElementTransaction(in AString aSETransactionMessage);
 };
