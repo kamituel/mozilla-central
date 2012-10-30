@@ -57,7 +57,7 @@ nsNfc::Create(nsPIDOMWindow* aOwner, nsINfcContentHelper* aNfc)
   nfc->mNfc = aNfc;
   nfc->mNfcCallback = new NfcCallback(nfc);
  
-  nsresult rv = aNfc->RegisterCallback(nfc->mNfcCallback);
+  nsresult rv = aNfc->RegisterNfcCallback(nfc->mNfcCallback);
   NS_ENSURE_SUCCESS(rv, nullptr);
  
   return nfc.forget();
@@ -68,8 +68,6 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsNfc)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsNfc,
                                                   nsDOMEventTargetHelper)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(ndefdiscovered)
-  NS_CYCLE_COLLECTION_TRAVERSE_EVENT_HANDLER(taglost)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(nsNfc,
@@ -78,8 +76,6 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(nsNfc,
                                                 nsDOMEventTargetHelper)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(ndefdiscovered)
-  NS_CYCLE_COLLECTION_UNLINK_EVENT_HANDLER(taglost)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsNfc)
@@ -94,11 +90,14 @@ DOMCI_DATA(Nfc, nsNfc)
 
 NS_IMPL_ISUPPORTS1(nsNfc::NfcCallback, nsINfcCallback)
 
-NS_IMPL_EVENT_HANDLER(nsNfc, ndefdiscovered)
-NS_IMPL_EVENT_HANDLER(nsNfc, taglost)
+NS_IMPL_EVENT_HANDLER(nsNfc, connected)
+NS_IMPL_EVENT_HANDLER(nsNfc, disconnected)
+NS_IMPL_EVENT_HANDLER(nsNfc, mozsecureelementactivated)
+NS_IMPL_EVENT_HANDLER(nsNfc, mozsecureelementdeactivated)
+NS_IMPL_EVENT_HANDLER(nsNfc, mozsecureelementtransaction)
 
 NS_IMETHODIMP
-nsNfc::NdefDiscovered(const nsAString &aNdefRecords)
+nsNfc::Connected(const nsAString &aNdefRecords)
 {
   // Parse JSON
   jsval result;
@@ -116,7 +115,7 @@ nsNfc::NdefDiscovered(const nsAString &aNdefRecords)
   nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
   NS_ASSERTION(event, "This should never fail!");
  
-  rv = event->InitEvent(NS_LITERAL_STRING("ndefdiscovered"), false, false);
+  rv = event->InitEvent(NS_LITERAL_STRING("connected"), false, false);
   NS_ENSURE_SUCCESS(rv, rv);
  
   bool dummy;
@@ -127,12 +126,11 @@ nsNfc::NdefDiscovered(const nsAString &aNdefRecords)
 }
 
 NS_IMETHODIMP
-nsNfc::TagLost(const nsAString &aNfcHandle) {
+nsNfc::Disconnected(const nsAString &aNfcHandle) {
   jsval result;
   nsresult rv;
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
   NS_ENSURE_SUCCESS(rv, rv);
-
   int length = aNfcHandle.Length();
   if (!length || !JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aNfcHandle).get()),
        aNfcHandle.Length(), &result)) {
@@ -144,7 +142,7 @@ nsNfc::TagLost(const nsAString &aNfcHandle) {
   nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
   NS_ASSERTION(event, "This should never fail!");
 
-  rv = event->InitEvent(NS_LITERAL_STRING("taglost"), false, false);
+  rv = event->InitEvent(NS_LITERAL_STRING("disconnected"), false, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
   bool dummy;
@@ -247,6 +245,87 @@ nsNfc::NdefPush(const jsval& aRecords, JSContext* aCx, nsIDOMDOMRequest** aReque
   return NS_OK;
 }
 
+NS_IMETHODIMP
+nsNfc::MozSecureElementActivated(const nsAString& aSEMessage) {
+  jsval result;
+  nsresult rv;
+  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aSEMessage).get()),
+       aSEMessage.Length(), &result)) {
+    LOG("DOM: Couldn't parse JSON for NFC Secure Element Activated");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  // Dispatch incoming event.
+  nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
+  NS_ASSERTION(event, "This should never fail!");
+  rv = event->InitEvent(NS_LITERAL_STRING("mozsecureelementactivated"), false, false);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  bool dummy;
+  rv = DispatchEvent(event, &dummy);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNfc::MozSecureElementDeactivated(const nsAString& aSEMessage) {
+  jsval result;
+  nsresult rv;
+  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aSEMessage).get()),
+       aSEMessage.Length(), &result)) {
+    LOG("DOM: Couldn't parse JSON for NFC Secure Element Deactivated");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  // Dispatch incoming event.
+  nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
+  NS_ASSERTION(event, "This should never fail!");
+
+  rv = event->InitEvent(NS_LITERAL_STRING("mozsecureelementdeactivated"), false, false);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  bool dummy;
+  rv = DispatchEvent(event, &dummy);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsNfc::MozSecureElementTransaction(const nsAString& aSETransactionMessage)
+{
+  // Parse JSON
+  jsval result;
+  nsresult rv;
+  nsIScriptContext* sc = GetContextForEventHandlers(&rv);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (!JS_ParseJSON(sc->GetNativeContext(), static_cast<const jschar*>(PromiseFlatString(aSETransactionMessage).get()),
+       aSETransactionMessage.Length(), &result)) {
+    LOG("DOM: Couldn't parse JSON for NFC Secure Element Transaction");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  // Dispatch incoming event.
+  nsRefPtr<nsDOMEvent> event = NfcNdefEvent::Create(result);
+  NS_ASSERTION(event, "This should never fail!");
+
+  rv = event->InitEvent(NS_LITERAL_STRING("mozsecureelementtransaction"), false, false);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  bool dummy;
+  rv = DispatchEvent(event, &dummy);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
 // TODO: make private
 NS_IMETHODIMP
 nsNfc::SendToNfcd(const nsAString& message)
@@ -280,18 +359,6 @@ NS_NewNfc(nsPIDOMWindow* aWindow, nsIDOMNfc** aNfc)
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 	 
-  nsCOMPtr<nsIDocument> document =
-    do_QueryInterface(innerWindow->GetExtantDocument());
-  NS_ENSURE_TRUE(document, NS_NOINTERFACE);
- 
-  // Do security checks.
-  nsCOMPtr<nsIURI> uri;
-  document->NodePrincipal()->GetURI(getter_AddRefs(uri));
- 
-  if (!nsContentUtils::URIIsChromeOrInPref(uri, "dom.nfc.whitelist")) {
-    return NS_ERROR_DOM_SECURITY_ERR;
-  }
- 
   // Security checks passed, make a NFC object.
   nsCOMPtr<nsINfcContentHelper> nfc =
     do_GetService(NS_NFCCONTENTHELPER_CONTRACTID);
