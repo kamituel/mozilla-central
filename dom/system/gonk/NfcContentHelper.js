@@ -30,10 +30,7 @@ const NFCCONTENTHELPER_CID =
 const NFC_IPC_MSG_NAMES = [
   "NFC:NdefDiscovered",
   "NFC:NdefDisconnected",
-  "NFC:RequestStatus",
-  "NFC:SecureElementActivated",
-  "NFC:SecureElementDeactivated",
-  "NFC:SecureElementTransaction"
+  "NFC:RequestStatus"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -222,15 +219,6 @@ NfcContentHelper.prototype = {
       case "NFC:RequestStatus":
         this.handleRequestStatus(message.json);
         break;
-      case "NFC:SecureElementActivated":
-        this.handleSecureElementActivated(message.json);
-        break;
-      case "NFC:SecureElementDeactivated":
-        this.handleSecureElementDeactivated(message.json);
-        break;
-      case "NFC:SecureElementTransaction":
-        this.handleSecureElementTransaction(message.json);
-        break;
     }
   },
 
@@ -258,18 +246,6 @@ NfcContentHelper.prototype = {
     } else {
       this.fireRequestError(requestId, response.message);
     }
-  },
-
-  handleSecureElementActivated: function handleSecureElementActivated(message) {
-    this._deliverCallback("_nfcCallbacks", "secureElementActivated", [JSON.stringify(message)]);
-  },
-
-  handleSecureElementDeactivated: function handleSecureElementDeactivated(message) {
-    this._deliverCallback("_nfcCallbacks", "secureElementDeactivated", [JSON.stringify(message)]);
-  },
-
-  handleSecureElementTransaction: function handleSecureElementTransaction(message) {
-    this._deliverCallback("_nfcCallbacks", "secureElementTransaction", [JSON.stringify(message)]);
   },
 
   _deliverCallback: function _deliverCallback(callbackType, name, args) {
