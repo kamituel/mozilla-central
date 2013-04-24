@@ -155,7 +155,10 @@ SHARED_LIBRARY_LIBS	+= \
 endif #}
 
 ifdef MOZ_B2G_NFC #{
-SHARED_LIBRARY_LIBS     += $(DEPTH)/dom/nfc/$(LIB_PREFIX)domnfc_s.$(LIB_SUFFIX)
+SHARED_LIBRARY_LIBS     += \
+  $(DEPTH)/dom/nfc/$(LIB_PREFIX)domnfc_s.$(LIB_SUFFIX) \
+  $(DEPTH)/dom/secureelement/$(LIB_PREFIX)domsecureelement_s.$(LIB_SUFFIX) \
+  $(NULL)
 endif #}
 
 ifdef MOZ_MEDIA
@@ -324,6 +327,7 @@ LOCAL_INCLUDES	+= -I$(srcdir)/../base \
 		   -I$(topsrcdir)/content/svg/content/src \
 		   -I$(topsrcdir)/extensions/cookie \
 		   -I$(topsrcdir)/netwerk/cookie \
+                   -I$(topsrcdir)/dom/secureelement \
 		   $(NULL)
 
 ifdef MOZ_GSTREAMER
@@ -343,7 +347,9 @@ LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/bluetooth
 endif #}
 
 ifdef MOZ_B2G_NFC #{
-LOCAL_INCLUDES  += -I$(topsrcdir)/dom/nfc
+LOCAL_INCLUDES  += -I$(topsrcdir)/dom/nfc \
+                   -I$(topsrcdir)/dom/secureelement \
+                   $(NULL)
 endif #}
 
 LOCAL_INCLUDES	+= -I$(topsrcdir)/dom/camera

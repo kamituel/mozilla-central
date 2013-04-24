@@ -41,7 +41,7 @@
 importScripts("ril_consts.js", "systemlibs.js");
 
 // set to true in ril_consts.js to see debug messages
-let DEBUG = DEBUG_WORKER;
+let DEBUG = true; //DEBUG_WORKER;
 
 const INT32_MAX   = 2147483647;
 const UINT8_SIZE  = 1;
@@ -238,7 +238,7 @@ let Buf = {
     this.outgoingBytes = new Uint8Array(this.outgoingBuffer);
     this.outgoingBytes.set(oldBytes, 0);
     if (DEBUG) {
-      debug("New outgoing buffer size is " + this.OUTGOING_BUFFER_LENGTH);
+      debug("New outgoing buffer size is zzzzzzzz " + this.OUTGOING_BUFFER_LENGTH);
     }
   },
 
@@ -1278,6 +1278,17 @@ let RIL = {
     if (!RILQUIRKS_V5_LEGACY) {
       Buf.writeString(options.aid || this.aid);
     }
+
+    debug("Here I am baby");
+    /*if (options.cla == 0x90 && 
+        options.cla) {
+      debug("Options.cla");
+      Buf.writeString(options.cla);
+    } else {
+      debug("No options.cla.... ");
+      Buf.writeString(null);
+    }*/
+
     Buf.sendParcel();
   },
 
@@ -2891,10 +2902,10 @@ let RIL = {
         ICCRecordHelper.getICCPhase();
         ICCRecordHelper.fetchICCRecords();
       } else if (this.appType == CARD_APPTYPE_USIM) {
-        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        //this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
         ICCRecordHelper.fetchICCRecords();
       } else if (this.appType == CARD_APPTYPE_RUIM) {
-        this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        //this.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
         RuimRecordHelper.fetchRuimRecords();
       }
       this.reportStkServiceIsRunning();
@@ -4739,6 +4750,8 @@ RIL[REQUEST_SET_FACILITY_LOCK] = function REQUEST_SET_FACILITY_LOCK(length, opti
 };
 RIL[REQUEST_CHANGE_BARRING_PASSWORD] = null;
 RIL[REQUEST_SIM_OPEN_CHANNEL] = function REQUEST_SIM_OPEN_CHANNEL(length, options) {
+
+  options.success = options.rilRequestError == 0;
   if (options.rilRequestError) {
     options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
@@ -4750,6 +4763,7 @@ RIL[REQUEST_SIM_OPEN_CHANNEL] = function REQUEST_SIM_OPEN_CHANNEL(length, option
   this.sendDOMMessage(options);
 };
 RIL[REQUEST_SIM_CLOSE_CHANNEL] = function REQUEST_SIM_CLOSE_CHANNEL(length, options) {
+  options.success = options.rilRequestError == 0;
   if (options.rilRequestError) {
     options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
@@ -4760,6 +4774,7 @@ RIL[REQUEST_SIM_CLOSE_CHANNEL] = function REQUEST_SIM_CLOSE_CHANNEL(length, opti
   this.sendDOMMessage(options);
 };
 RIL[REQUEST_SIM_ACCESS_CHANNEL] = function REQUEST_SIM_ACCESS_CHANNEL(length, options) {
+  options.success = options.rilRequestError == 0;
   if (options.rilRequestError) {
     options.error = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendDOMMessage(options);
@@ -9964,7 +9979,7 @@ let ICCRecordHelper = {
       // If EF_phase is coded '03' or greater, an ME supporting STK shall
       // perform the PROFILE DOWNLOAD procedure.
       if (phase >= ICC_PHASE_2_PROFILE_DOWNLOAD_REQUIRED) {
-        RIL.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
+        //RIL.sendStkTerminalProfile(STK_SUPPORTED_TERMINAL_PROFILE);
       }
 
       Buf.readStringDelimiter(length);

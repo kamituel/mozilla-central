@@ -1403,7 +1403,7 @@ RadioInterfaceLayer.prototype = {
    * Open Logical UICC channel (aid) for Secure Element access
    */
   handleIccOpenChannel: function handleIccOpenChannel(message) {
-    debug("handleIccOpenChannel: " + JSON.stringify(message));
+    debug("DBG: handleIccOpenChannel: " + JSON.stringify(message));
     this._sendRequestResults("RIL:IccOpenChannel", message);
   },
 

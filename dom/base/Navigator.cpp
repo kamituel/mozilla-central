@@ -63,6 +63,12 @@
 #ifdef MOZ_B2G_NFC
 #include "nsIDOMNfc.h"
 #include "nsNfc.h"
+
+//#include "nsIDOMNfcSecureElement.h"
+//#include "nsNfcSecureElement.h"
+
+#include "SecureElementManager.h"
+#include "nsISecureElementService.h"
 #endif
 #include "nsIDOMCameraManager.h"
 #include "DOMCameraManager.h"
@@ -148,6 +154,7 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
 #endif
 #ifdef MOZ_B2G_NFC
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorNfc)
+  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorSecureElementManager)
 #endif
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorCamera)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorSystemMessages)
@@ -246,6 +253,15 @@ Navigator::Invalidate()
   if (mNfc) {
     mNfc = nullptr;
   }
+
+  /*if (mNfcSE) {
+    mNfcSE = nullptr;
+  }*/
+
+  if (mSecureElementManager) {
+    mSecureElementManager = nullptr;
+  }
+
 #endif
 
   mCameraManager = nullptr;
@@ -1436,6 +1452,65 @@ Navigator::GetMozNfc(nsIDOMNfc** aNfc)
   nfc.forget(aNfc);
   return NS_OK;
 }
+
+/* NS_IMETHODIMP
+Navigator::GetMozNfcSE(nsIDOMNfcSecureElement** aNfcSE)
+{
+  nsCOMPtr<nsIDOMNfcSecureElement> nfcSE = mNfcSE;
+
+  if (!nfcSE) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
+
+    if (!CheckPermission("nfc")) {  // Need to change this to "accessSecureChannel"
+      return NS_OK;
+    }
+
+    nsresult rv = NS_NewNfcSecureElement(window, getter_AddRefs(mNfcSE));
+    NS_ENSURE_SUCCESS(rv, rv);
+    LOG("DBG: 1. NFC Secure Element, create: ");
+    // mNfc may be null here!
+    nfcSE = mNfcSE;
+  }
+
+  nfcSE.forget(aNfcSE);
+  return NS_OK;
+} */
+
+NS_IMETHODIMP
+Navigator::GetMozSecureElementManager(nsIDOMSecureElementManager** aSecureElementMgr)
+{
+  *aSecureElementMgr = nullptr;
+
+  LOG("Secure Element Mgr, create DBG: ");
+  if (!mSecureElementManager) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(window, NS_OK);
+
+    //mSecureElementManager = SecureElementManager::CheckPermissionAndCreateInstance(window);
+    //NS_ENSURE_TRUE(mSecureElementManager, NS_OK);
+
+    mSecureElementManager = new secureelement::SecureElementManager();
+    mSecureElementManager->Init(window);
+
+  }
+
+  //nsCOMPtr<nsIDOMSecureElementManager> SecureElementMgr(mSecureElementManager);
+  //SecureElementMgr.forget(aSecureElementMgr);
+
+  //return NS_OK;
+
+  /*if (!mSecureElementManager) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(window, NS_OK);
+    mSecureElementManager = new secureelement::SecureElementManager();
+    mSecureElementManager->Init(window);
+  }*/
+
+  NS_ADDREF(*aSecureElementMgr = mSecureElementManager);
+  return NS_OK;
+}
+
 #endif // MOZ_B2G_NFC
 
 //*****************************************************************************

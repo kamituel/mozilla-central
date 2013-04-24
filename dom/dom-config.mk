@@ -36,6 +36,7 @@ DOM_SRCDIRS = \
   layout/xul/base/src \
   layout/xul/tree \
   dom/camera \
+  dom/secureelement \
   $(NULL)
 
 ifdef MOZ_B2G_RIL
@@ -58,7 +59,10 @@ DOM_SRCDIRS += dom/bluetooth
 endif
 
 ifdef MOZ_B2G_NFC
-DOM_SRCDIRS += dom/nfc
+DOM_SRCDIRS += \
+  dom/nfc \
+  dom/secureelement \
+  $(NULL)
 endif
 
 LOCAL_INCLUDES += $(DOM_SRCDIRS:%=-I$(topsrcdir)/%)

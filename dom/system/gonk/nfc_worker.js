@@ -75,6 +75,20 @@ let Nfc = {
     postNfcMessage(JSON.stringify(message.content));
   },
 
+  openChannel: function openChannel(message) {
+    dump("DBG : - Nfc Worker: open channel ::" + message.content + "\n");
+    postNfcMessage(JSON.stringify(message.content));
+  },
+
+  closeChannel: function closeChannel(message) {
+    debug("DBG: CloseChanel   " + JSON.stringify(message));
+    postNfcMessage(JSON.stringify(message.content));
+  },
+
+  exchangeAPDU: function exchangeAPDU(message) {
+    postNfcMessage(JSON.stringify(message.content));
+  },
+
   /**
    * Send messages to the main UI thread.
    */

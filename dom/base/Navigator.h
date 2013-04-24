@@ -52,6 +52,7 @@ class nsIDOMTelephony;
 
 #ifdef MOZ_B2G_NFC
 #include "nsIDOMNavigatorNfc.h"
+#include "nsIDOMNavigatorSecureElementManager.h"
 #endif
 
 #include "nsIDOMNavigatorSystemMessages.h"
@@ -94,6 +95,12 @@ class AudioChannelManager;
 #endif
 } // namespace system
 
+namespace secureelement {
+class SecureElementManager;
+class SEProvider;
+class SESession;
+} // namespace secureelement
+
 class Navigator : public nsIDOMNavigator
                 , public nsIDOMClientInformation
                 , public nsIDOMNavigatorDeviceStorage
@@ -121,6 +128,7 @@ class Navigator : public nsIDOMNavigator
 #endif
 #ifdef MOZ_B2G_NFC
                 , public nsIDOMNavigatorNfc
+                , public nsIDOMNavigatorSecureElementManager
 #endif
 
                 , public nsIDOMNavigatorCamera
@@ -165,6 +173,7 @@ public:
 #endif
 #ifdef MOZ_B2G_NFC
   NS_DECL_NSIDOMNAVIGATORNFC
+  NS_DECL_NSIDOMNAVIGATORSECUREELEMENTMANAGER
 #endif
   NS_DECL_NSIDOMNAVIGATORSYSTEMMESSAGES
 #ifdef MOZ_TIME_MANAGER
@@ -226,6 +235,8 @@ private:
 #endif
 #ifdef MOZ_B2G_NFC
   nsCOMPtr<nsIDOMNfc> mNfc;
+  //nsCOMPtr<nsIDOMNfcSecureElement> mNfcSE;
+  nsRefPtr<secureelement::SecureElementManager> mSecureElementManager;
 #endif
 #ifdef MOZ_AUDIO_CHANNEL_MANAGER
   nsRefPtr<system::AudioChannelManager> mAudioChannelManager;

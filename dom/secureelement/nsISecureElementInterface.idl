@@ -1,0 +1,85 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+
+interface nsIDOMDOMRequest;
+interface nsIDOMWindow;
+
+[scriptable, builtinclass, uuid(b2ab9700-90e0-11e2-9e96-0800200c9a66)]
+interface nsISESessionCallBack : nsISupports
+{
+  /**
+   * Callback function used to report status to SE session.
+   *
+   * @param status
+   *        An error message if the operation wasn't successful,
+   *        or `null` if it was.
+   */
+  void notifySESessionStatusUpdates(in jsval status);
+
+};
+
+[scriptable, builtinclass, uuid(c288de80-90e0-11e2-9e96-0800200c9a66)]
+interface nsISESession : nsISupports
+{
+  nsIDOMDOMRequest openChannel( [optional] in DOMString aid,
+                                [optional] in nsISESessionCallBack sessionStatusCallback);
+
+  nsIDOMDOMRequest exchangeAPDU( [optional] in long channel,
+                                 in jsval apdu);
+
+  nsIDOMDOMRequest closeChannel( [optional] in long channel);
+
+};
+
+[scriptable, builtinclass, uuid(8b94709f-6cca-422a-a47a-53af9c5eec86)]
+interface nsISEProvider : nsISupports
+{
+  /**
+   * Current type, one of the SE_TYPE_* constants.
+   */
+  readonly attribute long type;
+
+  /**
+   * Current status, one of the SE_STATUS_* constants.
+   */
+
+  readonly attribute long status;
+
+  readonly attribute boolean isSupported;
+
+  DOMString getProviderName();
+
+  boolean isSESupported();
+
+  nsISESession connect([optional] in nsISESessionCallBack statusCallback);
+
+  boolean disconnect();
+};
+
+[scriptable, builtinclass, uuid(ea0b0140-90e0-11e2-9e96-0800200c9a66)]
+interface nsISEAPDUCommand : nsISupports
+{
+  void setHeaders(in char cla, 
+                  in char ins,
+                  in char p1,
+                  in char p2);
+
+  void setPayload(in DOMString payload);
+
+  void setResponseLength(in unsigned short length);
+};
+
+
+[scriptable, builtinclass, uuid(f7b53c20-90e0-11e2-9e96-0800200c9a66)]
+interface nsISEOps : nsISupports
+{
+  boolean selectSEUICC();
+
+  boolean switchSE();
+
+  boolean setDefaultSE(in DOMString name);
+};
+

@@ -463,7 +463,7 @@ Telephony::EnumerateCallState(uint32_t aCallIndex, uint16_t aCallState,
   return NS_OK;
 }
 
-NS_IMETHODIMP
+/*NS_IMETHODIMP
 Telephony::IccOpenChannel(const nsAString& aAid, nsIDOMDOMRequest** aRequest)
 {
   // Call to RILContentHelper.js in dom/system/gonk
@@ -494,7 +494,7 @@ Telephony::IccCloseChannel(PRInt32 aChannel, nsIDOMDOMRequest** aRequest)
   nsresult rv = mProvider->IccCloseChannel(aChannel, aRequest);
   NS_ENSURE_SUCCESS(rv, rv);
   return NS_OK;
-}
+}*/
 
 NS_IMETHODIMP
 Telephony::NotifyError(int32_t aCallIndex,

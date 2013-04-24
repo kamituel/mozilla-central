@@ -190,6 +190,7 @@
 @BINPATH@/components/dom_network.xpt
 #ifdef MOZ_B2G_NFC
 @BINPATH@/components/dom_nfc.xpt
+@BINPATH@/components/dom_secureelement.xpt
 #endif
 @BINPATH@/components/dom_notification.xpt
 @BINPATH@/components/dom_html.xpt

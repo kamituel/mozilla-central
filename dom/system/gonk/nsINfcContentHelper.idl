@@ -16,4 +16,9 @@ interface nsINfcContentHelper : nsISupports
   nsIDOMDOMRequest writeNdefTag(in nsIDOMWindow window, in jsval records);
   nsIDOMDOMRequest ndefPush(in nsIDOMWindow window, in jsval records);
   void sendToNfcd(in DOMString message);
+
+  /* Secure Element Interface */
+  nsIDOMDOMRequest OpenChannel (in nsIDOMWindow window, in DOMString aid);
+  nsIDOMDOMRequest ExchangeAPDU(in nsIDOMWindow window, in long channel, in jsval apdu);
+  nsIDOMDOMRequest CloseChannel(in nsIDOMWindow window, in long channel);
 };
