@@ -32,12 +32,19 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:NdefPush"
 ];
 
+const TOPIC_MOZSETTINGS_CHANGED      = "mozsettings-changed";
+const TOPIC_XPCOM_SHUTDOWN           = "xpcom-shutdown";
+
+
 XPCOMUtils.defineLazyServiceGetter(this, "ppmm",
                                    "@mozilla.org/parentprocessmessagemanager;1",
                                    "nsIMessageBroadcaster");
 XPCOMUtils.defineLazyServiceGetter(this, "gSystemMessenger",
                                    "@mozilla.org/system-message-internal;1",
                                    "nsISystemMessagesInternal");
+XPCOMUtils.defineLazyServiceGetter(this, "gSettingsService",
+                                   "@mozilla.org/settingsService;1",
+                                   "nsISettingsService");
 
 function Nfc() {
   this.worker = new ChromeWorker("resource://gre/modules/nfc_worker.js");
@@ -48,9 +55,15 @@ function Nfc() {
     ppmm.addMessageListener(msgname, this);
   }
 
-  Services.obs.addObserver(this, "xpcom-shutdown", false);
+  Services.obs.addObserver(this, TOPIC_MOZSETTINGS_CHANGED, false);
+  Services.obs.addObserver(this, TOPIC_XPCOM_SHUTDOWN, false);
+
+  let lock = gSettingsService.createLock();
+  lock.get("nfc.enabled", this);
+
   debug("Starting Worker");
 }
+
 Nfc.prototype = {
 
   classID:   NFC_CID,
@@ -108,6 +121,22 @@ Nfc.prototype = {
 
   worker: null,
 
+  handle: function handle(aName, aResult) {
+    debug("XXXXXXXXXXXXXXXXXXX Foo XXXXXXXXXXXXXXXXxx");
+    debug("NFC.enabled incomming Setting  " + aResult);
+    if (aName !== "nfc.enabled")
+      return;
+    if (aResult === null)
+      aResult = true;
+    debug("Setting current nfc.enabled preference value to system: " + aResult);
+    this.worker.postMessage({type: "setNfcEnabled", content: {enabled: aResult}});
+  },
+
+  handleError: function handleError(aErrorMessage) {
+    debug("Error reading the 'nfc.enabled' setting. Default to nfc on.");
+    this.worker.postMessage({type: "setNfcEnabled", content: {enabled: true}});
+  },
+
   sendToNfcd: function sendToNfcd(message) {
     this.worker.postMessage({type: "directMessage", content: message});
   },
@@ -161,16 +190,30 @@ Nfc.prototype = {
     }
   },
 
+  handleNfcEnabled: function(enabled) {
+    debug("handleNfcEnabled, start. param enabled: " + enabled);
+    var system_enabled = this.worker.getNfcEnabled();
+    if (system_enabled === enabled) {
+      return;
+    }
+    this.worker.setNfcEnabled(enabled);
+  },
+
   // nsIObserver
 
   observe: function observe(subject, topic, data) {
     switch (topic) {
-      case "xpcom-shutdown":
+      case TOPIC_MOZSETTINGS_CHANGED:
+        let setting = JSON.parse(data);
+        this.handle(setting.key, setting.value);
+        break;
+      case TOPIC_XPCOM_SHUTDOWN:
         for each (let msgname in NFC_IPC_MSG_NAMES) {
           ppmm.removeMessageListener(msgname, this);
         }
         ppmm = null;
-        Services.obs.removeObserver(this, "xpcom-shutdown");
+        Services.obs.removeObserver(this, TOPIC_XPCOM_SHUTDOWN);
+        Services.obs.removeObserver(this, TOPIC_MOZSETTINGS_CHANGED);
         break;
     }
   }

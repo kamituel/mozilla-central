@@ -30,6 +30,8 @@ public:
 
 bool StartNfc(NfcConsumer* aConsumer);
 
+bool isNfcListening();
+
 bool SendNfcData(NfcData** aMessage);
 
 void StopNfc();

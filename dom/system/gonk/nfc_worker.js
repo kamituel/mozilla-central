@@ -76,6 +76,20 @@ let Nfc = {
   },
 
   /**
+   * System property access.
+   */
+  getNfcEnabled: function getNfcEnabled() {
+    debug("NfcEnabled get: " + libcutils.property_get("nfc.enabled"));
+    return { enabled: libcutils.property_get("nfc.enabled") }
+  },
+
+  setNfcEnabled: function setNfcEnabled(message) {
+    debug("NfcEnabled set: " + message.content.enabled);
+    var enabled = (message.content.enabled) ? "true" : "false";
+    libcutils.property_set("nfc.enabled", enabled);
+  },
+
+  /**
    * Send messages to the main UI thread.
    */
   sendDOMMessage: function sendDOMMessage(message) {

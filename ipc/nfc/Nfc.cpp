@@ -387,6 +387,12 @@ StartNfc(NfcConsumer* aConsumer)
 }
 
 bool
+isNfcListening()
+{
+  return !(sConsumer == nullptr);
+}
+
+bool
 SendNfcData(NfcData** aMessage)
 {
   if (!sClient) {

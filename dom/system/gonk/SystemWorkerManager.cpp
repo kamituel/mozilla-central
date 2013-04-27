@@ -66,6 +66,9 @@ NS_DEFINE_CID(kNetworkManagerCID, NS_NETWORKMANAGER_CID);
 NS_DEFINE_CID(kNfcWorkerCID, NS_NFC_CID);
 #endif
 
+#define TOPIC_MOZSETTINGS_CHANGED "mozsettings-changed"
+
+
 // Doesn't carry a reference, we're owned by services.
 SystemWorkerManager *gInstance = nullptr;
 
@@ -490,6 +493,11 @@ SystemWorkerManager::Init()
     NS_WARNING("Failed to initialize worker shutdown event!");
     return rv;
   }
+  rv = obs->AddObserver(this, TOPIC_MOZSETTINGS_CHANGED, false);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Failed to initialize worker mozsettings-changed event!");
+    return rv;
+  }
 
   return NS_OK;
 }
@@ -528,6 +536,7 @@ SystemWorkerManager::Shutdown()
     do_GetService(NS_OBSERVERSERVICE_CONTRACTID);
   if (obs) {
     obs->RemoveObserver(this, WORKERS_SHUTDOWN_TOPIC);
+    obs->RemoveObserver(this, TOPIC_MOZSETTINGS_CHANGED);
   }
 
 #ifdef MOZ_B2G_NFC
@@ -764,6 +773,46 @@ SystemWorkerManager::Observe(nsISupports *aSubject, const char *aTopic,
 {
   if (!strcmp(aTopic, WORKERS_SHUTDOWN_TOPIC)) {
     Shutdown();
+  }
+  else if (!strcmp(aTopic, TOPIC_MOZSETTINGS_CHANGED)) {
+    // Parse the JSON value.
+    nsDependentString dataStr(aData);
+    JS::Value val;
+    mozilla::SafeAutoJSContext cx;
+
+    if (!JS_ParseJSON(cx, dataStr.get(), dataStr.Length(), &val) ||
+        !val.isObject()) {
+      return NS_OK;
+    }
+
+    JSObject &obj(val.toObject());
+    JS::Value key;
+    if (!JS_GetProperty(cx, &obj, "key", &key) ||
+        !key.isString()) {
+      return NS_OK;
+    }
+
+    // Worker type preference value handling.
+
+    // Check for NFC state events:
+    // nfc_worker.js sits in JS, but the connection we want to manage is in C++.
+    JSBool match;
+    if (!JS_StringEqualsAscii(cx, key.toString(), "nfc.enabled", &match) ||
+        match != JS_TRUE) {
+      return NS_OK;
+    }
+
+    JS::Value value;
+    if (!JS_GetProperty(cx, &obj, "value", &value) ||
+        !value.isBoolean()) {
+      return NS_OK;
+    }
+    if (value.toBoolean() && !isNfcListening()) {
+      InitNfc(cx);
+    } else if (!value.toBoolean() && isNfcListening()) {
+      StopNfc();
+      mNfcWorker = nullptr;
+    }
   }
 
   return NS_OK;
