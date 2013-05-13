@@ -26,14 +26,6 @@
 #include "nsXULAppAPI.h"
 #include "Nfc.h"
 
-#undef LOG
-#if defined(MOZ_WIDGET_GONK)
-#include <android/log.h>
-#define LOG(args...)  __android_log_print(ANDROID_LOG_INFO, "Gonk", args)
-#else
-#define LOG(args...)  printf(args);
-#endif
-
 #define NFC_SOCKET_NAME "/dev/socket/nfcd"
 
 using namespace base;
@@ -190,13 +182,13 @@ NfcClient::OpenSocket()
 #endif
 
   if (mSocket.get() < 0) {
-    LOG("Cannot create socket for NFC!\n");
+    NS_WARNING("Cannot create socket for NFC!\n");
     return false;
   }
 
   if (connect(mSocket.get(), (struct sockaddr *) &addr, alen) < 0) {
 #if defined(MOZ_WIDGET_GONK)
-    LOG("Cannot open socket for NFC!\n");
+    NS_WARNING("Cannot open socket for NFC!\n");
 #endif
     mSocket.dispose();
     return false;
@@ -224,7 +216,7 @@ NfcClient::OpenSocket()
                     this)) {
     return false;
   }
-  LOG("Socket open for NFC\n");
+  NS_WARNING("Socket open for NFC\n");
   return true;
 }
 
@@ -250,10 +242,10 @@ NfcClient::OnFileCanReadWithoutBlocking(int fd)
 
       ssize_t ret = read(fd, &byteCount, sizeof(size_t));
       if (ret <= 0) {
-        LOG("Cannot read from network, error %ld\n", ret);
+        ("Cannot read from network, error %ld\n", ret);
         goto clean_and_return;
       }
-      LOG("Reading %d bytes long message", byteCount);
+      NS_WARNING("Reading %d bytes long message", byteCount);
 
       mIncoming->json = (char *) malloc(byteCount);
 
@@ -263,7 +255,7 @@ NfcClient::OnFileCanReadWithoutBlocking(int fd)
         int ret = read(fd, mIncoming->json + read_offset,
                  byteCount - read_offset);
         if (ret < 0) {
-        LOG("Cannot read from network, error %d (errno: %d)\n", ret, errno);
+        NS_WARNING("Cannot read from network, error %d (errno: %d)\n", ret, errno);
         goto clean_and_return;
         } else {
         read_offset += ret;
@@ -307,10 +299,10 @@ NfcClient::OnFileCanWriteWithoutBlocking(int fd)
     char *toWrite = mCurrentNfcData->json;
     size_t write_amount = strlen(toWrite) + 1;
 
-    LOG("Writing %d bytes to nfcd (%s)\n", write_amount, toWrite);
+    NS_WARNING("Writing %d bytes to nfcd (%s)\n", write_amount, toWrite);
     ssize_t written = write (fd, &write_amount, sizeof(size_t));
     if(written < 0) {
-        LOG("Cannot write to network, error %ld\n", written);
+        NS_WARNING("Cannot write to network, error %ld\n", written);
         goto clean_and_return;
     }
 
@@ -318,7 +310,7 @@ NfcClient::OnFileCanWriteWithoutBlocking(int fd)
         written = write (fd, toWrite + mCurrentWriteOffset,
                      write_amount - mCurrentWriteOffset);
       if(written < 0) {
-        LOG("Cannot write to network, error %ld\n", written);
+        NS_WARNING("Cannot write to network, error %ld\n", written);
         goto clean_and_return;
       } else {
         mCurrentWriteOffset += written;
@@ -389,6 +381,9 @@ StartNfc(NfcConsumer* aConsumer)
 bool
 isNfcListening()
 {
+  if (!sConsumer) {
+    NS_WARNING("============== Nfc IPC not currently listening");
+  }
   return !(sConsumer == nullptr);
 }
 

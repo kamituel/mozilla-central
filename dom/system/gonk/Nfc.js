@@ -122,12 +122,11 @@ Nfc.prototype = {
   worker: null,
 
   handle: function handle(aName, aResult) {
-    debug("XXXXXXXXXXXXXXXXXXX Foo XXXXXXXXXXXXXXXXxx");
-    debug("NFC.enabled incomming Setting  " + aResult);
     if (aName !== "nfc.enabled")
       return;
     if (aResult === null)
       aResult = true;
+    debug("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
     debug("Setting current nfc.enabled preference value to system: " + aResult);
     this.worker.postMessage({type: "setNfcEnabled", content: {enabled: aResult}});
   },

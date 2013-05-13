@@ -493,11 +493,13 @@ SystemWorkerManager::Init()
     NS_WARNING("Failed to initialize worker shutdown event!");
     return rv;
   }
+#ifdef MOZ_B2G_NFC
   rv = obs->AddObserver(this, TOPIC_MOZSETTINGS_CHANGED, false);
   if (NS_FAILED(rv)) {
     NS_WARNING("Failed to initialize worker mozsettings-changed event!");
     return rv;
   }
+#endif
 
   return NS_OK;
 }
@@ -774,6 +776,7 @@ SystemWorkerManager::Observe(nsISupports *aSubject, const char *aTopic,
   if (!strcmp(aTopic, WORKERS_SHUTDOWN_TOPIC)) {
     Shutdown();
   }
+#ifdef MOZ_B2G_NFC
   else if (!strcmp(aTopic, TOPIC_MOZSETTINGS_CHANGED)) {
     // Parse the JSON value.
     nsDependentString dataStr(aData);
@@ -814,6 +817,7 @@ SystemWorkerManager::Observe(nsISupports *aSubject, const char *aTopic,
       mNfcWorker = nullptr;
     }
   }
+#endif
 
   return NS_OK;
 }
