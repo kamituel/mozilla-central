@@ -90,6 +90,9 @@ components/dom_telephony.xpt
 components/dom_wifi.xpt
 components/dom_system_b2g.xpt
 #endif
+#ifdef MOZ_B2G_NFC
+components/dom_secureelement.xpt
+#endif
 components/dom_sms.xpt
 components/dom_webspeech.xpt
 components/uconvd.dll

@@ -287,6 +287,9 @@ using mozilla::dom::workers::ResolveWorkerClasses;
 #include "nsIDOMNfc.h"
 #include "NfcNdefEvent.h"
 #include "NdefRecord.h"
+
+#include "nsIDOMSecureElementManager.h"
+#include "nsISecureElementInterface.h"
 #endif
 
 #include "nsIDOMNavigatorSystemMessages.h"
@@ -797,6 +800,15 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(NdefRecord, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
+
+  NS_DEFINE_CLASSINFO_DATA(SecureElementManager, nsEventTargetSH,
+                           EVENTTARGET_SCRIPTABLE_FLAGS)
+
+  NS_DEFINE_CLASSINFO_DATA(SEProvider, nsEventTargetSH,
+                           EVENTTARGET_SCRIPTABLE_FLAGS)
+
+  NS_DEFINE_CLASSINFO_DATA(SESession, nsEventTargetSH,
+                           EVENTTARGET_SCRIPTABLE_FLAGS)
 #endif
 
   NS_DEFINE_CLASSINFO_DATA(CameraManager, nsDOMGenericSH,
@@ -1512,6 +1524,8 @@ nsDOMClassInfo::Init()
 #endif
 #ifdef MOZ_B2G_NFC
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorNfc)
+
+    DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorSecureElementManager)
 #endif
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNavigatorCamera)
     DOM_CLASSINFO_MAP_CONDITIONAL_ENTRY(nsIDOMNavigatorSystemMessages,
@@ -2002,6 +2016,22 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(NdefRecord, nsIDOMNdefRecord)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMNdefRecord)
   DOM_CLASSINFO_MAP_END
+
+  DOM_CLASSINFO_MAP_BEGIN(SecureElementManager, nsIDOMSecureElementManager)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSecureElementManager)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
+  DOM_CLASSINFO_MAP_END
+
+  DOM_CLASSINFO_MAP_BEGIN(SEProvider, nsISEProvider)
+    DOM_CLASSINFO_MAP_ENTRY(nsISEProvider)
+    DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
+  DOM_CLASSINFO_MAP_END
+
+  DOM_CLASSINFO_MAP_BEGIN(SESession, nsISESession)
+    DOM_CLASSINFO_MAP_ENTRY(nsISESession)
+    DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
+  DOM_CLASSINFO_MAP_END
+
 #endif
 
   DOM_CLASSINFO_MAP_BEGIN(CameraManager, nsIDOMCameraManager)
