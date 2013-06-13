@@ -186,6 +186,11 @@ DOMCI_CLASS(BluetoothDevice)
 DOMCI_CLASS(Nfc)
 DOMCI_CLASS(NfcNdefEvent)
 DOMCI_CLASS(NdefRecord)
+//DOMCI_CLASS(NfcSecureElement)
+
+DOMCI_CLASS(SecureElementManager)
+DOMCI_CLASS(SEProvider)
+DOMCI_CLASS(SESession)
 #endif
 
 DOMCI_CLASS(CameraManager)

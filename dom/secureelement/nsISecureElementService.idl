@@ -1,0 +1,42 @@
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
+#include "nsISupports.idl"
+%{C++
+#define NS_SECUREELEMENTSERVICE_CID { 0x93169541, 0xb5c6, 0x477d, {0xbf, 0xeb, 0x0d, 0xb4, 0x95, 0x58, 0xda, 0xbc } }
+#define SECUREELEMENTSERVICE_CONTRACTID "@mozilla.org/secureelement/secureelementservice;1"
+%}
+
+interface nsIDOMDOMRequest;
+interface nsIDOMWindow;
+
+interface nsISEProvider;
+interface nsISESession;
+interface nsISESessionCallBack;
+
+[scriptable, builtinclass, uuid(687b47c0-90e0-11e2-9e96-0800200c9a66)]
+interface nsISecureElementService : nsISupports
+{
+
+  /**
+   * Secure Element Types
+   */
+  const long SE_TYPE_UICC         = 0;
+  const long SE_TYPE_EMBED_DEVICE = 1;
+  const long SE_TYPE_EXTERNAL_EE  = 2;   // For Ex: microSD card - Not Implemented
+  const long SE_TYPE_TRUSTED_EE   = 3;   // For Ex: Cloud based trusted execution environment - Not Implemented
+
+
+  /**
+   * Secure Element Status
+   */
+  const long SE_STATUS_FAIL     = -1;
+  const long SE_STATUS_SUCCESS  = 0;
+  const long SE_STATUS_PENDING  = 1;
+  const long SE_STATUS_UNKNOWN  = 0xFF;
+
+  //nsISEProvider getSecureElementProvider(in long type); 
+
+  //void letsSee();
+};

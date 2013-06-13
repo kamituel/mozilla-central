@@ -338,6 +338,8 @@ ISurfaceAllocator::PlatformAllocSurfaceDescriptor(const gfxIntSize& aSize,
   // width < 64.  There's not much point in gralloc'ing buffers that
   // small anyway, so fall back on shared memory plus a texture
   // upload.
+  return false;
+
   if (aSize.width < 64) {
     return false;
   }

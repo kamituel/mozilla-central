@@ -33,7 +33,10 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:RequestStatus",
   "NFC:SecureElementActivated",
   "NFC:SecureElementDeactivated",
-  "NFC:SecureElementTransaction"
+  "NFC:SecureElementTransaction",
+  "NFC:OpenChannel",
+  "NFC:CloseChannel",
+  "NFC:ExchangeAPDU"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -109,6 +112,58 @@ NfcContentHelper.prototype = {
     cpmm.sendAsyncMessage("NFC:WriteNdefTag", {
       requestId: requestId,
       records: encodedRecords
+    });
+    return request;
+  },
+
+ OpenChannel: function OpenChannel(window, aid) {
+    debug("DBG: OpenChannel NfcContentHelper.js.... aid :" + aid);
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = btoa(this.getRequestId(request));
+
+    //let encodedRecords = this.encodeNdefRecords(records);
+    debug("DBG: Just before sending from Content process.. ");
+    cpmm.sendAsyncMessage("NFC:OpenChannel", {
+      requestId: requestId,
+      aid: aid
+    });
+    return request;
+  },
+
+  CloseChannel: function CloseChannel(window, channel) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = btoa(this.getRequestId(request));
+    let channelId = channel;
+    cpmm.sendAsyncMessage("NFC:CloseChannel", {
+      requestId: requestId,
+      channel: channelId
+    });
+    return request;
+  },
+
+  ExchangeAPDU: function ExchangeAPDU(window, channel, apdu) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = btoa(this.getRequestId(request));
+
+    cpmm.sendAsyncMessage("NFC:ExchangeAPDU", {
+      requestId: requestId,
+      channel: channel,
+      apdu: apdu
     });
     return request;
   },
@@ -231,6 +286,15 @@ NfcContentHelper.prototype = {
       case "NFC:SecureElementTransaction":
         this.handleSecureElementTransaction(message.json);
         break;
+      case "NFC:OpenChannel":
+        this.handleOpenChannel(message.json);
+        break;
+      case "NFC:CloseChannel":
+        this.handleCloseChannel(message.json);
+        break;
+      default:
+        debug("DBG: Unsupported message : " + message.name);
+        break;
     }
   },
 
@@ -257,6 +321,40 @@ NfcContentHelper.prototype = {
       this.fireRequestSuccess(requestId, response.message);
     } else {
       this.fireRequestError(requestId, response.message);
+    }
+  },
+
+  handleOpenChannel: function handleOpenChannel(message) {
+    debug("DBG: Before firingSuccess..." + JSON.stringify(message));
+    //let response = message.content; // Subfields of content: requestId, status, optional message
+    let requestId = atob(message.requestId);
+    //debug("DBG: Before firingSuccess..." + response  + "   " + requestId);
+    debug("DBG: Before firingSuccess..." + JSON.stringify(message.requestId));
+    debug("DBG: Before firingSuccess..." + JSON.stringify(requestId));
+    if (message.errorMsg) {
+      this.fireRequestError(requestId, message.errorMsg);
+    } else {
+      this.fireRequestSuccess(requestId, message.content.channel);
+    }
+  },
+
+  handleCloseChannel: function handleCloseChannel(message) {
+    debug("DBG: Before firingSuccess..." + JSON.stringify(message));
+    //let response = message.content; // Subfields of content: requestId, status, optional message
+    let response = message.content;
+    let requestId = atob(message.requestId);
+    this.fireRequestSuccess(requestId, null);
+    /*if (response.status == "OK") {
+    } else {
+    }*/
+  },
+
+  handleExchangeAPDU: function handleExchangeAPDU(message) {
+    if (message.errorMsg) {
+      this.fireRequestError(message.requestId, message.errorMsg);
+    } else {
+      var result = [message.sw1, message.sw2, message.simResponse];
+      this.fireRequestSuccess(message.requestId, result);
     }
   },
 

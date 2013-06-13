@@ -77,4 +77,17 @@ interface nsIMobileConnectionProvider : nsISupports
   nsIDOMDOMRequest setCallWaitingOption(in nsIDOMWindow   window,
                                         in bool enabled);
   nsIDOMDOMRequest getCallWaitingOption(in nsIDOMWindow   window);
+  /**
+   * Secure Card Icc communication channel
+   */
+  nsIDOMDOMRequest iccOpenChannel(in nsIDOMWindow window,
+                                  in DOMString aid);
+
+  nsIDOMDOMRequest iccExchangeAPDU(in nsIDOMWindow window,
+                                   in long channel,
+                                   in jsval apdu);
+
+  nsIDOMDOMRequest iccCloseChannel(in nsIDOMWindow window,
+                                   in long channel);
+
 };
