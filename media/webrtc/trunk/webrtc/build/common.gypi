@@ -124,6 +124,21 @@
         # and Java Implementation
         'enable_android_opensl%': 0,
       }],
+      ['OS=="linux"', {
+        'include_alsa_audio%': 1,
+      }, {
+        'include_alsa_audio%': 0,
+      }],
+      ['OS=="solaris" or os_bsd==1', {
+        'include_pulse_audio%': 1,
+      }, {
+        'include_pulse_audio%': 0,
+      }],
+      ['OS=="linux" or OS=="solaris" or os_bsd==1', {
+        'include_v4l2_video_capture%': 1,
+      }, {
+        'include_v4l2_video_capture%': 0,
+      }],
       ['OS=="ios"', {
         'enable_video%': 0,
         'enable_protobuf%': 0,
@@ -150,6 +165,11 @@
       #'WEBRTC_SVNREVISION="<!(python <(webrtc_root)/build/version.py)"',
     ],
     'conditions': [
+      ['moz_widget_toolkit_gonk==1', {
+        'defines' : [
+          'WEBRTC_GONK',
+        ],
+      }],
       ['enable_tracing==1', {
         'defines': ['WEBRTC_LOGGING',],
       }],
@@ -210,6 +230,18 @@
           }],
         ],
       }],
+      ['os_bsd==1', {
+        'defines': [
+          'WEBRTC_BSD',
+          'WEBRTC_THREAD_RR',
+        ],
+      }],
+      ['OS=="dragonfly" or OS=="netbsd"', {
+        'defines': [
+          # doesn't support pthread_condattr_setclock
+          'WEBRTC_CLOCK_TYPE_REALTIME',
+        ],
+      }],
       ['OS=="ios"', {
         'defines': [
           'WEBRTC_MAC',
@@ -219,6 +251,13 @@
         ],
       }],
       ['OS=="linux"', {
+        'conditions': [
+          ['have_clock_monotonic==1', {
+            'defines': [
+              'WEBRTC_CLOCK_TYPE_REALTIME',
+            ],
+          }],
+        ],
         'defines': [
           'WEBRTC_LINUX',
           'WEBRTC_THREAD_RR',

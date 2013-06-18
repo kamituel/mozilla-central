@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -190,6 +190,7 @@ IsInsideNursery(JSRuntime *rt, const void *thing)
     if (rt->gcVerifyPostData)
         return rt->gcVerifierNursery.isInside(thing);
 #endif
+    return rt->gcNursery.isInside(thing);
 #endif
     return false;
 }
@@ -203,7 +204,7 @@ GetGCThingTraceKind(const void *thing)
     if (IsInsideNursery(cell->runtime(), cell))
         return JSTRACE_OBJECT;
 #endif
-    return MapAllocToTraceKind(cell->getAllocKind());
+    return MapAllocToTraceKind(cell->tenuredGetAllocKind());
 }
 
 static inline void
@@ -463,35 +464,71 @@ class GCZoneGroupIter {
 
 typedef CompartmentsIterT<GCZoneGroupIter> GCCompartmentGroupIter;
 
+#ifdef JSGC_GENERATIONAL
+/*
+ * Attempt to allocate a new GC thing out of the nursery. If there is not enough
+ * room in the nursery or there is an OOM, this method will return NULL.
+ */
+template <typename T, AllowGC allowGC>
+inline T *
+TryNewNurseryGCThing(JSContext *cx, size_t thingSize)
+{
+    JS_ASSERT(!IsAtomsCompartment(cx->compartment()));
+    JSRuntime *rt = cx->runtime();
+    Nursery &nursery = rt->gcNursery;
+    T *t = static_cast<T *>(nursery.allocate(thingSize));
+    if (t)
+        return t;
+    if (allowGC && !rt->mainThread.suppressGC) {
+        MinorGC(rt, JS::gcreason::OUT_OF_NURSERY);
+
+        /* Exceeding gcMaxBytes while tenuring can disable the Nursery. */
+        if (nursery.isEnabled()) {
+            t = static_cast<T *>(nursery.allocate(thingSize));
+            JS_ASSERT(t);
+            return t;
+        }
+    }
+    return NULL;
+}
+#endif /* JSGC_GENERATIONAL */
+
 /*
  * Allocates a new GC thing. After a successful allocation the caller must
  * fully initialize the thing before calling any function that can potentially
  * trigger GC. This will ensure that GC tracing never sees junk values stored
  * in the partially initialized thing.
  */
-
 template <typename T, AllowGC allowGC>
 inline T *
 NewGCThing(JSContext *cx, AllocKind kind, size_t thingSize, InitialHeap heap)
 {
     JS_ASSERT(thingSize == js::gc::Arena::thingSize(kind));
-    JS_ASSERT_IF(cx->compartment == cx->runtime->atomsCompartment,
+    JS_ASSERT_IF(cx->compartment() == cx->runtime()->atomsCompartment,
                  kind == FINALIZE_STRING ||
                  kind == FINALIZE_SHORT_STRING ||
                  kind == FINALIZE_IONCODE);
-    JS_ASSERT(!cx->runtime->isHeapBusy());
-    JS_ASSERT(!cx->runtime->noGCOrAllocationCheck);
+    JS_ASSERT(!cx->runtime()->isHeapBusy());
+    JS_ASSERT(!cx->runtime()->noGCOrAllocationCheck);
 
     /* For testing out of memory conditions */
     JS_OOM_POSSIBLY_FAIL_REPORT(cx);
 
 #ifdef JS_GC_ZEAL
-    if (cx->runtime->needZealousGC() && allowGC)
+    if (cx->runtime()->needZealousGC() && allowGC)
         js::gc::RunDebugGC(cx);
 #endif
 
     if (allowGC)
-        MaybeCheckStackRoots(cx, /* relax = */ false);
+        MaybeCheckStackRoots(cx);
+
+#if defined(JSGC_GENERATIONAL)
+    if (ShouldNurseryAllocate(cx->runtime()->gcNursery, kind, heap)) {
+        T *t = TryNewNurseryGCThing<T, allowGC>(cx, thingSize);
+        if (t)
+            return t;
+    }
+#endif
 
     JS::Zone *zone = cx->zone();
     T *t = static_cast<T *>(zone->allocator.arenas.allocateFromFreeList(kind, thingSize));
@@ -502,45 +539,16 @@ NewGCThing(JSContext *cx, AllocKind kind, size_t thingSize, InitialHeap heap)
                  t->arenaHeader()->allocatedDuringIncremental);
 
 #if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
-    if (cx->runtime->gcVerifyPostData &&
-        ShouldNurseryAllocate(cx->runtime->gcVerifierNursery, kind, heap))
+    if (cx->runtime()->gcVerifyPostData &&
+        ShouldNurseryAllocate(cx->runtime()->gcVerifierNursery, kind, heap))
     {
-        JS_ASSERT(!IsAtomsCompartment(cx->compartment));
-        cx->runtime->gcVerifierNursery.insertPointer(t);
+        JS_ASSERT(!IsAtomsCompartment(cx->compartment()));
+        cx->runtime()->gcVerifierNursery.insertPointer(t);
     }
 #endif
 
     return t;
 }
-
-/*
- * Instances of this class set the |JSRuntime::suppressGC| flag for the duration
- * that they are live. Use of this class is highly discouraged. Please carefully
- * read the comment in jscntxt.h above |suppressGC| and take all appropriate
- * precautions before instantiating this class.
- */
-class AutoSuppressGC
-{
-    int32_t &suppressGC_;
-
-  public:
-    AutoSuppressGC(JSContext *cx)
-      : suppressGC_(cx->runtime->mainThread.suppressGC)
-    {
-        suppressGC_++;
-    }
-
-    AutoSuppressGC(JSCompartment *comp)
-      : suppressGC_(comp->rt->mainThread.suppressGC)
-    {
-        suppressGC_++;
-    }
-
-    ~AutoSuppressGC()
-    {
-        suppressGC_--;
-    }
-};
 
 } /* namespace gc */
 } /* namespace js */
@@ -583,7 +591,14 @@ js_NewGCScript(JSContext *cx)
                                                    sizeof(JSScript), js::gc::TenuredHeap);
 }
 
-inline js::RawShape
+inline js::LazyScript *
+js_NewGCLazyScript(JSContext *cx)
+{
+    return js::gc::NewGCThing<js::LazyScript, js::CanGC>(cx, js::gc::FINALIZE_LAZY_SCRIPT,
+                                                         sizeof(js::LazyScript), js::gc::TenuredHeap);
+}
+
+inline js::Shape *
 js_NewGCShape(JSContext *cx)
 {
     return js::gc::NewGCThing<js::Shape, js::CanGC>(cx, js::gc::FINALIZE_SHAPE,
@@ -591,7 +606,7 @@ js_NewGCShape(JSContext *cx)
 }
 
 template <js::AllowGC allowGC>
-inline js::RawBaseShape
+inline js::BaseShape *
 js_NewGCBaseShape(JSContext *cx)
 {
     return js::gc::NewGCThing<js::BaseShape, allowGC>(cx, js::gc::FINALIZE_BASE_SHAPE,

@@ -111,42 +111,104 @@ function getUserMedia(constraints, onSuccess, onError) {
  *
  * @param {Function} aCallback
  *        Test method to execute after initialization
- * @param {Boolean} desktopSupportedOnly
- *        Specifies if the test currently is known to work on desktop only
  */
-function runTest(aCallback, desktopSupportedOnly) {
+function runTest(aCallback) {
   SimpleTest.waitForExplicitFinish();
+  SpecialPowers.pushPrefEnv({'set': [
+    ['media.peerconnection.enabled', true],
+    ['media.navigator.permission.disabled', true]]
+  }, function () {
+    try {
+      aCallback();
+    }
+    catch (err) {
+      unexpectedCallbackAndFinish()(err);
+    }
+  });
+}
 
-  // If this is a desktop supported test and we're on android or b2g,
-  // indicate that the test is not supported and skip the test
-  if(desktopSupportedOnly && (navigator.userAgent.indexOf('Android') > -1 ||
-     navigator.platform === '')) {
-    ok(true, navigator.userAgent + ' currently not supported');
-    SimpleTest.finish();
+/**
+ * Checks that the media stream tracks have the expected amount of tracks
+ * with the correct kind and id based on the type and constraints given.
+ *
+ * @param {Object} constraints specifies whether the stream should have
+ *                             audio, video, or both
+ * @param {String} type the type of media stream tracks being checked
+ * @param {sequence<MediaStreamTrack>} mediaStreamTracks the media stream
+ *                                     tracks being checked
+ */
+function checkMediaStreamTracksByType(constraints, type, mediaStreamTracks) {
+  if(constraints[type]) {
+    is(mediaStreamTracks.length, 1, 'One ' + type + ' track shall be present');
+
+    if(mediaStreamTracks.length) {
+      is(mediaStreamTracks[0].kind, type, 'Track kind should be ' + type);
+      ok(mediaStreamTracks[0].id, 'Track id should be defined');
+    }
   } else {
-    SpecialPowers.pushPrefEnv({'set': [
-        ['media.peerconnection.enabled', true],
-        ['media.navigator.permission.denied', true]]
-      }, function () {
-      try {
-        aCallback();
-      }
-      catch (err) {
-        unexpectedCallbackAndFinish(err);
-      }
-    });
+    is(mediaStreamTracks.length, 0, 'No ' + type + ' tracks shall be present');
   }
 }
 
+/**
+ * Check that the given media stream contains the expected media stream
+ * tracks given the associated audio & video constraints provided.
+ *
+ * @param {Object} constraints specifies whether the stream should have
+ *                             audio, video, or both
+ * @param {MediaStream} mediaStream the media stream being checked
+ */
+function checkMediaStreamTracks(constraints, mediaStream) {
+  checkMediaStreamTracksByType(constraints, 'audio',
+    mediaStream.getAudioTracks());
+  checkMediaStreamTracksByType(constraints, 'video',
+    mediaStream.getVideoTracks());
+}
 
 /**
- * A callback function fired only under unexpected circumstances while
- * running the tests. Kills off the test as well gracefully.
+ * Generates a callback function fired only under unexpected circumstances
+ * while running the tests. The generated function kills off the test as well
+ * gracefully.
  *
- * @param {object} aObj
- *        The object fired back from the callback
+ * @param {String} [message]
+ *        An optional message to show if no object gets passed into the
+ *        generated callback method.
  */
-function unexpectedCallbackAndFinish(aObj) {
-  ok(false, "Unexpected error callback with " + aObj);
-  SimpleTest.finish();
+function unexpectedCallbackAndFinish(message) {
+  var stack = new Error().stack.split("\n");
+  stack.shift(); // Don't include this instantiation frame
+
+  /**
+   * @param {object} aObj
+   *        The object fired back from the callback
+   */
+  return function (aObj) {
+    if (aObj && aObj.name && aObj.message) {
+      ok(false, "Unexpected callback for '" + aObj.name + "' with message = '" +
+         aObj.message + "' at " + JSON.stringify(stack));
+    } else {
+      ok(false, "Unexpected callback with message = '" + message +
+         "' at: " + JSON.stringify(stack));
+    }
+    SimpleTest.finish();
+  }
+}
+
+/**
+ * Generates a callback function fired only for unexpected events happening.
+ *
+ * @param {String} description
+          Description of the object for which the event has been fired
+ * @param {String} eventName
+          Name of the unexpected event
+ */
+function unexpectedEventAndFinish(message, eventName) {
+  var stack = new Error().stack.split("\n");
+  stack.shift(); // Don't include this instantiation frame
+
+  return function () {
+    ok(false, "Unexpected event '" + eventName + "' fired with message = '" +
+       message + "' at: " + JSON.stringify(stack));
+    SimpleTest.finish();
+  }
 }

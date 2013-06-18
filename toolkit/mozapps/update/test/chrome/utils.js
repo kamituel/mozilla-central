@@ -167,10 +167,11 @@ var gCloseWindowTimeoutCounter = 0;
 
 // The following vars are for restoring previous preference values (if present)
 // when the test finishes.
-var gAppUpdateEnabled;    // app.update.enabled
-var gAppUpdateURLDefault; // app.update.url (default prefbranch)
-var gAppUpdateURL;        // app.update.url.override
-var gExtUpdateURL;        // extensions.update.url
+var gAppUpdateEnabled;      // app.update.enabled
+var gAppUpdateMetroEnabled; // app.update.metro.enabled
+var gAppUpdateURLDefault;   // app.update.url (default prefbranch)
+var gAppUpdateURL;          // app.update.url.override
+var gExtUpdateURL;          // extensions.update.url
 
 var gTestCounter = -1;
 var gWin;
@@ -188,7 +189,7 @@ var DEBUG_AUS_TEST = false;
 /**
  * The current test in TESTS array.
  */
-__defineGetter__("gTest", function() {
+this.__defineGetter__("gTest", function() {
   return TESTS[gTestCounter];
 });
 
@@ -197,7 +198,7 @@ __defineGetter__("gTest", function() {
  * the test's overrideCallback property or defaultCallback if the
  * overrideCallback property is undefined.
  */
-__defineGetter__("gCallback", function() {
+this.__defineGetter__("gCallback", function() {
   return gTest.overrideCallback ? gTest.overrideCallback
                                 : defaultCallback;
 });
@@ -206,7 +207,7 @@ __defineGetter__("gCallback", function() {
  * The remotecontent element for the current page if one exists or null if a
  * remotecontent element doesn't exist.
  */
-__defineGetter__("gRemoteContent", function() {
+this.__defineGetter__("gRemoteContent", function() {
   switch (gTest.pageid) {
     case PAGEID_FOUND_BILLBOARD:
       return gWin.document.getElementById("updateMoreInfoContent");
@@ -220,7 +221,7 @@ __defineGetter__("gRemoteContent", function() {
  * The state for the remotecontent element if one exists or null if a
  * remotecontent element doesn't exist.
  */
-__defineGetter__("gRemoteContentState", function() {
+this.__defineGetter__("gRemoteContentState", function() {
   if (gRemoteContent) {
     return gRemoteContent.getAttribute("state");
   }
@@ -230,14 +231,14 @@ __defineGetter__("gRemoteContentState", function() {
 /**
  * The radiogroup for the license page.
  */
-__defineGetter__("gAcceptDeclineLicense", function() {
+this.__defineGetter__("gAcceptDeclineLicense", function() {
   return gWin.document.getElementById("acceptDeclineLicense");
 });
 
 /**
  * The listbox for the incompatibleList page.
  */
-__defineGetter__("gIncompatibleListbox", function() {
+this.__defineGetter__("gIncompatibleListbox", function() {
   return gWin.document.getElementById("incompatibleListbox");
 });
 
@@ -809,6 +810,11 @@ function setupPrefs() {
   }
   Services.prefs.setBoolPref(PREF_APP_UPDATE_ENABLED, true)
 
+  if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_METRO_ENABLED)) {
+    gAppUpdateMetroEnabled = Services.prefs.getBoolPref(PREF_APP_UPDATE_METRO_ENABLED);
+  }
+  Services.prefs.setBoolPref(PREF_APP_UPDATE_METRO_ENABLED, true)
+
   if (Services.prefs.prefHasUserValue(PREF_EXTENSIONS_UPDATE_URL)) {
     gExtUpdateURL = Services.prefs.getCharPref(PREF_EXTENSIONS_UPDATE_URL);
   }
@@ -843,6 +849,13 @@ function resetPrefs() {
   }
   else if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_ENABLED)) {
     Services.prefs.clearUserPref(PREF_APP_UPDATE_ENABLED);
+  }
+
+  if (gAppUpdateMetroEnabled !== undefined) {
+    Services.prefs.setBoolPref(PREF_APP_UPDATE_METRO_ENABLED, gAppUpdateMetroEnabled);
+  }
+  else if (Services.prefs.prefHasUserValue(PREF_APP_UPDATE_METRO_ENABLED)) {
+    Services.prefs.clearUserPref(PREF_APP_UPDATE_METRO_ENABLED);
   }
 
   if (gExtUpdateURL !== undefined) {

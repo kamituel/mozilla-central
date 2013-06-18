@@ -25,7 +25,6 @@
 #include "nsIWebBrowserFocus.h"
 #include "nsIWebBrowserStream.h"
 #include "nsIPresShell.h"
-#include "nsIDocShellHistory.h"
 #include "nsIURIContentListener.h"
 #include "nsGUIEvent.h"
 #include "nsISHistoryListener.h"
@@ -317,10 +316,8 @@ NS_IMETHODIMP nsWebBrowser::EnableGlobalHistory(bool aEnable)
     nsresult rv;
     
     NS_ENSURE_STATE(mDocShell);
-    nsCOMPtr<nsIDocShellHistory> dsHistory(do_QueryInterface(mDocShell, &rv));
-    if (NS_FAILED(rv)) return rv;
     
-    return dsHistory->SetUseGlobalHistory(aEnable);
+    return mDocShell->SetUseGlobalHistory(aEnable);
 }
 
 NS_IMETHODIMP nsWebBrowser::GetContainerWindow(nsIWebBrowserChrome** aTopWindow)
@@ -400,19 +397,17 @@ NS_IMETHODIMP nsWebBrowser::SetIsActive(bool aIsActive)
 // nsWebBrowser::nsIDocShellTreeItem
 //*****************************************************************************   
 
-NS_IMETHODIMP nsWebBrowser::GetName(PRUnichar** aName)
+NS_IMETHODIMP nsWebBrowser::GetName(nsAString& aName)
 {
-   NS_ENSURE_ARG_POINTER(aName);
-
    if(mDocShell)  
       mDocShell->GetName(aName);
    else
-      *aName = ToNewUnicode(mInitInfo->name);
+      aName = mInitInfo->name;
 
    return NS_OK;
 }
 
-NS_IMETHODIMP nsWebBrowser::SetName(const PRUnichar* aName)
+NS_IMETHODIMP nsWebBrowser::SetName(const nsAString& aName)
 {
    if(mDocShell)
       {
@@ -1171,7 +1166,7 @@ NS_IMETHODIMP nsWebBrowser::Create()
       docShellParentWidget, mInitInfo->x, mInitInfo->y, mInitInfo->cx,
       mInitInfo->cy), NS_ERROR_FAILURE);
 
-   mDocShell->SetName(mInitInfo->name.get());
+   mDocShell->SetName(mInitInfo->name);
    if (mContentType == typeChromeWrapper)
    {
        mDocShell->SetItemType(nsIDocShellTreeItem::typeChrome);
@@ -1689,7 +1684,7 @@ void nsWebBrowser::WindowLowered(nsIWidget* aWidget)
   Deactivate();
 }
 
-bool nsWebBrowser::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion, uint32_t aFlags)
+bool nsWebBrowser::PaintWindow(nsIWidget* aWidget, nsIntRegion aRegion)
 {
   LayerManager* layerManager = aWidget->GetLayerManager();
   NS_ASSERTION(layerManager, "Must be in paint event");

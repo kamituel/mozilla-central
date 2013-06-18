@@ -11,14 +11,13 @@
 "use strict";
 
 SimpleTest.waitForExplicitFinish();
+browserElementTestHelpers.setEnabledPref(true);
+browserElementTestHelpers.addPermission();
 
 var iframe;
 
 function runTest() {
-  browserElementTestHelpers.setEnabledPref(true);
-  browserElementTestHelpers.addPermission();
-
-  var principal = SpecialPowers.wrap(SpecialPowers.getNodePrincipal(document));
+  var principal = SpecialPowers.wrap(document).nodePrincipal;
   SpecialPowers.addPermission("browser", true, { url: SpecialPowers.wrap(principal.URI).spec,
                                                  appId: principal.appId,
                                                  isInBrowserElement: true });
@@ -75,7 +74,7 @@ function finish() {
   // the /next/ test to fail!
   iframe.removeEventListener('mozbrowsershowmodalprompt', checkMessage);
 
-  var principal = SpecialPowers.wrap(SpecialPowers.getNodePrincipal(document));
+  var principal = SpecialPowers.wrap(document).nodePrincipal;
   SpecialPowers.removePermission("browser", { url: SpecialPowers.wrap(principal.URI).spec,
                                               appId: principal.appId,
                                               isInBrowserElement: true });
@@ -99,4 +98,4 @@ function checkMessage(e) {
   }
 }
 
-runTest();
+addEventListener('testready', runTest);

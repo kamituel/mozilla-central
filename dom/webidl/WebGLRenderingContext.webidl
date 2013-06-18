@@ -15,13 +15,6 @@
 // This IDL depends on the typed array specification defined at:
 // https://www.khronos.org/registry/typedarray/specs/latest/typedarrays.idl
 
-// XXXbz all sorts of forward declarations for things that are not new
-// bindings yet.
-interface Event;
-interface HTMLCanvasElement;
-interface HTMLVideoElement;
-interface ImageData;
-
 typedef unsigned long  GLenum;
 typedef boolean        GLboolean;
 typedef unsigned long  GLbitfield;
@@ -39,7 +32,10 @@ typedef unrestricted float GLfloat;
 typedef unrestricted float GLclampf;  
 
 dictionary WebGLContextAttributes {
-    boolean alpha = true;
+    // boolean alpha = true;
+    // We deviate from the spec here.
+    // If alpha isn't specified, we rely on a pref ("webgl.default-no-alpha")
+    boolean alpha;
     boolean depth = true;
     boolean stencil = false;
     boolean antialias = true;
@@ -814,6 +810,11 @@ interface WebGLExtensionDepthTexture
 };
 
 [NoInterfaceObject]
+interface WebGLExtensionElementIndexUint
+{
+};
+
+[NoInterfaceObject]
 interface WebGLExtensionLoseContext {
     void loseContext();
     void restoreContext();
@@ -833,5 +834,10 @@ interface WebGLExtensionStandardDerivatives {
 
 [NoInterfaceObject]
 interface WebGLExtensionTextureFloat
+{
+};
+
+[NoInterfaceObject]
+interface WebGLExtensionTextureFloatLinear
 {
 };

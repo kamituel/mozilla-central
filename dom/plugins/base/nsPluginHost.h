@@ -63,7 +63,7 @@ public:
   nsPluginHost();
   virtual ~nsPluginHost();
 
-  static nsPluginHost* GetInst();
+  static already_AddRefed<nsPluginHost> GetInst();
 
   NS_DECL_AND_IMPL_ZEROING_OPERATOR_NEW
 
@@ -79,7 +79,8 @@ public:
   nsresult SetUpPluginInstance(const char *aMimeType,
                                nsIURI *aURL,
                                nsPluginInstanceOwner *aOwner);
-  nsresult IsPluginEnabledForType(const char* aMimeType);
+  bool PluginExistsForType(const char* aMimeType);
+
   nsresult IsPluginEnabledForExtension(const char* aExtension, const char* &aMimeType);
   nsresult GetBlocklistStateForType(const char *aMimeType, uint32_t *state);
 
@@ -152,7 +153,7 @@ public:
   // Writes updated plugins settings to disk and unloads the plugin
   // if it is now disabled
   nsresult UpdatePluginInfo(nsPluginTag* aPluginTag);
-  
+
   // Helper that checks if a type is whitelisted in plugin.allowed_types.
   // Always returns true if plugin.allowed_types is not set
   static bool IsTypeWhitelisted(const char *aType);
@@ -175,7 +176,7 @@ public:
 
   nsTArray< nsRefPtr<nsNPAPIPluginInstance> > *InstanceArray();
 
-  void DestroyRunningInstances(nsTArray<nsCOMPtr<nsIDocument> >* aReloadDocs, nsPluginTag* aPluginTag);
+  void DestroyRunningInstances(nsPluginTag* aPluginTag);
 
   // Return the tag for |aLibrary| if found, nullptr if not.
   nsPluginTag* FindTagForLibrary(PRLibrary* aLibrary);
@@ -301,7 +302,7 @@ private:
   static nsPluginHost* sInst;
 };
 
-class NS_STACK_CLASS PluginDestructionGuard : protected PRCList
+class MOZ_STACK_CLASS PluginDestructionGuard : protected PRCList
 {
 public:
   PluginDestructionGuard(nsNPAPIPluginInstance *aInstance)

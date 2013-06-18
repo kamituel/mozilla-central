@@ -10,6 +10,10 @@
 #include "GLContext.h"
 #include "SharedSurfaceGL.h"
 #include "SurfaceStream.h"
+#ifdef MOZ_WIDGET_GONK
+#include "SharedSurfaceGralloc.h"
+#include "nsXULAppAPI.h"
+#endif
 
 using namespace mozilla::gfx;
 
@@ -27,7 +31,20 @@ GLScreenBuffer::Create(GLContext* gl,
         return nullptr;
     }
 
-    SurfaceFactory_GL* factory = new SurfaceFactory_Basic(gl, caps);
+    SurfaceFactory_GL* factory = nullptr;
+
+#ifdef MOZ_WIDGET_GONK
+    /* On B2G, we want a Gralloc factory, and we want one right at the start */
+    if (!factory &&
+        XRE_GetProcessType() != GeckoProcessType_Default)
+    {
+        factory = new SurfaceFactory_Gralloc(gl, caps);
+    }
+#endif
+
+    if (!factory)
+        factory = new SurfaceFactory_Basic(gl, caps);
+
     SurfaceStream* stream = SurfaceStream::CreateForType(
         SurfaceStream::ChooseGLStreamType(SurfaceStream::MainThread,
                                           caps.preserve),
@@ -325,27 +342,12 @@ GLScreenBuffer::Morph(SurfaceFactory_GL* newFactory, SurfaceStreamType streamTyp
     mStream = newStream;
 }
 
-bool
-GLScreenBuffer::Swap(const gfxIntSize& size)
+void
+GLScreenBuffer::Attach(SharedSurface* surface, const gfxIntSize& size)
 {
     ScopedBindFramebuffer autoFB(mGL);
 
-    SharedSurface* nextSurf = mStream->SwapProducer(mFactory, size);
-    if (!nextSurf) {
-        SurfaceFactory_GL* basicFactory =
-            new SurfaceFactory_Basic(mGL, mFactory->Caps());
-        nextSurf = mStream->SwapProducer(basicFactory, size);
-        if (!nextSurf) {
-            delete basicFactory;
-            return false;
-        }
-
-        // Swap out the apparently defective old factory.
-        delete mFactory;
-        mFactory = basicFactory;
-    }
-
-    SharedSurface_GL* surf = SharedSurface_GL::Cast(nextSurf);
+    SharedSurface_GL* surf = SharedSurface_GL::Cast(surface);
     if (mRead && SharedSurf())
         SharedSurf()->UnlockProd();
 
@@ -376,6 +378,23 @@ GLScreenBuffer::Swap(const gfxIntSize& size)
     if (!PreserveBuffer()) {
         // DiscardFramebuffer here could help perf on some mobile platforms.
     }
+}
+
+bool
+GLScreenBuffer::Swap(const gfxIntSize& size)
+{
+    SharedSurface* nextSurf = mStream->SwapProducer(mFactory, size);
+    if (!nextSurf) {
+        SurfaceFactory_Basic basicFactory(mGL, mFactory->Caps());
+        nextSurf = mStream->SwapProducer(&basicFactory, size);
+        if (!nextSurf)
+          return false;
+
+        NS_WARNING("SwapProd failed for sophisticated Factory type, fell back to Basic.");
+    }
+    MOZ_ASSERT(nextSurf);
+
+    Attach(nextSurf, size);
 
     return true;
 }
@@ -389,6 +408,16 @@ GLScreenBuffer::PublishFrame(const gfxIntSize& size)
     return good;
 }
 
+bool
+GLScreenBuffer::Resize(const gfxIntSize& size)
+{
+    SharedSurface* surface = mStream->Resize(mFactory, size);
+    if (!surface)
+        return false;
+
+    Attach(surface, size);
+    return true;
+}
 
 DrawBuffer*
 GLScreenBuffer::CreateDraw(const gfxIntSize& size)

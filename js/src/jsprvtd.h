@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -24,10 +24,8 @@
 #include "jsapi.h"
 #include "jsutil.h"
 
-#ifdef __cplusplus
 #include "js/HashTable.h"
 #include "js/Vector.h"
-#endif
 
 /*
  * Convenience constants.
@@ -58,17 +56,7 @@ typedef struct JSStackHeader        JSStackHeader;
 typedef struct JSSubString          JSSubString;
 typedef struct JSSpecializedNative  JSSpecializedNative;
 
-/*
- * Template declarations.
- *
- * jsprvtd.h can be included in both C and C++ translation units. For C++, it
- * may possibly be wrapped in an extern "C" block which does not agree with
- * templates.
- */
-#ifdef __cplusplus
-
-extern "C++" {
-
+/* String typedefs. */
 class JSDependentString;
 class JSExtensibleString;
 class JSExternalString;
@@ -82,6 +70,7 @@ namespace js {
 struct ArgumentsData;
 struct Class;
 
+class AutoNameVector;
 class RegExpGuard;
 class RegExpObject;
 class RegExpObjectBuilder;
@@ -89,6 +78,7 @@ class RegExpShared;
 class RegExpStatics;
 class MatchPairs;
 class PropertyName;
+class LazyScript;
 
 enum RegExpFlag
 {
@@ -114,6 +104,7 @@ class ContextStack;
 class ScriptFrameIter;
 
 class Proxy;
+class JS_FRIEND_API(AutoEnterPolicy);
 class JS_FRIEND_API(BaseProxyHandler);
 class JS_FRIEND_API(Wrapper);
 class JS_FRIEND_API(CrossCompartmentWrapper);
@@ -150,15 +141,17 @@ typedef JSPropertyOp         PropertyOp;
 typedef JSStrictPropertyOp   StrictPropertyOp;
 typedef JSPropertyDescriptor PropertyDescriptor;
 
+struct SourceCompressionToken;
+
 namespace frontend {
 
 struct BytecodeEmitter;
 struct Definition;
+class FullParseHandler;
 class FunctionBox;
 class ObjectBox;
 struct Token;
 struct TokenPos;
-struct TokenPtr;
 class TokenStream;
 class ParseMapPool;
 struct ParseNode;
@@ -218,7 +211,7 @@ struct IdValuePair
 
     IdValuePair() {}
     IdValuePair(jsid idArg)
-      : id(idArg)
+      : id(idArg), value(UndefinedValue())
     {}
 };
 
@@ -235,14 +228,6 @@ namespace WTF {
 class BumpPointerAllocator;
 
 } /* namespace WTF */
-
-} /* export "C++" */
-
-#else
-
-typedef struct JSAtom JSAtom;
-
-#endif  /* __cplusplus */
 
 /* "Friend" types used by jscntxt.h and jsdbgapi.h. */
 typedef enum JSTrapStatus {

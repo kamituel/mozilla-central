@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=79 ft=cpp:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -14,6 +13,7 @@
 #include "jsopcode.h"
 #include "jsscript.h"
 
+#include "ion/AsmJS.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
@@ -28,7 +28,7 @@ Bindings::Bindings()
 {}
 
 inline
-AliasedFormalIter::AliasedFormalIter(js::RawScript script)
+AliasedFormalIter::AliasedFormalIter(JSScript *script)
   : begin_(script->bindings.bindingArray()),
     p_(begin_),
     end_(begin_ + (script->funHasAnyAliasedFormal ? script->bindings.numArgs() : 0)),
@@ -84,16 +84,10 @@ SetFrameArgumentsObject(JSContext *cx, AbstractFramePtr frame,
 
 } // namespace js
 
-inline const char *
-JSScript::filename() const
-{
-    JS_ASSERT(scriptSource_);
-    return scriptSource()->filename();
-}
-
 inline void
 JSScript::setFunction(JSFunction *fun)
 {
+    JS_ASSERT(fun->isTenured());
     function_ = fun;
 }
 
@@ -101,7 +95,10 @@ inline JSFunction *
 JSScript::getFunction(size_t index)
 {
     JSObject *funobj = getObject(index);
-    JS_ASSERT(funobj->isFunction() && funobj->toFunction()->isInterpreted());
+#ifdef DEBUG
+    JSFunction *fun = funobj->toFunction();
+    JS_ASSERT_IF(fun->isNative(), IsAsmJSModuleNative(fun->native()));
+#endif
     return funobj->toFunction();
 }
 
@@ -154,35 +151,17 @@ JSScript::global() const
     return *compartment()->maybeGlobal();
 }
 
-#ifdef JS_METHODJIT
-inline bool
-JSScript::ensureHasMJITInfo(JSContext *cx)
-{
-    if (mJITInfo)
-        return true;
-    mJITInfo = cx->new_<JITScriptSet>();
-    return mJITInfo != NULL;
-}
-
 inline void
-JSScript::destroyMJITInfo(js::FreeOp *fop)
-{
-    fop->delete_(mJITInfo);
-    mJITInfo = NULL;
-}
-#endif /* JS_METHODJIT */
-
-inline void
-JSScript::writeBarrierPre(js::RawScript script)
+JSScript::writeBarrierPre(JSScript *script)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!script)
+    if (!script || !script->runtime()->needsBarrier())
         return;
 
     JS::Zone *zone = script->zone();
     if (zone->needsBarrier()) {
         JS_ASSERT(!zone->rt->isHeapBusy());
-        js::RawScript tmp = script;
+        JSScript *tmp = script;
         MarkScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
         JS_ASSERT(tmp == script);
     }
@@ -190,8 +169,25 @@ JSScript::writeBarrierPre(js::RawScript script)
 }
 
 inline void
-JSScript::writeBarrierPost(js::RawScript script, void *addr)
+JSScript::writeBarrierPost(JSScript *script, void *addr)
 {
+}
+
+/* static */ inline void
+js::LazyScript::writeBarrierPre(js::LazyScript *lazy)
+{
+#ifdef JSGC_INCREMENTAL
+    if (!lazy)
+        return;
+
+    JS::Zone *zone = lazy->zone();
+    if (zone->needsBarrier()) {
+        JS_ASSERT(!zone->rt->isHeapBusy());
+        js::LazyScript *tmp = lazy;
+        MarkLazyScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
+        JS_ASSERT(tmp == lazy);
+    }
+#endif
 }
 
 inline JSPrincipals *

@@ -17,6 +17,7 @@
 #include "nsTransportUtils.h"
 #include "nsProxyInfo.h"
 #include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsAutoPtr.h"
 #include "nsCOMPtr.h"
 #include "netCore.h"
@@ -24,6 +25,7 @@
 #include "prnetdb.h"
 #include "prerr.h"
 #include "NetworkActivityMonitor.h"
+#include "mozilla/VisualEventTracer.h"
 
 #include "nsIServiceManager.h"
 #include "nsISocketProviderService.h"
@@ -199,7 +201,7 @@ nsSocketInputStream::~nsSocketInputStream()
 void
 nsSocketInputStream::OnSocketReady(nsresult condition)
 {
-    SOCKET_LOG(("nsSocketInputStream::OnSocketReady [this=%x cond=%x]\n",
+    SOCKET_LOG(("nsSocketInputStream::OnSocketReady [this=%p cond=%x]\n",
         this, condition));
 
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
@@ -253,7 +255,7 @@ nsSocketInputStream::Close()
 NS_IMETHODIMP
 nsSocketInputStream::Available(uint64_t *avail)
 {
-    SOCKET_LOG(("nsSocketInputStream::Available [this=%x]\n", this));
+    SOCKET_LOG(("nsSocketInputStream::Available [this=%p]\n", this));
 
     *avail = 0;
 
@@ -280,7 +282,7 @@ nsSocketInputStream::Available(uint64_t *avail)
         char c;
 
         n = PR_Recv(fd, &c, 1, PR_MSG_PEEK, 0);
-        SOCKET_LOG(("nsSocketInputStream::Available [this=%x] "
+        SOCKET_LOG(("nsSocketInputStream::Available [this=%p] "
                     "using PEEK backup n=%d]\n", this, n));
     }
 
@@ -308,7 +310,7 @@ nsSocketInputStream::Available(uint64_t *avail)
 NS_IMETHODIMP
 nsSocketInputStream::Read(char *buf, uint32_t count, uint32_t *countRead)
 {
-    SOCKET_LOG(("nsSocketInputStream::Read [this=%x count=%u]\n", this, count));
+    SOCKET_LOG(("nsSocketInputStream::Read [this=%p count=%u]\n", this, count));
 
     *countRead = 0;
 
@@ -382,7 +384,7 @@ nsSocketInputStream::IsNonBlocking(bool *nonblocking)
 NS_IMETHODIMP
 nsSocketInputStream::CloseWithStatus(nsresult reason)
 {
-    SOCKET_LOG(("nsSocketInputStream::CloseWithStatus [this=%x reason=%x]\n", this, reason));
+    SOCKET_LOG(("nsSocketInputStream::CloseWithStatus [this=%p reason=%x]\n", this, reason));
 
     // may be called from any thread
  
@@ -406,7 +408,7 @@ nsSocketInputStream::AsyncWait(nsIInputStreamCallback *callback,
                                uint32_t amount,
                                nsIEventTarget *target)
 {
-    SOCKET_LOG(("nsSocketInputStream::AsyncWait [this=%x]\n", this));
+    SOCKET_LOG(("nsSocketInputStream::AsyncWait [this=%p]\n", this));
 
     // This variable will be non-null when we want to call the callback
     // directly from this function, but outside the lock.
@@ -419,14 +421,7 @@ nsSocketInputStream::AsyncWait(nsIInputStreamCallback *callback,
             //
             // build event proxy
             //
-            // failure to create an event proxy (most likely out of memory)
-            // shouldn't alter the state of the transport.
-            //
-            nsCOMPtr<nsIInputStreamCallback> temp;
-            nsresult rv = NS_NewInputStreamReadyEvent(getter_AddRefs(temp),
-                                                      callback, target);
-            if (NS_FAILED(rv)) return rv;
-            mCallback = temp;
+            mCallback = NS_NewInputStreamReadyEvent(callback, target);
         }
         else
             mCallback = callback;
@@ -468,7 +463,7 @@ nsSocketOutputStream::~nsSocketOutputStream()
 void
 nsSocketOutputStream::OnSocketReady(nsresult condition)
 {
-    SOCKET_LOG(("nsSocketOutputStream::OnSocketReady [this=%x cond=%x]\n",
+    SOCKET_LOG(("nsSocketOutputStream::OnSocketReady [this=%p cond=%x]\n",
         this, condition));
 
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
@@ -528,7 +523,7 @@ nsSocketOutputStream::Flush()
 NS_IMETHODIMP
 nsSocketOutputStream::Write(const char *buf, uint32_t count, uint32_t *countWritten)
 {
-    SOCKET_LOG(("nsSocketOutputStream::Write [this=%x count=%u]\n", this, count));
+    SOCKET_LOG(("nsSocketOutputStream::Write [this=%p count=%u]\n", this, count));
 
     *countWritten = 0;
 
@@ -623,7 +618,7 @@ nsSocketOutputStream::IsNonBlocking(bool *nonblocking)
 NS_IMETHODIMP
 nsSocketOutputStream::CloseWithStatus(nsresult reason)
 {
-    SOCKET_LOG(("nsSocketOutputStream::CloseWithStatus [this=%x reason=%x]\n", this, reason));
+    SOCKET_LOG(("nsSocketOutputStream::CloseWithStatus [this=%p reason=%x]\n", this, reason));
 
     // may be called from any thread
  
@@ -647,7 +642,7 @@ nsSocketOutputStream::AsyncWait(nsIOutputStreamCallback *callback,
                                 uint32_t amount,
                                 nsIEventTarget *target)
 {
-    SOCKET_LOG(("nsSocketOutputStream::AsyncWait [this=%x]\n", this));
+    SOCKET_LOG(("nsSocketOutputStream::AsyncWait [this=%p]\n", this));
 
     {
         MutexAutoLock lock(mTransport->mLock);
@@ -656,14 +651,7 @@ nsSocketOutputStream::AsyncWait(nsIOutputStreamCallback *callback,
             //
             // build event proxy
             //
-            // failure to create an event proxy (most likely out of memory)
-            // shouldn't alter the state of the transport.
-            //
-            nsCOMPtr<nsIOutputStreamCallback> temp;
-            nsresult rv = NS_NewOutputStreamReadyEvent(getter_AddRefs(temp),
-                                                       callback, target);
-            if (NS_FAILED(rv)) return rv;
-            mCallback = temp;
+            mCallback = NS_NewOutputStreamReadyEvent(callback, target);
         }
         else
             mCallback = callback;
@@ -729,6 +717,8 @@ nsSocketTransport::Init(const char **types, uint32_t typeCount,
                         const nsACString &host, uint16_t port,
                         nsIProxyInfo *givenProxyInfo)
 {
+    MOZ_EVENT_TRACER_NAME_OBJECT(this, host.BeginReading());
+
     nsCOMPtr<nsProxyInfo> proxyInfo;
     if (givenProxyInfo) {
         proxyInfo = do_QueryInterface(givenProxyInfo);
@@ -752,7 +742,7 @@ nsSocketTransport::Init(const char **types, uint32_t typeCount,
             proxyType = nullptr;
     }
 
-    SOCKET_LOG(("nsSocketTransport::Init [this=%x host=%s:%hu proxy=%s:%hu]\n",
+    SOCKET_LOG(("nsSocketTransport::Init [this=%p host=%s:%hu proxy=%s:%hu]\n",
         this, mHost.get(), mPort, mProxyHost.get(), mProxyPort));
 
     // include proxy type as a socket type if proxy type is not "http"
@@ -863,7 +853,7 @@ nsSocketTransport::PostEvent(uint32_t type, nsresult status, nsISupports *param)
 void
 nsSocketTransport::SendStatus(nsresult status)
 {
-    SOCKET_LOG(("nsSocketTransport::SendStatus [this=%x status=%x]\n", this, status));
+    SOCKET_LOG(("nsSocketTransport::SendStatus [this=%p status=%x]\n", this, status));
 
     nsCOMPtr<nsITransportEventSink> sink;
     uint64_t progress;
@@ -889,7 +879,7 @@ nsSocketTransport::SendStatus(nsresult status)
 nsresult
 nsSocketTransport::ResolveHost()
 {
-    SOCKET_LOG(("nsSocketTransport::ResolveHost [this=%x]\n", this));
+    SOCKET_LOG(("nsSocketTransport::ResolveHost [this=%p]\n", this));
 
     nsresult rv;
 
@@ -946,7 +936,7 @@ nsSocketTransport::ResolveHost()
 nsresult
 nsSocketTransport::BuildSocket(PRFileDesc *&fd, bool &proxyTransparent, bool &usingSSL)
 {
-    SOCKET_LOG(("nsSocketTransport::BuildSocket [this=%x]\n", this));
+    SOCKET_LOG(("nsSocketTransport::BuildSocket [this=%p]\n", this));
 
     nsresult rv;
 
@@ -1057,7 +1047,7 @@ nsSocketTransport::BuildSocket(PRFileDesc *&fd, bool &proxyTransparent, bool &us
 nsresult
 nsSocketTransport::InitiateSocket()
 {
-    SOCKET_LOG(("nsSocketTransport::InitiateSocket [this=%x]\n", this));
+    SOCKET_LOG(("nsSocketTransport::InitiateSocket [this=%p]\n", this));
 
     nsresult rv;
 
@@ -1179,6 +1169,8 @@ nsSocketTransport::InitiateSocket()
     //
     PRNetAddr prAddr;
     NetAddrToPRNetAddr(&mNetAddr, &prAddr);
+
+    MOZ_EVENT_TRACER_EXEC(this, "net::tcp::connect");
     status = PR_Connect(fd, &prAddr, NS_SOCKET_CONNECT_TIMEOUT);
     if (status == PR_SUCCESS) {
         // 
@@ -1251,7 +1243,7 @@ nsSocketTransport::RecoverFromError()
 {
     NS_ASSERTION(NS_FAILED(mCondition), "there should be something wrong");
 
-    SOCKET_LOG(("nsSocketTransport::RecoverFromError [this=%x state=%x cond=%x]\n",
+    SOCKET_LOG(("nsSocketTransport::RecoverFromError [this=%p state=%x cond=%x]\n",
         this, mState, mCondition));
 
     // can only recover from errors in these states
@@ -1342,7 +1334,7 @@ nsSocketTransport::RecoverFromError()
 void
 nsSocketTransport::OnMsgInputClosed(nsresult reason)
 {
-    SOCKET_LOG(("nsSocketTransport::OnMsgInputClosed [this=%x reason=%x]\n",
+    SOCKET_LOG(("nsSocketTransport::OnMsgInputClosed [this=%p reason=%x]\n",
         this, reason));
 
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
@@ -1364,7 +1356,7 @@ nsSocketTransport::OnMsgInputClosed(nsresult reason)
 void
 nsSocketTransport::OnMsgOutputClosed(nsresult reason)
 {
-    SOCKET_LOG(("nsSocketTransport::OnMsgOutputClosed [this=%x reason=%x]\n",
+    SOCKET_LOG(("nsSocketTransport::OnMsgOutputClosed [this=%p reason=%x]\n",
         this, reason));
 
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
@@ -1404,6 +1396,8 @@ nsSocketTransport::OnSocketConnected()
         mFDconnected = true;
     }
 
+    MOZ_EVENT_TRACER_DONE(this, "net::tcp::connect");
+
     SendStatus(NS_NET_STATUS_CONNECTED_TO);
 }
 
@@ -1420,14 +1414,47 @@ nsSocketTransport::GetFD_Locked()
     return mFD;
 }
 
+class ThunkPRClose : public nsRunnable
+{
+public:
+  ThunkPRClose(PRFileDesc *fd) : mFD(fd) {}
+
+  NS_IMETHOD Run()
+  {
+    PR_Close(mFD);
+    return NS_OK;
+  }
+private:
+  PRFileDesc *mFD;
+};
+
+void
+STS_PRCloseOnSocketTransport(PRFileDesc *fd)
+{
+  if (gSocketTransportService) {
+    // Can't PR_Close() a socket off STS thread. Thunk it to STS to die
+    // FIX - Should use RUN_ON_THREAD once it's generally available
+    // RUN_ON_THREAD(gSocketThread,WrapRunnableNM(&PR_Close, mFD);
+    gSocketTransportService->Dispatch(new ThunkPRClose(fd), NS_DISPATCH_NORMAL);
+  } else {
+    // something horrible has happened
+    NS_ASSERTION(gSocketTransportService, "No STS service");
+  }
+}
+
 void
 nsSocketTransport::ReleaseFD_Locked(PRFileDesc *fd)
 {
     NS_ASSERTION(mFD == fd, "wrong fd");
 
     if (--mFDref == 0) {
-        SOCKET_LOG(("nsSocketTransport: calling PR_Close [this=%x]\n", this));
-        PR_Close(mFD);
+        if (PR_GetCurrentThread() == gSocketThread) {
+            SOCKET_LOG(("nsSocketTransport: calling PR_Close [this=%p]\n", this));
+            PR_Close(mFD);
+        } else {
+            // Can't PR_Close() a socket off STS thread. Thunk it to STS to die
+            STS_PRCloseOnSocketTransport(mFD);
+        }
         mFD = nullptr;
     }
 }
@@ -1525,7 +1552,7 @@ nsSocketTransport::OnSocketEvent(uint32_t type, nsresult status, nsISupports *pa
     }
     
     if (NS_FAILED(mCondition)) {
-        SOCKET_LOG(("  after event [this=%x cond=%x]\n", this, mCondition));
+        SOCKET_LOG(("  after event [this=%p cond=%x]\n", this, mCondition));
         if (!mAttached) // need to process this error ourselves...
             OnSocketDetached(nullptr);
     }
@@ -1539,7 +1566,7 @@ nsSocketTransport::OnSocketEvent(uint32_t type, nsresult status, nsISupports *pa
 void
 nsSocketTransport::OnSocketReady(PRFileDesc *fd, int16_t outFlags)
 {
-    SOCKET_LOG(("nsSocketTransport::OnSocketReady [this=%x outFlags=%hd]\n",
+    SOCKET_LOG(("nsSocketTransport::OnSocketReady [this=%p outFlags=%hd]\n",
         this, outFlags));
 
     if (outFlags == -1) {
@@ -1621,7 +1648,7 @@ nsSocketTransport::OnSocketReady(PRFileDesc *fd, int16_t outFlags)
 void
 nsSocketTransport::OnSocketDetached(PRFileDesc *fd)
 {
-    SOCKET_LOG(("nsSocketTransport::OnSocketDetached [this=%x cond=%x]\n",
+    SOCKET_LOG(("nsSocketTransport::OnSocketDetached [this=%p cond=%x]\n",
         this, mCondition));
 
     NS_ASSERTION(PR_GetCurrentThread() == gSocketThread, "wrong thread");
@@ -1715,7 +1742,7 @@ nsSocketTransport::OpenInputStream(uint32_t flags,
                                    uint32_t segcount,
                                    nsIInputStream **result)
 {
-    SOCKET_LOG(("nsSocketTransport::OpenInputStream [this=%x flags=%x]\n",
+    SOCKET_LOG(("nsSocketTransport::OpenInputStream [this=%p flags=%x]\n",
         this, flags));
 
     NS_ENSURE_TRUE(!mInput.IsReferenced(), NS_ERROR_UNEXPECTED);
@@ -1762,7 +1789,7 @@ nsSocketTransport::OpenOutputStream(uint32_t flags,
                                     uint32_t segcount,
                                     nsIOutputStream **result)
 {
-    SOCKET_LOG(("nsSocketTransport::OpenOutputStream [this=%x flags=%x]\n",
+    SOCKET_LOG(("nsSocketTransport::OpenOutputStream [this=%p flags=%x]\n",
         this, flags));
 
     NS_ENSURE_TRUE(!mOutput.IsReferenced(), NS_ERROR_UNEXPECTED);
@@ -1832,10 +1859,15 @@ nsSocketTransport::GetSecurityCallbacks(nsIInterfaceRequestor **callbacks)
 NS_IMETHODIMP
 nsSocketTransport::SetSecurityCallbacks(nsIInterfaceRequestor *callbacks)
 {
+    nsCOMPtr<nsIInterfaceRequestor> threadsafeCallbacks;
+    NS_NewNotificationCallbacksAggregation(callbacks, nullptr,
+                                           NS_GetCurrentThread(),
+                                           getter_AddRefs(threadsafeCallbacks));
+
     nsCOMPtr<nsISupports> secinfo;
     {
         MutexAutoLock lock(mLock);
-        mCallbacks = callbacks;
+        mCallbacks = threadsafeCallbacks;
         SOCKET_LOG(("Reset callbacks for secinfo=%p callbacks=%p\n",
                     mSecInfo.get(), mCallbacks.get()));
 
@@ -1845,7 +1877,7 @@ nsSocketTransport::SetSecurityCallbacks(nsIInterfaceRequestor *callbacks)
     // don't call into PSM while holding mLock!!
     nsCOMPtr<nsISSLSocketControl> secCtrl(do_QueryInterface(secinfo));
     if (secCtrl)
-        secCtrl->SetNotificationCallbacks(callbacks);
+        secCtrl->SetNotificationCallbacks(threadsafeCallbacks);
 
     return NS_OK;
 }
@@ -2144,6 +2176,7 @@ nsSocketTransport::OnLookupComplete(nsICancelable *request,
     // flag host lookup complete for the benefit of the ResolveHost method.
     mResolving = false;
 
+    MOZ_EVENT_TRACER_WAIT(this, "net::tcp::connect");
     nsresult rv = PostEvent(MSG_DNS_LOOKUP_COMPLETE, status, rec);
 
     // if posting a message fails, then we should assume that the socket

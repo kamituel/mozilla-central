@@ -1,12 +1,13 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=79:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef jscompartment_inlines_h___
 #define jscompartment_inlines_h___
+
+#include "jscompartment.h"
 
 inline void
 JSCompartment::initGlobal(js::GlobalObject &global)
@@ -25,7 +26,7 @@ JSCompartment::maybeGlobal() const
 
 js::AutoCompartment::AutoCompartment(JSContext *cx, JSObject *target)
   : cx_(cx),
-    origin_(cx->compartment)
+    origin_(cx->compartment())
 {
     cx_->enterCompartment(target->compartment());
 }
@@ -76,9 +77,9 @@ class AutoEnterAtomsCompartment
   public:
     AutoEnterAtomsCompartment(JSContext *cx)
       : cx(cx),
-        oldCompartment(cx->compartment)
+        oldCompartment(cx->compartment())
     {
-        cx->setCompartment(cx->runtime->atomsCompartment);
+        cx->setCompartment(cx->runtime()->atomsCompartment);
     }
 
     ~AutoEnterAtomsCompartment()

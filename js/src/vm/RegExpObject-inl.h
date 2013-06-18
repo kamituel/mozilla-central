@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -11,12 +10,10 @@
 #include "mozilla/Util.h"
 
 #include "RegExpObject.h"
-#include "RegExpStatics.h"
 
 #include "jsobjinlines.h"
 #include "jsstrinlines.h"
 
-#include "RegExpStatics-inl.h"
 #include "String-inl.h"
 
 inline js::RegExpObject &
@@ -105,8 +102,8 @@ inline bool
 RegExpShared::isJITRuntimeEnabled(JSContext *cx)
 {
 #if ENABLE_YARR_JIT
-# if defined(ANDROID) && defined(JS_METHODJIT)
-    return cx->methodJitEnabled;
+# if defined(ANDROID)
+    return !cx->jitIsBroken;
 # else
     return true;
 # endif
@@ -116,17 +113,17 @@ RegExpShared::isJITRuntimeEnabled(JSContext *cx)
 }
 
 inline bool
-RegExpToShared(JSContext *cx, JSObject &obj, RegExpGuard *g)
+RegExpToShared(JSContext *cx, HandleObject obj, RegExpGuard *g)
 {
-    if (obj.isRegExp())
-        return obj.asRegExp().getShared(cx, g);
-    return Proxy::regexp_toShared(cx, &obj, g);
+    if (obj->isRegExp())
+        return obj->asRegExp().getShared(cx, g);
+    return Proxy::regexp_toShared(cx, obj, g);
 }
 
 inline void
 RegExpShared::prepareForUse(JSContext *cx)
 {
-    gcNumberWhenUsed = cx->runtime->gcNumber;
+    gcNumberWhenUsed = cx->runtime()->gcNumber;
 }
 
 RegExpGuard::RegExpGuard(JSContext *cx)

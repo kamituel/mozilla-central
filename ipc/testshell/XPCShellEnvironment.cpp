@@ -26,7 +26,6 @@
 #include "nsIChannel.h"
 #include "nsIClassInfo.h"
 #include "nsIDirectoryService.h"
-#include "nsIJSContextStack.h"
 #include "nsIJSRuntimeService.h"
 #include "nsIPrincipal.h"
 #include "nsIScriptSecurityManager.h"
@@ -34,10 +33,14 @@
 #include "nsIXPConnect.h"
 #include "nsIXPCScriptable.h"
 
+#include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsJSUtils.h"
 #include "nsJSPrincipals.h"
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
+
+#include "BackstagePass.h"
 
 #include "TestShellChild.h"
 #include "TestShellParent.h"
@@ -52,24 +55,6 @@ using mozilla::ipc::TestShellParent;
 namespace {
 
 static const char kDefaultRuntimeScriptFilename[] = "xpcshell.js";
-
-class FullTrustSecMan : public nsIScriptSecurityManager
-{
-public:
-    NS_DECL_ISUPPORTS
-    NS_DECL_NSIXPCSECURITYMANAGER
-    NS_DECL_NSISCRIPTSECURITYMANAGER
-
-    FullTrustSecMan() { }
-    virtual ~FullTrustSecMan() { }
-
-    void SetSystemPrincipal(nsIPrincipal *aPrincipal) {
-        mSystemPrincipal = aPrincipal;
-    }
-
-private:
-    nsCOMPtr<nsIPrincipal> mSystemPrincipal;
-};
 
 class XPCShellDirProvider : public nsIDirectoryServiceProvider
 {
@@ -276,9 +261,9 @@ Load(JSContext *cx,
      unsigned argc,
      JS::Value *vp)
 {
-    JS::Value result;
+    JS::Rooted<JS::Value> result(cx);
 
-    JSObject *obj = JS_THIS_OBJECT(cx, vp);
+    JS::Rooted<JSObject*> obj(cx, JS_THIS_OBJECT(cx, vp));
     if (!obj)
         return JS_FALSE;
 
@@ -307,7 +292,7 @@ Load(JSContext *cx,
             return JS_FALSE;
 
         if (!Environment(cx)->ShouldCompileOnly() &&
-            !JS_ExecuteScript(cx, obj, script, &result)) {
+            !JS_ExecuteScript(cx, obj, script, result.address())) {
             return JS_FALSE;
         }
     }
@@ -490,7 +475,7 @@ DumpHeap(JSContext *cx,
 
 #endif /* DEBUG */
 
-JSFunctionSpec gGlobalFunctions[] =
+const JSFunctionSpec gGlobalFunctions[] =
 {
     JS_FS("print",           Print,          0,0),
     JS_FS("load",            Load,           1,0),
@@ -521,16 +506,17 @@ typedef enum JSShellErrNum
 
 static void
 ProcessFile(JSContext *cx,
-            JSObject *obj,
+            JS::Handle<JSObject*> obj,
             const char *filename,
             FILE *file,
             JSBool forceTTY)
 {
     XPCShellEnvironment* env = Environment(cx);
-    XPCShellEnvironment::AutoContextPusher pusher(env);
+    nsCxPusher pusher;
+    pusher.Push(env->GetContext());
 
     JSScript *script;
-    JS::Value result;
+    JS::Rooted<JS::Value> result(cx);
     int lineno, startline;
     JSBool ok, hitEOF;
     char *bufp, buffer[4096];
@@ -568,10 +554,9 @@ ProcessFile(JSContext *cx,
         options.setUTF8(true)
                .setFileAndLine(filename, 1)
                .setPrincipals(env->GetPrincipal());
-        JS::RootedObject rootedObj(cx, obj);
-        JSScript* script = JS::Compile(cx, rootedObj, options, file);
+        JSScript* script = JS::Compile(cx, obj, options, file);
         if (script && !env->ShouldCompileOnly())
-            (void)JS_ExecuteScript(cx, obj, script, &result);
+            (void)JS_ExecuteScript(cx, obj, script, result.address());
 
         return;
     }
@@ -611,7 +596,7 @@ ProcessFile(JSContext *cx,
             JSErrorReporter older;
 
             if (!env->ShouldCompileOnly()) {
-                ok = JS_ExecuteScript(cx, obj, script, &result);
+                ok = JS_ExecuteScript(cx, obj, script, result.address());
                 if (ok && result != JSVAL_VOID) {
                     /* Suppress error reports from JS_ValueToString(). */
                     older = JS_SetErrorReporter(cx, NULL);
@@ -634,216 +619,6 @@ ProcessFile(JSContext *cx,
 }
 
 } /* anonymous namespace */
-
-NS_INTERFACE_MAP_BEGIN(FullTrustSecMan)
-    NS_INTERFACE_MAP_ENTRY(nsIXPCSecurityManager)
-    NS_INTERFACE_MAP_ENTRY(nsIScriptSecurityManager)
-    NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIXPCSecurityManager)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_ADDREF(FullTrustSecMan)
-NS_IMPL_RELEASE(FullTrustSecMan)
-
-NS_IMETHODIMP
-FullTrustSecMan::CanCreateWrapper(JSContext * aJSContext,
-                                  const nsIID & aIID,
-                                  nsISupports *aObj,
-                                  nsIClassInfo *aClassInfo,
-                                  void * *aPolicy)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CanCreateInstance(JSContext * aJSContext,
-                                   const nsCID & aCID)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CanGetService(JSContext * aJSContext,
-                               const nsCID & aCID)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CanAccess(uint32_t aAction,
-                           nsAXPCNativeCallContext *aCallContext,
-                           JSContext * aJSContext,
-                           JSObject * aJSObject,
-                           nsISupports *aObj,
-                           nsIClassInfo *aClassInfo,
-                           jsid aName,
-                           void * *aPolicy)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckPropertyAccess(JSContext * aJSContext,
-                                     JSObject * aJSObject,
-                                     const char *aClassName,
-                                     jsid aProperty,
-                                     uint32_t aAction)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckLoadURIFromScript(JSContext * cx,
-                                        nsIURI *uri)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckLoadURIWithPrincipal(nsIPrincipal *aPrincipal,
-                                           nsIURI *uri,
-                                           uint32_t flags)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckLoadURIStrWithPrincipal(nsIPrincipal *aPrincipal,
-                                              const nsACString & uri,
-                                              uint32_t flags)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckFunctionAccess(JSContext * cx,
-                                     void * funObj,
-                                     void * targetObj)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CanExecuteScripts(JSContext * cx,
-                                   nsIPrincipal *principal,
-                                   bool *_retval)
-{
-    *_retval = true;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetSubjectPrincipal(nsIPrincipal **_retval)
-{
-    NS_IF_ADDREF(*_retval = mSystemPrincipal);
-    return *_retval ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetSystemPrincipal(nsIPrincipal **_retval)
-{
-    NS_IF_ADDREF(*_retval = mSystemPrincipal);
-    return *_retval ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetSimpleCodebasePrincipal(nsIURI *aURI,
-                                            nsIPrincipal **_retval)
-{
-    NS_IF_ADDREF(*_retval = mSystemPrincipal);
-    return *_retval ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetNoAppCodebasePrincipal(nsIURI *aURI,
-                                           nsIPrincipal **_retval)
-{
-    return GetSimpleCodebasePrincipal(aURI, _retval);
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetCodebasePrincipal(nsIURI *aURI, nsIPrincipal **_retval)
-{
-    return GetSimpleCodebasePrincipal(aURI, _retval);
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetAppCodebasePrincipal(nsIURI *aURI,
-                                         uint32_t aAppId,
-                                         bool aInMozBrowser,
-                                         nsIPrincipal **_retval)
-{
-    return GetSimpleCodebasePrincipal(aURI, _retval);
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetDocShellCodebasePrincipal(nsIURI *aURI,
-                                              nsIDocShell* aDocShell,
-                                              nsIPrincipal **_retval)
-{
-    return GetSimpleCodebasePrincipal(aURI, _retval);
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetObjectPrincipal(JSContext * cx,
-                                    JSObject * obj,
-                                    nsIPrincipal **_retval)
-{
-    NS_IF_ADDREF(*_retval = mSystemPrincipal);
-    return *_retval ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::SubjectPrincipalIsSystem(bool *_retval)
-{
-    *_retval = true;
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckSameOrigin(JSContext * aJSContext,
-                                 nsIURI *aTargetURI)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::CheckSameOriginURI(nsIURI *aSourceURI,
-                                    nsIURI *aTargetURI,
-                                    bool reportError)
-{
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetChannelPrincipal(nsIChannel *aChannel,
-                                     nsIPrincipal **_retval)
-{
-    NS_IF_ADDREF(*_retval = mSystemPrincipal);
-    return *_retval ? NS_OK : NS_ERROR_FAILURE;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::IsSystemPrincipal(nsIPrincipal *aPrincipal,
-                                   bool *_retval)
-{
-    *_retval = aPrincipal == mSystemPrincipal;
-    return NS_OK;
-}
-
-NS_IMETHODIMP_(nsIPrincipal *)
-FullTrustSecMan::GetCxSubjectPrincipal(JSContext *cx)
-{
-    return mSystemPrincipal;
-}
-
-NS_IMETHODIMP
-FullTrustSecMan::GetExtendedOrigin(nsIURI* aURI, uint32_t aAppId,
-                                   bool aInMozBrowser,
-                                   nsACString& aExtendedOrigin)
-{
-  aExtendedOrigin.Truncate();
-  return NS_OK;
-}
 
 NS_IMETHODIMP_(nsrefcnt)
 XPCShellDirProvider::AddRef()
@@ -878,26 +653,6 @@ XPCShellDirProvider::GetFile(const char *prop,
     }
 
     return NS_ERROR_FAILURE;
-}
-
-XPCShellEnvironment::
-AutoContextPusher::AutoContextPusher(XPCShellEnvironment* aEnv)
-{
-    NS_ASSERTION(aEnv->mCx, "Null context?!");
-
-    if (NS_SUCCEEDED(aEnv->mCxStack->Push(aEnv->mCx))) {
-        mEnv = aEnv;
-    }
-}
-
-XPCShellEnvironment::
-AutoContextPusher::~AutoContextPusher()
-{
-    if (mEnv) {
-        JSContext* cx;
-        mEnv->mCxStack->Pop(&cx);
-        NS_ASSERTION(cx == mEnv->mCx, "Wrong context on the stack!");
-    }
 }
 
 // static
@@ -935,8 +690,6 @@ XPCShellEnvironment::~XPCShellEnvironment()
 
         JSRuntime *rt = JS_GetRuntime(mCx);
         JS_GC(rt);
-
-        mCxStack = nullptr;
 
         if (mJSPrincipals) {
             JS_DropPrincipals(rt, mJSPrincipals);
@@ -1004,11 +757,7 @@ XPCShellEnvironment::Init()
         return false;
     }
 
-    nsRefPtr<FullTrustSecMan> secman(new FullTrustSecMan());
-    xpc->SetSecurityManagerForJSContext(cx, secman, 0xFFFF);
-
     nsCOMPtr<nsIPrincipal> principal;
-
     nsCOMPtr<nsIScriptSecurityManager> securityManager =
         do_GetService(NS_SCRIPTSECURITYMANAGER_CONTRACTID, &rv);
     if (NS_SUCCEEDED(rv) && securityManager) {
@@ -1019,31 +768,24 @@ XPCShellEnvironment::Init()
             // fetch the JS principals and stick in a global
             mJSPrincipals = nsJSPrincipals::get(principal);
             JS_HoldPrincipals(mJSPrincipals);
-            secman->SetSystemPrincipal(principal);
         }
     } else {
         fprintf(stderr, "+++ Failed to get ScriptSecurityManager service, running without principals");
     }
 
-    nsCOMPtr<nsIJSContextStack> cxStack =
-        do_GetService("@mozilla.org/js/xpc/ContextStack;1");
-    if (!cxStack) {
-        NS_ERROR("failed to get the nsThreadJSContextStack service!");
-        return false;
-    }
-    mCxStack = cxStack;
+    nsCxPusher pusher;
+    pusher.Push(mCx);
 
-    AutoContextPusher pusher(this);
-
-    nsCOMPtr<nsIXPCScriptable> backstagePass;
-    rv = rtsvc->GetBackstagePass(getter_AddRefs(backstagePass));
+    nsRefPtr<BackstagePass> backstagePass;
+    rv = NS_NewBackstagePass(getter_AddRefs(backstagePass));
     if (NS_FAILED(rv)) {
-        NS_ERROR("Failed to get backstage pass from rtsvc!");
+        NS_ERROR("Failed to create backstage pass!");
         return false;
     }
 
     nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
-    rv = xpc->InitClassesWithNewWrappedGlobal(cx, backstagePass,
+    rv = xpc->InitClassesWithNewWrappedGlobal(cx,
+                                              static_cast<nsIGlobalObject *>(backstagePass),
                                               principal, 0,
                                               JS::SystemZone,
                                               getter_AddRefs(holder));
@@ -1052,13 +794,13 @@ XPCShellEnvironment::Init()
         return false;
     }
 
-    JSObject *globalObj;
-    rv = holder->GetJSObject(&globalObj);
-    if (NS_FAILED(rv)) {
+    JS::Rooted<JSObject*> globalObj(cx, holder->GetJSObject());
+    if (!globalObj) {
         NS_ERROR("Failed to get global JSObject!");
         return false;
     }
 
+    backstagePass->SetGlobalObject(globalObj);
 
     {
         JSAutoRequest ar(cx);
@@ -1089,13 +831,14 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
                                     nsString* aResult)
 {
   XPCShellEnvironment* env = Environment(mCx);
-  XPCShellEnvironment::AutoContextPusher pusher(env);
+  nsCxPusher pusher;
+  pusher.Push(env->GetContext());
 
   JSAutoRequest ar(mCx);
 
   JS_ClearPendingException(mCx);
 
-  JSObject* global = GetGlobalObject();
+  JS::Rooted<JSObject*> global(mCx, GetGlobalObject());
   JSAutoCompartment ac(mCx, global);
 
   JSScript* script =
@@ -1111,8 +854,8 @@ XPCShellEnvironment::EvaluateString(const nsString& aString,
           aResult->Truncate();
       }
 
-      JS::Value result;
-      JSBool ok = JS_ExecuteScript(mCx, global, script, &result);
+      JS::Rooted<JS::Value> result(mCx);
+      JSBool ok = JS_ExecuteScript(mCx, global, script, result.address());
       if (ok && result != JSVAL_VOID) {
           JSErrorReporter old = JS_SetErrorReporter(mCx, NULL);
           JSString* str = JS_ValueToString(mCx, result);

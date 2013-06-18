@@ -68,19 +68,37 @@ private:
 class IceConfiguration
 {
 public:
-  bool addServer(const std::string& addr, uint16_t port)
+  bool addStunServer(const std::string& addr, uint16_t port)
   {
     NrIceStunServer* server(NrIceStunServer::Create(addr, port));
     if (!server) {
       return false;
     }
-    addServer(*server);
+    addStunServer(*server);
     return true;
   }
-  void addServer(const NrIceStunServer& server) { mServers.push_back (server); }
-  const std::vector<NrIceStunServer>& getServers() const { return mServers; }
+  bool addTurnServer(const std::string& addr, uint16_t port,
+                     const std::string& username,
+                     const std::string& pwd)
+  {
+    // TODO(ekr@rtfm.com): Need support for SASLprep for
+    // username and password. Bug # ???
+    std::vector<unsigned char> password(pwd.begin(), pwd.end());
+
+    NrIceTurnServer* server(NrIceTurnServer::Create(addr, port, username, password));
+    if (!server) {
+      return false;
+    }
+    addTurnServer(*server);
+    return true;
+  }
+  void addStunServer(const NrIceStunServer& server) { mStunServers.push_back (server); }
+  void addTurnServer(const NrIceTurnServer& server) { mTurnServers.push_back (server); }
+  const std::vector<NrIceStunServer>& getStunServers() const { return mStunServers; }
+  const std::vector<NrIceTurnServer>& getTurnServers() const { return mTurnServers; }
 private:
-  std::vector<NrIceStunServer> mServers;
+  std::vector<NrIceStunServer> mStunServers;
+  std::vector<NrIceTurnServer> mTurnServers;
 };
 
 class PeerConnectionWrapper;
@@ -115,6 +133,18 @@ public:
     kClosed
   };
 
+  /* Must match constants in IPeerConnection.idl */
+  /* Must also be int the same order as in fsmdef_states.h */
+  enum SignalingState {
+    kSignalingInvalid            = 0,
+    kSignalingStable             = 1,
+    kSignalingHaveLocalOffer     = 2,
+    kSignalingHaveRemoteOffer    = 3,
+    kSignalingHaveLocalPranswer  = 4,
+    kSignalingHaveRemotePranswer = 5,
+    kSignalingClosed             = 6
+  };
+
   enum SipccState {
     kIdle,
     kStarting,
@@ -136,6 +166,19 @@ public:
     kRoleAnswerer
   };
 
+  enum Error {
+    kNoError                          = 0,
+    kInvalidConstraintsType           = 1,
+    kInvalidCandidateType             = 2,
+    kInvalidMediastreamTrack          = 3,
+    kInvalidState                     = 4,
+    kInvalidSessionDescription        = 5,
+    kIncompatibleSessionDescription   = 6,
+    kIncompatibleConstraints          = 7,
+    kIncompatibleMediaStreamTrack     = 8,
+    kInternalError                    = 9
+  };
+
   NS_DECL_ISUPPORTS
   NS_DECL_IPEERCONNECTION
 
@@ -144,8 +187,8 @@ public:
     IceConfiguration *aDst, JSContext* aCx);
   static nsresult ConvertConstraints(
     const JS::Value& aConstraints, MediaConstraints* aObj, JSContext* aCx);
-  static nsresult MakeMediaStream(nsIDOMWindow* aWindow,
-                                  uint32_t aHint, nsIDOMMediaStream** aStream);
+  static already_AddRefed<DOMMediaStream> MakeMediaStream(nsPIDOMWindow* aWindow,
+                                                          uint32_t aHint);
 
   Role GetRole() const {
     PC_AUTO_ENTER_API_CALL_NO_CHECK();
@@ -157,7 +200,6 @@ public:
   // Implementation of the only observer we need
   virtual void onCallEvent(
     ccapi_call_event_e aCallEvent,
-    CSF::CC_CallPtr aCall,
     CSF::CC_CallInfoPtr aInfo
   );
 
@@ -178,6 +220,7 @@ public:
   // ICE events
   void IceGatheringCompleted(NrIceCtx *aCtx);
   void IceCompleted(NrIceCtx *aCtx);
+  void IceFailed(NrIceCtx *aCtx);
   void IceStreamReady(NrIceMediaStream *aStream);
 
   static void ListenThread(void *aData);
@@ -222,6 +265,9 @@ public:
   NS_IMETHODIMP CreateOffer(MediaConstraints& aConstraints);
   NS_IMETHODIMP CreateAnswer(MediaConstraints& aConstraints);
 
+  nsresult InitializeDataChannel(int track_id, uint16_t aLocalport,
+                                 uint16_t aRemoteport, uint16_t aNumstreams);
+
   // Called whenever something is unrecognized by the parser
   // May be called more than once and does not necessarily mean
   // that parsing was stopped, only that something was unrecognized.
@@ -230,6 +276,12 @@ public:
   // Called when OnLocal/RemoteDescriptionSuccess/Error
   // is called to start the list over.
   void ClearSdpParseErrorMessages();
+
+  // Called to retreive the list of parsing errors.
+  const std::vector<std::string> &GetSdpParseErrors();
+
+  // Sets the RTC Signaling State
+  void SetSignalingState_m(SignalingState aSignalingState);
 
 private:
   PeerConnectionImpl(const PeerConnectionImpl&rhs);
@@ -242,8 +294,9 @@ private:
                       JSContext* aCx);
   NS_IMETHODIMP CreateOfferInt(MediaConstraints& constraints);
   NS_IMETHODIMP CreateAnswerInt(MediaConstraints& constraints);
+  NS_IMETHODIMP EnsureDataConnection(uint16_t aNumstreams);
 
-  nsresult CloseInt(bool aIsSynchronous);
+  nsresult CloseInt();
   void ChangeReadyState(ReadyState aReadyState);
   nsresult CheckApiState(bool assert_ice_ready) const;
   void CheckThread() const {
@@ -265,12 +318,11 @@ private:
   void virtualDestroyNSSReference() MOZ_FINAL;
 #endif
 
-  // Shut down media. Called on any thread.
-  void ShutdownMedia(bool isSynchronous);
+  // Shut down media - called on main thread only
+  void ShutdownMedia();
 
   // ICE callbacks run on the right thread.
-  nsresult IceGatheringCompleted_m();
-  nsresult IceCompleted_m();
+  nsresult IceStateChange_m(IceState aState);
 
   // The role we are adopting
   Role mRole;
@@ -278,6 +330,7 @@ private:
   // The call
   CSF::CC_CallPtr mCall;
   ReadyState mReadyState;
+  SignalingState mSignalingState;
 
   // ICE State
   IceState mIceState;
@@ -321,6 +374,8 @@ private:
   // Bug 840728.
   int mNumAudioStreams;
   int mNumVideoStreams;
+
+  bool mHaveDataStream;
 
   // Holder for error messages from parsing SDP
   std::vector<std::string> mSDPParseErrorMessages;

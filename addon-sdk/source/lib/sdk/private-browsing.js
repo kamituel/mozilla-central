@@ -23,7 +23,7 @@ onStateChange('stop', function onStop() {
 });
 
 Object.defineProperty(exports, "isActive", {
-	get: deprecateFunction(getMode, 'require("private-browsing").isActive is deprecated.')
+  get: deprecateFunction(getMode, 'require("private-browsing").isActive is deprecated.')
 });
 
 exports.activate = function activate() setMode(true);
@@ -48,6 +48,17 @@ exports.isPrivate = function(thing) {
       return true;
     }
 
+    // does the thing have an associated tab?
+    // page-mod instances do..
+    if (thing.tab) {
+      let tabWindow = getOwnerWindow(thing.tab);
+      if (tabWindow) {
+        let isThingPrivate = isWindowPrivate(tabWindow);
+        if (isThingPrivate)
+          return isThingPrivate;
+      }
+    }
+
     // can we find an associated window?
     let window = getOwnerWindow(thing);
     if (window)
@@ -62,7 +73,8 @@ exports.isPrivate = function(thing) {
 
 function deprecateEvents(func) deprecateEvent(
   func,
-   'The require("private-browsing") module\'s "start" and "stop" events are deprecated.',
+   'The require("sdk/private-browsing") module\'s "start" and "stop" events ' +
+   'are deprecated.',
   ['start', 'stop']
 );
 

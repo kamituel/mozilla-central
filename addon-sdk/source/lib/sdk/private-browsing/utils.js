@@ -54,7 +54,7 @@ let isTabPBSupported = exports.isTabPBSupported =
                        !pbService && !!PrivateBrowsingUtils && is('Fennec') && satisfiesVersion(version, '>=20.0*');
                        
 function ignoreWindow(window) {
-  return !isPrivateBrowsingSupported && isWindowPrivate(window);
+  return !isPrivateBrowsingSupported && isWindowPrivate(window) && !isGlobalPBSupported;
 }
 exports.ignoreWindow = ignoreWindow;
 
@@ -80,8 +80,9 @@ let setMode = defer(function setMode(value) {
 });
 exports.setMode = deprecateFunction(
   setMode,
-  'require("private-browsing").activate and require("private-browsing").deactivate ' +
-  'is deprecated.'
+  'require("sdk/private-browsing").activate and ' +
+  'require("sdk/private-browsing").deactivate ' +
+  'are deprecated.'
 );
 
 let getMode = function getMode(chromeWin) {

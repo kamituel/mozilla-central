@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -12,7 +11,6 @@
 
 #include "jsscript.h"
 
-#include "frontend/ParseMaps.h"
 #include "frontend/TokenStream.h"
 
 namespace js {
@@ -68,18 +66,8 @@ class UpvarCookie
     F(COMMA) \
     F(CONDITIONAL) \
     F(COLON) \
-    F(OR) \
-    F(AND) \
-    F(BITOR) \
-    F(BITXOR) \
-    F(BITAND) \
     F(POS) \
     F(NEG) \
-    F(ADD) \
-    F(SUB) \
-    F(STAR) \
-    F(DIV) \
-    F(MOD) \
     F(PREINCREMENT) \
     F(POSTINCREMENT) \
     F(PREDECREMENT) \
@@ -109,7 +97,6 @@ class UpvarCookie
     F(FOR) \
     F(BREAK) \
     F(CONTINUE) \
-    F(IN) \
     F(VAR) \
     F(CONST) \
     F(WITH) \
@@ -121,7 +108,6 @@ class UpvarCookie
     F(CATCHLIST) \
     F(FINALLY) \
     F(THROW) \
-    F(INSTANCEOF) \
     F(DEBUGGER) \
     F(YIELD) \
     F(GENEXP) \
@@ -136,28 +122,39 @@ class UpvarCookie
     F(SPREAD) \
     F(MODULE) \
     \
-    /* Equality operators. */ \
-    F(STRICTEQ) \
-    F(EQ) \
-    F(STRICTNE) \
-    F(NE) \
-    \
     /* Unary operators. */ \
     F(TYPEOF) \
     F(VOID) \
     F(NOT) \
     F(BITNOT) \
     \
-    /* Relational operators (< <= > >=). */ \
+    /* \
+     * Binary operators. \
+     * These must be in the same order as TOK_OR and friends in TokenStream.h. \
+     */ \
+    F(OR) \
+    F(AND) \
+    F(BITOR) \
+    F(BITXOR) \
+    F(BITAND) \
+    F(STRICTEQ) \
+    F(EQ) \
+    F(STRICTNE) \
+    F(NE) \
     F(LT) \
     F(LE) \
     F(GT) \
     F(GE) \
-    \
-    /* Shift operators (<< >> >>>). */ \
+    F(INSTANCEOF) \
+    F(IN) \
     F(LSH) \
     F(RSH) \
     F(URSH) \
+    F(ADD) \
+    F(SUB) \
+    F(STAR) \
+    F(DIV) \
+    F(MOD) \
     \
     /* Assignment operators (= += -= etc.). */ \
     /* ParseNode::isAssignment assumes all these are consecutive. */ \
@@ -189,6 +186,8 @@ enum ParseNodeKind {
     FOR_EACH_PARSE_NODE_KIND(EMIT_ENUM)
 #undef EMIT_ENUM
     PNK_LIMIT, /* domain size */
+    PNK_BINOP_FIRST = PNK_OR,
+    PNK_BINOP_LAST = PNK_MOD,
     PNK_ASSIGNMENT_START = PNK_ASSIGN,
     PNK_ASSIGNMENT_LAST = PNK_MODASSIGN
 };
@@ -246,7 +245,7 @@ enum ParseNodeKind {
  *                          pn_right: body
  * PNK_FORIN    ternary     pn_kid1:  PNK_VAR to left of 'in', or NULL
  *                            its pn_xflags may have PNX_POPVAR
- *                            and PNX_FORINVAR bits set
+ *                            bit set
  *                          pn_kid2: PNK_NAME or destructuring expr
  *                            to left of 'in'; if pn_kid1, then this
  *                            is a clone of pn_kid1->pn_head
@@ -430,10 +429,8 @@ struct ParseNode {
         pn_offset(0), pn_next(NULL), pn_link(NULL)
     {
         JS_ASSERT(kind < PNK_LIMIT);
-        pn_pos.begin.index = 0;
-        pn_pos.begin.lineno = 0;
-        pn_pos.end.index = 0;
-        pn_pos.end.lineno = 0;
+        pn_pos.begin = 0;
+        pn_pos.end = 0;
         memset(&pn_u, 0, sizeof pn_u);
     }
 
@@ -635,6 +632,7 @@ struct ParseNode {
                                            'arguments' that has been converted
                                            into a definition after the function
                                            body has been parsed. */
+#define PND_EMITTEDFUNCTION    0x400    /* hoisted function that was emitted */
 
 /* Flags to propagate from uses to definition. */
 #define PND_USE2DEF_FLAGS (PND_ASSIGNED | PND_CLOSED)
@@ -644,21 +642,19 @@ struct ParseNode {
 #define PNX_CANTFOLD    0x02            /* PNK_ADD list has unfoldable term */
 #define PNX_POPVAR      0x04            /* PNK_VAR or PNK_CONST last result
                                            needs popping */
-#define PNX_FORINVAR    0x08            /* PNK_VAR is left kid of PNK_FORIN node
-                                           which is left kid of PNK_FOR */
-#define PNX_GROUPINIT   0x10            /* var [a, b] = [c, d]; unit list */
-#define PNX_FUNCDEFS    0x20            /* contains top-level function statements */
-#define PNX_SETCALL     0x40            /* call expression in lvalue context */
-#define PNX_DESTRUCT    0x80            /* destructuring special cases:
+#define PNX_GROUPINIT   0x08            /* var [a, b] = [c, d]; unit list */
+#define PNX_FUNCDEFS    0x10            /* contains top-level function statements */
+#define PNX_SETCALL     0x20            /* call expression in lvalue context */
+#define PNX_DESTRUCT    0x40            /* destructuring special cases:
                                            1. shorthand syntax used, at present
                                               object destructuring ({x,y}) only;
                                            2. code evaluating destructuring
                                               arguments occurs before function
                                               body */
-#define PNX_SPECIALARRAYINIT 0x100      /* one or more of
+#define PNX_SPECIALARRAYINIT 0x80       /* one or more of
                                            1. array initialiser has holes
                                            2. array initializer has spread node */
-#define PNX_NONCONST   0x200            /* initialiser has non-constants */
+#define PNX_NONCONST   0x100            /* initialiser has non-constants */
 
     unsigned frameLevel() const {
         JS_ASSERT(pn_arity == PN_CODE || pn_arity == PN_NAME);
@@ -962,8 +958,7 @@ struct LexicalScopeNode : public ParseNode {
 
 class LoopControlStatement : public ParseNode {
   protected:
-    LoopControlStatement(ParseNodeKind kind, PropertyName *label,
-                         const TokenPtr &begin, const TokenPtr &end)
+    LoopControlStatement(ParseNodeKind kind, PropertyName *label, uint32_t begin, uint32_t end)
       : ParseNode(kind, JSOP_NOP, PN_NULLARY, TokenPos::make(begin, end))
     {
         JS_ASSERT(kind == PNK_BREAK || kind == PNK_CONTINUE);
@@ -986,7 +981,7 @@ class LoopControlStatement : public ParseNode {
 
 class BreakStatement : public LoopControlStatement {
   public:
-    BreakStatement(PropertyName *label, const TokenPtr &begin, const TokenPtr &end)
+    BreakStatement(PropertyName *label, uint32_t begin, uint32_t end)
       : LoopControlStatement(PNK_BREAK, label, begin, end)
     { }
 
@@ -1000,7 +995,7 @@ class BreakStatement : public LoopControlStatement {
 
 class ContinueStatement : public LoopControlStatement {
   public:
-    ContinueStatement(PropertyName *label, TokenPtr &begin, TokenPtr &end)
+    ContinueStatement(PropertyName *label, uint32_t begin, uint32_t end)
       : LoopControlStatement(PNK_CONTINUE, label, begin, end)
     { }
 
@@ -1072,8 +1067,7 @@ class BooleanLiteral : public ParseNode {
 
 class PropertyAccess : public ParseNode {
   public:
-    PropertyAccess(ParseNode *lhs, PropertyName *name,
-                   const TokenPtr &begin, const TokenPtr &end)
+    PropertyAccess(ParseNode *lhs, PropertyName *name, uint32_t begin, uint32_t end)
       : ParseNode(PNK_DOT, JSOP_GETPROP, PN_NAME, TokenPos::make(begin, end))
     {
         JS_ASSERT(lhs != NULL);
@@ -1099,8 +1093,7 @@ class PropertyAccess : public ParseNode {
 
 class PropertyByValue : public ParseNode {
   public:
-    PropertyByValue(ParseNode *lhs, ParseNode *propExpr,
-                    const TokenPtr &begin, const TokenPtr &end)
+    PropertyByValue(ParseNode *lhs, ParseNode *propExpr, uint32_t begin, uint32_t end)
       : ParseNode(PNK_ELEM, JSOP_GETELEM, PN_BINARY, TokenPos::make(begin, end))
     {
         pn_u.binary.left = lhs;
@@ -1219,7 +1212,7 @@ struct Definition : public ParseNode
         return pn_cookie.isFree();
     }
 
-    enum Kind { VAR, CONST, LET, ARG, NAMED_LAMBDA, PLACEHOLDER };
+    enum Kind { MISSING = 0, VAR, CONST, LET, ARG, NAMED_LAMBDA, PLACEHOLDER };
 
     bool canHaveInitializer() { return int(kind()) <= int(ARG); }
 
@@ -1302,19 +1295,6 @@ ParseNode::isConstant()
     }
 }
 
-inline void
-LinkUseToDef(ParseNode *pn, Definition *dn)
-{
-    JS_ASSERT(!pn->isUsed());
-    JS_ASSERT(!pn->isDefn());
-    JS_ASSERT(pn != dn->dn_uses);
-    pn->pn_link = dn->dn_uses;
-    dn->dn_uses = pn;
-    dn->pn_dflags |= pn->pn_dflags & PND_USE2DEF_FLAGS;
-    pn->setUsed(true);
-    pn->pn_lexdef = dn;
-}
-
 class ObjectBox {
   public:
     JSObject *object;
@@ -1339,11 +1319,11 @@ class ObjectBox {
 enum ParseReportKind {
     ParseError,
     ParseWarning,
-    ParseStrictWarning,
+    ParseExtraWarning,
     ParseStrictError
 };
 
-enum FunctionSyntaxKind { Expression, Statement };
+enum FunctionSyntaxKind { Expression, Statement, Arrow };
 
 } /* namespace frontend */
 } /* namespace js */

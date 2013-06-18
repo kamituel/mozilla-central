@@ -35,7 +35,7 @@ struct cubeb {
 #define NBUFS 4
 
 struct cubeb_stream {
-  struct cubeb * context;
+  cubeb * context;
   SLObjectItf playerObj;
   SLPlayItf play;
   SLBufferQueueItf bufq;
@@ -52,8 +52,9 @@ struct cubeb_stream {
 };
 
 static void
-bufferqueue_callback(SLBufferQueueItf caller, struct cubeb_stream *stm)
+bufferqueue_callback(SLBufferQueueItf caller, void * user_ptr)
 {
+  cubeb_stream * stm = user_ptr;
   SLBufferQueueState state;
   (*stm->bufq)->GetState(stm->bufq, &state);
 
@@ -78,8 +79,13 @@ bufferqueue_callback(SLBufferQueueItf caller, struct cubeb_stream *stm)
       return;
     }
 
-    (*stm->bufq)->Enqueue(stm->bufq, buf, written * stm->framesize);
-    stm->queuebuf_idx = (stm->queuebuf_idx + 1) % NBUFS;
+    if (written) {
+      (*stm->bufq)->Enqueue(stm->bufq, buf, written * stm->framesize);
+      stm->queuebuf_idx = (stm->queuebuf_idx + 1) % NBUFS;
+    } else if (!i) {
+      stm->state_callback(stm, stm->user_ptr, CUBEB_STATE_DRAINED);
+      return;
+    }
 
     if ((written * stm->framesize) < stm->queuebuf_len) {
       stm->draining = 1;
@@ -204,6 +210,17 @@ static char const *
 opensl_get_backend_id(cubeb * ctx)
 {
   return "opensl";
+}
+
+static int
+opensl_get_max_channel_count(cubeb * ctx, uint32_t * max_channels)
+{
+  assert(ctx && max_channels);
+  /* The android mixer handles up to two channels, see
+  http://androidxref.com/4.2.2_r1/xref/frameworks/av/services/audioflinger/AudioFlinger.h#67 */
+  *max_channels = 2;
+
+  return CUBEB_OK;
 }
 
 static void
@@ -357,6 +374,10 @@ opensl_stream_destroy(cubeb_stream * stm)
 {
   if (stm->playerObj)
     (*stm->playerObj)->Destroy(stm->playerObj);
+  int i;
+  for (i = 0; i < NBUFS; i++) {
+    free(stm->queuebuf[i]);
+  }
   free(stm);
 }
 
@@ -395,6 +416,7 @@ opensl_stream_get_position(cubeb_stream * stm, uint64_t * position)
 static struct cubeb_ops const opensl_ops = {
   .init = opensl_init,
   .get_backend_id = opensl_get_backend_id,
+  .get_max_channel_count = opensl_get_max_channel_count,
   .destroy = opensl_destroy,
   .stream_init = opensl_stream_init,
   .stream_destroy = opensl_stream_destroy,

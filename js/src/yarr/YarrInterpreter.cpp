@@ -1,4 +1,6 @@
-/*
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ *
  * Copyright (C) 2009 Apple Inc. All rights reserved.
  * Copyright (C) 2010 Peter Varga (pvarga@inf.u-szeged.hu), University of Szeged
  *
@@ -156,6 +158,7 @@ public:
     ParenthesesDisjunctionContext* allocParenthesesDisjunctionContext(ByteDisjunction* disjunction, unsigned* output, ByteTerm& term)
     {
         size_t size = sizeof(ParenthesesDisjunctionContext) - sizeof(unsigned) + (term.atom.parenthesesDisjunction->m_numSubpatterns << 1) * sizeof(unsigned) + sizeof(DisjunctionContext) - sizeof(uintptr_t) + disjunction->m_frameSize * sizeof(uintptr_t);
+        size = JS_ROUNDUP(size, JS_ALIGNMENT_OF(ParenthesesDisjunctionContext));
         allocatorPool = allocatorPool->ensureCapacity(size);
         if (!allocatorPool)
             CRASH();
@@ -1734,6 +1737,7 @@ public:
         unsigned numSubpatterns = lastSubpatternId - subpatternId + 1;
         ByteDisjunction* parenthesesDisjunction = js_new<ByteDisjunction>(numSubpatterns, callFrameSize);
 
+        parenthesesDisjunction->terms.reserve(endTerm - beginTerm + 1);
         parenthesesDisjunction->terms.append(ByteTerm::SubpatternBegin());
         for (unsigned termInParentheses = beginTerm + 1; termInParentheses < endTerm; ++termInParentheses)
             parenthesesDisjunction->terms.append(m_bodyDisjunction->terms[termInParentheses]);

@@ -26,10 +26,10 @@ NS_IMPL_RELEASE_INHERITED(HTMLLegendElement, Element)
 
 // QueryInterface implementation for HTMLLegendElement
 NS_INTERFACE_TABLE_HEAD(HTMLLegendElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE1(HTMLLegendElement, nsIDOMHTMLLegendElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLLegendElement,
-                                               nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED1(HTMLLegendElement, nsIDOMHTMLLegendElement)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 
 // nsIDOMHTMLLegendElement
@@ -174,7 +174,7 @@ HTMLLegendElement::GetForm()
 }
 
 JSObject*
-HTMLLegendElement::WrapNode(JSContext* aCx, JSObject* aScope)
+HTMLLegendElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLLegendElementBinding::Wrap(aCx, aScope, this);
 }

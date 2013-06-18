@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -36,7 +35,9 @@ RegExpObjectBuilder::getOrCreate()
     if (reobj_)
         return true;
 
-    JSObject *obj = NewBuiltinClassInstance(cx, &RegExpClass);
+    // Note: RegExp objects are always allocated in the tenured heap. This is
+    // not strictly required, but simplifies embedding them in jitcode.
+    JSObject *obj = NewBuiltinClassInstance(cx, &RegExpClass, TenuredObject);
     if (!obj)
         return false;
     obj->initPrivate(NULL);
@@ -50,7 +51,10 @@ RegExpObjectBuilder::getOrCreateClone(RegExpObject *proto)
 {
     JS_ASSERT(!reobj_);
 
-    JSObject *clone = NewObjectWithGivenProto(cx, &RegExpClass, proto, proto->getParent());
+    // Note: RegExp objects are always allocated in the tenured heap. This is
+    // not strictly required, but simplifies embedding them in jitcode.
+    JSObject *clone = NewObjectWithGivenProto(cx, &RegExpClass, proto, proto->getParent(),
+                                              TenuredObject);
     if (!clone)
         return false;
     clone->initPrivate(NULL);
@@ -170,7 +174,7 @@ ScopedMatchPairs::allocOrExpandArray(size_t pairCount)
     }
 
     JS_ASSERT(!pairs_);
-    pairs_ = (MatchPair *)lifoAlloc_->alloc(sizeof(MatchPair) * pairCount);
+    pairs_ = (MatchPair *)lifoScope_.alloc().alloc(sizeof(MatchPair) * pairCount);
     if (!pairs_)
         return false;
 
@@ -192,7 +196,7 @@ VectorMatchPairs::allocOrExpandArray(size_t pairCount)
 /* RegExpObject */
 
 static void
-regexp_trace(JSTracer *trc, RawObject obj)
+regexp_trace(JSTracer *trc, JSObject *obj)
 {
      /*
       * We have to check both conditions, since:
@@ -209,7 +213,7 @@ Class js::RegExpClass = {
     JSCLASS_HAS_RESERVED_SLOTS(RegExpObject::RESERVED_SLOTS) |
     JSCLASS_HAS_CACHED_PROTO(JSProto_RegExp),
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,        /* enumerate */
@@ -259,14 +263,14 @@ RegExpObject::createShared(JSContext *cx, RegExpGuard *g)
     Rooted<RegExpObject*> self(cx, this);
 
     JS_ASSERT(!maybeShared());
-    if (!cx->compartment->regExps.get(cx, getSource(), getFlags(), g))
+    if (!cx->compartment()->regExps.get(cx, getSource(), getFlags(), g))
         return false;
 
     self->setShared(cx, **g);
     return true;
 }
 
-RawShape
+Shape *
 RegExpObject::assignInitialShape(JSContext *cx)
 {
     JS_ASSERT(isRegExp());
@@ -475,7 +479,7 @@ RegExpShared::compile(JSContext *cx, JSLinearString &pattern, bool matchOnly)
 
 #if ENABLE_YARR_JIT
     if (isJITRuntimeEnabled(cx) && !yarrPattern.m_containsBackreferences) {
-        JSC::ExecutableAllocator *execAlloc = cx->runtime->getExecAlloc(cx);
+        JSC::ExecutableAllocator *execAlloc = cx->runtime()->getExecAlloc(cx);
         if (!execAlloc)
             return false;
 
@@ -492,7 +496,7 @@ RegExpShared::compile(JSContext *cx, JSLinearString &pattern, bool matchOnly)
     codeBlock.setFallBack(true);
 #endif
 
-    WTF::BumpPointerAllocator *bumpAlloc = cx->runtime->getBumpPointerAllocator(cx);
+    WTF::BumpPointerAllocator *bumpAlloc = cx->runtime()->getBumpPointerAllocator(cx);
     if (!bumpAlloc) {
         js_ReportOutOfMemory(cx);
         return false;
@@ -617,11 +621,15 @@ RegExpShared::executeMatchOnly(JSContext *cx, const jschar *chars, size_t length
     if (result == JSC::Yarr::offsetNoMatch)
         return RegExpRunStatus_Success_NotFound;
 
+    match = MatchPair(result, matches[0].limit);
+    match.displace(displacement);
+
+#ifdef DEBUG
     matches.displace(displacement);
     matches.checkAgainst(origLength);
+#endif
 
-    *lastIndex = matches[0].limit;
-    match = MatchPair(result, matches[0].limit);
+    *lastIndex = match.limit;
     return RegExpRunStatus_Success;
 }
 
@@ -679,7 +687,7 @@ RegExpCompartment::get(JSContext *cx, JSAtom *source, RegExpFlag flags, RegExpGu
         return true;
     }
 
-    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime, source, flags));
+    ScopedJSDeletePtr<RegExpShared> shared(cx->new_<RegExpShared>(cx->runtime(), source, flags));
     if (!shared)
         return false;
 

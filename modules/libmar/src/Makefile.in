@@ -11,9 +11,8 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-MODULE		= libmar
 LIBRARY_NAME	= mar
-HOST_LIBRARY_NAME = hostmar
+DISABLED_HOST_LIBRARY_NAME = hostmar
 FORCE_STATIC_LIB = 1
 ifeq ($(OS_ARCH),WINNT)
 USE_STATIC_LIBS = 1
@@ -22,7 +21,7 @@ endif
 # This makefile just builds support for reading archives.
 
 
-HOST_CSRCS	= \
+DISABLED_HOST_CSRCS	= \
 		mar_create.c \
 		mar_extract.c \
 		mar_read.c \
@@ -30,11 +29,6 @@ HOST_CSRCS	= \
 
 CSRCS		= \
 		$(HOST_CSRCS) \
-		$(NULL)
-
-EXPORTS		= \
-		mar.h \
-		mar_cmdline.h \
 		$(NULL)
 
 include $(topsrcdir)/config/rules.mk

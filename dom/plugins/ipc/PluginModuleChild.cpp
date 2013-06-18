@@ -56,6 +56,8 @@
 #include "PluginUtilsOSX.h"
 #endif
 
+#include "GeckoProfiler.h"
+
 using namespace mozilla;
 using namespace mozilla::plugins;
 using mozilla::dom::CrashReporterChild;
@@ -1096,7 +1098,7 @@ _getvalue(NPP aNPP,
             *(NPBool*)aValue = value ? true : false;
             return result;
         }
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
         case NPNVxDisplay: {
             if (aNPP) {
                 return InstCast(aNPP)->NPN_GetValue(aVariable, aValue);
@@ -2425,3 +2427,16 @@ PluginModuleChild::ProcessNativeEvents() {
     CallProcessSomeEvents();    
 }
 #endif
+
+bool
+PluginModuleChild::AnswerGeckoGetProfile(nsCString* aProfile) {
+    char* profile = profiler_get_profile();
+    if (profile != NULL) {
+        *aProfile = nsCString(profile, strlen(profile));
+        free(profile);
+    } else {
+        *aProfile = nsCString("", 0);
+    }
+    return true;
+}
+

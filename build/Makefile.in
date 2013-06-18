@@ -12,8 +12,6 @@ include $(DEPTH)/config/autoconf.mk
 USE_RCS_MK := 1
 include $(topsrcdir)/config/makefiles/makeutils.mk
 
-MODULE = build
-
 ifdef MOZ_APP_BASENAME
 DIST_FILES = $(srcdir)/application.ini
 
@@ -80,10 +78,6 @@ GDBINIT_FILES := $(topsrcdir)/.gdbinit
 GDBINIT_DEST = $(FINAL_TARGET)
 INSTALL_TARGETS += GDBINIT
 
-PYTHON_UNIT_TESTS := \
-  tests/test.py \
-  $(NULL)
-
 include $(topsrcdir)/config/rules.mk
 
 # we install to _leaktest/
@@ -91,11 +85,11 @@ TARGET_DEPTH = ..
 include $(srcdir)/automation-build.mk
 
 _LEAKTEST_DIR = $(DEPTH)/_leaktest
-GARBAGE_DIRS += $(_LEAKTEST_DIR)
 
 _LEAKTEST_FILES =    \
 		automation.py \
 		automationutils.py \
+		$(topsrcdir)/testing/profiles/prefs_general.js \
 		leaktest.py \
 		bloatcycle.html \
 		$(topsrcdir)/build/pgo/server-locations.txt \

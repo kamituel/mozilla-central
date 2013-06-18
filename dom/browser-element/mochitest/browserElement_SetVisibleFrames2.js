@@ -7,12 +7,11 @@
 "use strict";
 
 SimpleTest.waitForExplicitFinish();
+browserElementTestHelpers.setEnabledPref(true);
+browserElementTestHelpers.addPermission();
 
 function runTest() {
-  browserElementTestHelpers.setEnabledPref(true);
-  browserElementTestHelpers.addPermission();
-
-  var principal = SpecialPowers.wrap(SpecialPowers.getNodePrincipal(document));
+  var principal = SpecialPowers.wrap(document).nodePrincipal;
   SpecialPowers.addPermission("browser", true, { url: SpecialPowers.wrap(principal.URI).spec,
                                                  appId: principal.appId,
                                                  isInBrowserElement: true });
@@ -56,7 +55,7 @@ function runTest() {
 }
 
 function finish() {
-  var principal = SpecialPowers.wrap(SpecialPowers.getNodePrincipal(document));
+  var principal = SpecialPowers.wrap(document).nodePrincipal;
   SpecialPowers.removePermission("browser", { url: SpecialPowers.wrap(principal.URI).spec,
                                               appId: principal.appId,
                                               isInBrowserElement: true });
@@ -64,4 +63,4 @@ function finish() {
   SimpleTest.finish();
 }
 
-runTest();
+addEventListener('testready', runTest);

@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -8,6 +7,7 @@
 #include "UnreachableCodeElimination.h"
 #include "IonAnalysis.h"
 #include "AliasAnalysis.h"
+#include "ValueNumbering.h"
 
 using namespace js;
 using namespace ion;
@@ -64,7 +64,7 @@ UnreachableCodeElimination::removeUnmarkedBlocksAndCleanup()
 
     AssertGraphCoherency(graph_);
 
-    IonSpewPass("UCEMidPoint");
+    IonSpewPass("UCE-mid-point");
 
     // Pass 3: Recompute dominators and tweak phis.
     BuildDominatorTree(graph_);
@@ -75,6 +75,19 @@ UnreachableCodeElimination::removeUnmarkedBlocksAndCleanup()
     if (rerunAliasAnalysis_) {
         AliasAnalysis analysis(mir_, graph_);
         if (!analysis.analyze())
+            return false;
+    }
+
+    // Pass 5: It's important for optimizations to re-run GVN (and in
+    // turn alias analysis) after UCE if we eliminated branches.
+    if (rerunAliasAnalysis_ && js_IonOptions.gvn) {
+        ValueNumberer gvn(mir_, graph_, js_IonOptions.gvnIsOptimistic);
+        if (!gvn.clear() || !gvn.analyze())
+            return false;
+        IonSpewPass("GVN-after-UCE");
+        AssertExtendedGraphCoherency(graph_);
+
+        if (mir_->shouldCancel("GVN-after-UCE"))
             return false;
     }
 
@@ -218,6 +231,22 @@ UnreachableCodeElimination::removeUnmarkedBlocksAndClearDominators()
                                 break;
                             }
                         }
+                    }
+                }
+            }
+
+            // When we remove a call, we can't leave the corresponding MPassArg in the graph.
+            // Since lowering will fail. Replace it with the argument for the exceptional
+            // case when it is kept alive in a ResumePoint.
+            // DCE will remove the unused MPassArg instruction.
+            for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
+                if (iter->isCall()) {
+                    MCall *call = iter->toCall();
+                    for (size_t i = 0; i < call->numStackArgs(); i++) {
+                        JS_ASSERT(call->getArg(i)->isPassArg());
+                        JS_ASSERT(call->getArg(i)->defUseCount() == 1);
+                        MPassArg *arg = call->getArg(i)->toPassArg();
+                        arg->replaceAllUsesWith(arg->getArgument());
                     }
                 }
             }

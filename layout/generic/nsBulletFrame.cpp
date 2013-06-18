@@ -119,17 +119,25 @@ nsBulletFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
         newURI->Equals(oldURI, &same);
         if (same) {
           needNewRequest = false;
-        } else {
-          nsLayoutUtils::DeregisterImageRequest(PresContext(), mImageRequest,
-                                                &mRequestRegistered);
-          mImageRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
-          mImageRequest = nullptr;
         }
       }
     }
 
     if (needNewRequest) {
+      nsRefPtr<imgRequestProxy> oldRequest = mImageRequest;
       newRequest->Clone(mListener, getter_AddRefs(mImageRequest));
+
+      // Deregister the old request. We wait until after Clone is done in case
+      // the old request and the new request are the same underlying image
+      // accessed via different URLs.
+      if (oldRequest) {
+        nsLayoutUtils::DeregisterImageRequest(PresContext(), oldRequest,
+                                              &mRequestRegistered);
+        oldRequest->CancelAndForgetObserver(NS_ERROR_FAILURE);
+        oldRequest = nullptr;
+      }
+
+      // Register the new request.
       if (mImageRequest) {
         nsLayoutUtils::RegisterImageRequestIfAnimated(PresContext(),
                                                       mImageRequest,
@@ -178,7 +186,7 @@ public:
   nsDisplayBulletGeometry(nsDisplayItem* aItem, nsDisplayListBuilder* aBuilder)
     : nsDisplayItemGenericGeometry(aItem, aBuilder)
   {
-    nsBulletFrame* f = static_cast<nsBulletFrame*>(aItem->GetUnderlyingFrame());
+    nsBulletFrame* f = static_cast<nsBulletFrame*>(aItem->Frame());
     mOrdinal = f->GetOrdinal();
   }
 
@@ -241,8 +249,12 @@ public:
 void nsDisplayBullet::Paint(nsDisplayListBuilder* aBuilder,
                             nsRenderingContext* aCtx)
 {
+  uint32_t flags = imgIContainer::FLAG_NONE;
+  if (aBuilder->ShouldSyncDecodeImages()) {
+    flags |= imgIContainer::FLAG_SYNC_DECODE;
+  }
   static_cast<nsBulletFrame*>(mFrame)->
-    PaintBullet(*aCtx, ToReferenceFrame(), mVisibleRect);
+    PaintBullet(*aCtx, ToReferenceFrame(), mVisibleRect, flags);
 }
 
 void
@@ -261,7 +273,7 @@ nsBulletFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
 
 void
 nsBulletFrame::PaintBullet(nsRenderingContext& aRenderingContext, nsPoint aPt,
-                           const nsRect& aDirtyRect)
+                           const nsRect& aDirtyRect, uint32_t aFlags)
 {
   const nsStyleList* myList = StyleList();
   uint8_t listStyleType = myList->mListStyleType;
@@ -279,7 +291,7 @@ nsBulletFrame::PaintBullet(nsRenderingContext& aRenderingContext, nsPoint aPt,
                     mRect.height - (mPadding.top + mPadding.bottom));
         nsLayoutUtils::DrawSingleImage(&aRenderingContext,
              imageCon, nsLayoutUtils::GetGraphicsFilterForFrame(this),
-             dest + aPt, aDirtyRect, nullptr, imgIContainer::FLAG_NONE);
+             dest + aPt, aDirtyRect, nullptr, aFlags);
         return;
       }
     }
@@ -447,8 +459,12 @@ static bool DecimalLeadingZeroToText(int32_t ordinal, nsString& result)
 static bool OtherDecimalToText(int32_t ordinal, PRUnichar zeroChar, nsString& result)
 {
    PRUnichar diff = zeroChar - PRUnichar('0');
+   // We're going to be appending to whatever is in "result" already, so make
+   // sure to only munge the new bits.  Note that we can't just grab the pointer
+   // to the new stuff here, since appending to the string can realloc.
+   size_t offset = result.Length();
    DecimalToText(ordinal, result);
-   PRUnichar* p = result.BeginWriting();
+   PRUnichar* p = result.BeginWriting() + offset;
    if (ordinal < 0) {
      // skip the leading '-'
      ++p;
@@ -460,12 +476,16 @@ static bool OtherDecimalToText(int32_t ordinal, PRUnichar zeroChar, nsString& re
 static bool TamilToText(int32_t ordinal,  nsString& result)
 {
    PRUnichar diff = 0x0BE6 - PRUnichar('0');
+   // We're going to be appending to whatever is in "result" already, so make
+   // sure to only munge the new bits.  Note that we can't just grab the pointer
+   // to the new stuff here, since appending to the string can realloc.
+   size_t offset = result.Length();
    DecimalToText(ordinal, result); 
    if (ordinal < 1 || ordinal > 9999) {
      // Can't do those in this system.
      return false;
    }
-   PRUnichar* p = result.BeginWriting();
+   PRUnichar* p = result.BeginWriting() + offset;
    for(; '\0' != *p ; p++) 
       if(*p != PRUnichar('0'))
          *p += diff;

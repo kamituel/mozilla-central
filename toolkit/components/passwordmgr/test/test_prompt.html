@@ -133,12 +133,12 @@ proxyChannelListener.prototype = {
   onStopRequest: function(request, context, status) { }
 };
 
-var resolveCallback = {
+var resolveCallback = SpecialPowers.wrapCallbackObject({
   QueryInterface : function (iid) {
     const interfaces = [Ci.nsIProtocolProxyCallback, Ci.nsISupports];
 
     if (!interfaces.some( function(v) { return iid.equals(v) } ))
-      throw Components.results.NS_ERROR_NO_INTERFACE;
+      throw SpecialPowers.Cr.NS_ERROR_NO_INTERFACE;
     return this;
   },
 
@@ -154,18 +154,16 @@ var resolveCallback = {
     // have valid ProxyInfo, but we use OnStartRequest during startup()
     // for simplicity.
     proxyChannel = ioService.newChannel(proxiedHost, null, null);
-    proxyChannel.asyncOpen(new proxyChannelListener(), null);
+    proxyChannel.asyncOpen(SpecialPowers.wrapCallbackObject(new proxyChannelListener()), null);
   }
-};
+});
 
 function startup() {
   //need to allow for arbitrary network servers defined in PAC instead of a hardcoded moz-proxy.
-  var ios = SpecialPowers.wrap(Components).
-    classes["@mozilla.org/network/io-service;1"].
-    getService(Components.interfaces.nsIIOService);
+  var ios = SpecialPowers.Cc["@mozilla.org/network/io-service;1"].
+    getService(SpecialPowers.Ci.nsIIOService);
 
-  var pps = SpecialPowers.wrap(Components).
-    classes["@mozilla.org/network/protocol-proxy-service;1"].getService();
+  var pps = SpecialPowers.Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
 
   var uri = ios.newURI("http://example.com", null, null);
   pps.asyncResolve(uri, 0, resolveCallback);
@@ -175,7 +173,7 @@ function addNotificationCallback(cb) {
   storageObserver.notificationCallbacks.push(cb);
 }
 
-var storageObserver = {
+var storageObserver = SpecialPowers.wrapCallbackObject({
   notificationCallbacks: [],
 
   QueryInterface : function (iid) {
@@ -183,7 +181,7 @@ var storageObserver = {
                         Ci.nsISupports, Ci.nsISupportsWeakReference];
 
     if (!interfaces.some( function(v) { return iid.equals(v) } ))
-      throw SpecialPowers.Components.results.NS_ERROR_NO_INTERFACE;
+      throw SpecialPowers.Cr.NS_ERROR_NO_INTERFACE;
     return this;
   },
 
@@ -231,7 +229,7 @@ var storageObserver = {
       ok(false, "OBSERVER FAILED: " + e);
     }
   }
-};
+});
 
 var observerService = Cc["@mozilla.org/observer-service;1"].
                       getService(Ci.nsIObserverService);

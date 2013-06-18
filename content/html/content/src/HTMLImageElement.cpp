@@ -7,7 +7,6 @@
 
 #include "mozilla/dom/HTMLImageElement.h"
 #include "mozilla/dom/HTMLImageElementBinding.h"
-#include "nsIDOMEventTarget.h"
 #include "nsGkAtoms.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
@@ -36,7 +35,6 @@
 
 #include "nsRuleData.h"
 
-#include "nsIJSContextStack.h"
 #include "nsIDOMHTMLMapElement.h"
 #include "nsEventDispatcher.h"
 
@@ -53,14 +51,12 @@ NS_NewHTMLImageElement(already_AddRefed<nsINodeInfo> aNodeInfo,
    */
   nsCOMPtr<nsINodeInfo> nodeInfo(aNodeInfo);
   if (!nodeInfo) {
-    nsCOMPtr<nsIDocument> doc =
-      do_QueryInterface(nsContentUtils::GetDocumentFromCaller());
+    nsCOMPtr<nsIDocument> doc = nsContentUtils::GetDocumentFromCaller();
     NS_ENSURE_TRUE(doc, nullptr);
 
     nodeInfo = doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::img, nullptr,
                                                    kNameSpaceID_XHTML,
                                                    nsIDOMNode::ELEMENT_NODE);
-    NS_ENSURE_TRUE(nodeInfo, nullptr);
   }
 
   return new mozilla::dom::HTMLImageElement(nodeInfo.forget());
@@ -89,14 +85,14 @@ NS_IMPL_RELEASE_INHERITED(HTMLImageElement, Element)
 
 // QueryInterface implementation for HTMLImageElement
 NS_INTERFACE_TABLE_HEAD(HTMLImageElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE4(HTMLImageElement,
-                                   nsIDOMHTMLImageElement,
-                                   nsIImageLoadingContent,
-                                   imgIOnloadBlocker,
-                                   imgINotificationObserver)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLImageElement,
-                                               nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED4(HTMLImageElement,
+                                nsIDOMHTMLImageElement,
+                                nsIImageLoadingContent,
+                                imgIOnloadBlocker,
+                                imgINotificationObserver)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLImageElement)
@@ -162,39 +158,41 @@ HTMLImageElement::GetComplete(bool* aComplete)
   return NS_OK;
 }
 
-nsIntPoint
+CSSIntPoint
 HTMLImageElement::GetXY()
 {
-  nsIntPoint point(0, 0);
-
   nsIFrame* frame = GetPrimaryFrame(Flush_Layout);
-
   if (!frame) {
-    return point;
+    return CSSIntPoint(0, 0);
   }
 
   nsIFrame* layer = nsLayoutUtils::GetClosestLayer(frame->GetParent());
-  nsPoint origin(frame->GetOffsetTo(layer));
-  // Convert to pixels using that scale
-  point.x = nsPresContext::AppUnitsToIntCSSPixels(origin.x);
-  point.y = nsPresContext::AppUnitsToIntCSSPixels(origin.y);
+  return CSSIntPoint::FromAppUnitsRounded(frame->GetOffsetTo(layer));
+}
 
-  return point;
+int32_t
+HTMLImageElement::X()
+{
+  return GetXY().x;
+}
+
+int32_t
+HTMLImageElement::Y()
+{
+  return GetXY().y;
 }
 
 NS_IMETHODIMP
 HTMLImageElement::GetX(int32_t* aX)
 {
-  *aX = GetXY().x;
-
+  *aX = X();
   return NS_OK;
 }
 
 NS_IMETHODIMP
 HTMLImageElement::GetY(int32_t* aY)
 {
-  *aY = GetXY().y;
-
+  *aY = Y();
   return NS_OK;
 }
 
@@ -209,7 +207,9 @@ HTMLImageElement::GetHeight(uint32_t* aHeight)
 NS_IMETHODIMP
 HTMLImageElement::SetHeight(uint32_t aHeight)
 {
-  return nsGenericHTMLElement::SetUnsignedIntAttr(nsGkAtoms::height, aHeight);
+  ErrorResult rv;
+  SetHeight(aHeight, rv);
+  return rv.ErrorCode();
 }
 
 NS_IMETHODIMP
@@ -223,7 +223,9 @@ HTMLImageElement::GetWidth(uint32_t* aWidth)
 NS_IMETHODIMP
 HTMLImageElement::SetWidth(uint32_t aWidth)
 {
-  return nsGenericHTMLElement::SetUnsignedIntAttr(nsGkAtoms::width, aWidth);
+  ErrorResult rv;
+  SetWidth(aWidth, rv);
+  return rv.ErrorCode();
 }
 
 bool
@@ -474,21 +476,17 @@ HTMLImageElement::Image(const GlobalObject& aGlobal,
     doc->NodeInfoManager()->GetNodeInfo(nsGkAtoms::img, nullptr,
                                         kNameSpaceID_XHTML,
                                         nsIDOMNode::ELEMENT_NODE);
-  if (!nodeInfo) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return nullptr;
-  }
 
   nsRefPtr<HTMLImageElement> img = new HTMLImageElement(nodeInfo.forget());
 
   if (aWidth.WasPassed()) {
-    img->SetHTMLUnsignedIntAttr(nsGkAtoms::width, aWidth.Value(), aError);
+    img->SetWidth(aWidth.Value(), aError);
     if (aError.Failed()) {
       return nullptr;
     }
 
     if (aHeight.WasPassed()) {
-      img->SetHTMLUnsignedIntAttr(nsGkAtoms::height, aHeight.Value(), aError);
+      img->SetHeight(aHeight.Value(), aError);
       if (aError.Failed()) {
         return nullptr;
       }
@@ -574,7 +572,7 @@ HTMLImageElement::GetCORSMode()
 }
 
 JSObject*
-HTMLImageElement::WrapNode(JSContext* aCx, JSObject* aScope)
+HTMLImageElement::WrapNode(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return HTMLImageElementBinding::Wrap(aCx, aScope, this);
 }

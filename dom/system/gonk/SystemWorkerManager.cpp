@@ -17,7 +17,6 @@
 
 #include "SystemWorkerManager.h"
 
-#include "nsIJSContextStack.h"
 #include "nsINetworkManager.h"
 #include "nsIWifi.h"
 #ifdef MOZ_B2G_NFC
@@ -40,9 +39,9 @@
 #include "mozilla/ipc/Ril.h"
 #include "nsIObserverService.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsServiceManagerUtils.h"
 #include "nsThreadUtils.h"
-#include "nsRadioInterfaceLayer.h"
 #include "WifiWorker.h"
 
 USING_WORKERS_NAMESPACE
@@ -64,6 +63,7 @@ NS_DEFINE_CID(kNetworkManagerCID, NS_NETWORKMANAGER_CID);
 
 #ifdef MOZ_B2G_NFC
 NS_DEFINE_CID(kNfcWorkerCID, NS_NFC_CID);
+#define NFC_ENABLED_SETTING "nfc.enabled"
 #endif
 
 #define TOPIC_MOZSETTINGS_CHANGED "mozsettings-changed"
@@ -79,6 +79,24 @@ public:
   virtual bool RunTask(JSContext *aCx);
 };
 
+class SendNfcSocketDataTask : public nsRunnable
+{
+public:
+  SendNfcSocketDataTask(UnixSocketRawData *aRawData)
+    : mRawData(aRawData)
+  { }
+
+  NS_IMETHOD Run()
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+    SystemWorkerManager::SendNfcRawData(mRawData);
+    return NS_OK;
+  }
+
+private:
+  UnixSocketRawData *mRawData;
+};
+
 JSBool
 PostToNfc(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -91,7 +109,6 @@ PostToNfc(JSContext *cx, unsigned argc, jsval *vp)
 
   jsval v = JS_ARGV(cx, vp)[0];
 
-  nsAutoPtr<NfcData> rm(new NfcData());
   JSAutoByteString abs;
   void *data;
   size_t size;
@@ -108,11 +125,11 @@ PostToNfc(JSContext *cx, unsigned argc, jsval *vp)
                    "Incorrect argument. Expecting a string.");
     return false;
   }
+  UnixSocketRawData* raw = new UnixSocketRawData(size);
+  memcpy(raw->mData, data, raw->mSize);
+  nsRefPtr<SendNfcSocketDataTask> task = new SendNfcSocketDataTask(raw);
+  NS_DispatchToMainThread(task);
 
-  rm->json = (char *) malloc(size + 1);
-  memcpy(rm->json, data, size + 1);
-  NfcData *tosend = rm.forget();
-  JS_ALWAYS_TRUE(SendNfcData(&tosend));
   return true;
 }
 
@@ -123,65 +140,18 @@ ConnectWorkerToNfc::RunTask(JSContext *aCx)
   // communication.
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
   NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
-  JSObject *workerGlobal = JS_GetGlobalObject(aCx);
+  JSObject *workerGlobal = JS_GetGlobalForScopeChain(aCx);
 
   return !!JS_DefineFunction(aCx, workerGlobal, "postNfcMessage", PostToNfc, 1,
                              0);
 }
 
-class NfcReceiver : public NfcConsumer
-{
-  class DispatchNfcEvent : public WorkerTask
-  {
-  public:
-    DispatchNfcEvent(NfcData *aMessage)
-      : mMessage(aMessage)
-    { }
-
-    virtual bool RunTask(JSContext *aCx);
-
-  private:
-    nsAutoPtr<NfcData> mMessage;
-  };
-
-public:
-  NfcReceiver(WorkerCrossThreadDispatcher *aDispatcher)
-    : mDispatcher(aDispatcher)
-  { }
-
-  virtual void MessageReceived(NfcData *aMessage) {
-    nsRefPtr<DispatchNfcEvent> dre(new DispatchNfcEvent(aMessage));
-    mDispatcher->PostTask(dre);
-  }
-
-private:
-  nsRefPtr<WorkerCrossThreadDispatcher> mDispatcher;
-};
-
-bool
-NfcReceiver::DispatchNfcEvent::RunTask(JSContext *aCx)
-{
-  JSObject *obj = JS_GetGlobalObject(aCx);
-
-  JSString *string = JS_NewStringCopyN(aCx, mMessage->json, strlen(mMessage->json));
-  free(mMessage->json);
-
-  if (!string) {
-    return false;
-  }
-  jsval argv[] = { STRING_TO_JSVAL(string) };
-  return JS_CallFunctionName(aCx, obj, "onNfcMessage", NS_ARRAY_LENGTH(argv),
-                             argv, argv);
-}
 #endif // } MOZ_B2G_NFC
 
 class ConnectWorkerToRIL : public WorkerTask
 {
-  const unsigned long mClientId;
-
 public:
-  ConnectWorkerToRIL(unsigned long aClientId)
-    : mClientId(aClientId)
+  ConnectWorkerToRIL()
   { }
 
   virtual bool RunTask(JSContext *aCx);
@@ -209,7 +179,7 @@ private:
 };
 
 JSBool
-PostToRIL(JSContext *cx, unsigned argc, jsval *vp)
+PostToRIL(JSContext *cx, unsigned argc, JS::Value *vp)
 {
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
 
@@ -218,10 +188,10 @@ PostToRIL(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  jsval cv = JS_ARGV(cx, vp)[0];
+  JS::Value cv = JS_ARGV(cx, vp)[0];
   int clientId = cv.toInt32();
 
-  jsval v = JS_ARGV(cx, vp)[1];
+  JS::Value v = JS_ARGV(cx, vp)[1];
 
   JSAutoByteString abs;
   void *data;
@@ -272,12 +242,7 @@ ConnectWorkerToRIL::RunTask(JSContext *aCx)
   // communication.
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
   NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
-  JSObject *workerGlobal = JS_GetGlobalObject(aCx);
-
-  if (!JS_DefineProperty(aCx, workerGlobal, "CLIENT_ID",
-                         INT_TO_JSVAL(mClientId), nullptr, nullptr, 0)) {
-    return false;
-  }
+  JSObject *workerGlobal = JS_GetGlobalForScopeChain(aCx);
 
   return !!JS_DefineFunction(aCx, workerGlobal, "postRILMessage", PostToRIL, 1,
                              0);
@@ -286,7 +251,7 @@ ConnectWorkerToRIL::RunTask(JSContext *aCx)
 #ifdef MOZ_WIDGET_GONK
 
 JSBool
-DoNetdCommand(JSContext *cx, unsigned argc, jsval *vp)
+DoNetdCommand(JSContext *cx, unsigned argc, JS::Value *vp)
 {
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
 
@@ -295,7 +260,7 @@ DoNetdCommand(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  jsval v = JS_ARGV(cx, vp)[0];
+  JS::Value v = JS_ARGV(cx, vp)[0];
 
   JSAutoByteString abs;
   void *data;
@@ -378,7 +343,7 @@ ConnectWorkerToNetd::RunTask(JSContext *aCx)
   // communication.
   NS_ASSERTION(!NS_IsMainThread(), "Expecting to be on the worker thread");
   NS_ASSERTION(!JS_IsRunning(aCx), "Are we being called somehow?");
-  JSObject *workerGlobal = JS_GetGlobalObject(aCx);
+  JSObject *workerGlobal = JS_GetGlobalForScopeChain(aCx);
   return !!JS_DefineFunction(aCx, workerGlobal, "postNetdCommand",
                              DoNetdCommand, 1, 0);
 }
@@ -417,7 +382,7 @@ private:
 bool
 NetdReceiver::DispatchNetdEvent::RunTask(JSContext *aCx)
 {
-  JSObject *obj = JS_GetGlobalObject(aCx);
+  JSObject *obj = JS_GetGlobalForScopeChain(aCx);
 
   JSObject *array = JS_NewUint8Array(aCx, mMessage->mSize);
   if (!array) {
@@ -425,7 +390,7 @@ NetdReceiver::DispatchNetdEvent::RunTask(JSContext *aCx)
   }
 
   memcpy(JS_GetUint8ArrayData(array), mMessage->mData, mMessage->mSize);
-  jsval argv[] = { OBJECT_TO_JSVAL(array) };
+  JS::Value argv[] = { OBJECT_TO_JSVAL(array) };
   return JS_CallFunctionName(aCx, obj, "onNetdMessage", NS_ARRAY_LENGTH(argv),
                              argv, argv);
 }
@@ -459,7 +424,7 @@ SystemWorkerManager::Init()
   NS_ASSERTION(NS_IsMainThread(), "We can only initialize on the main thread");
   NS_ASSERTION(!mShutdown, "Already shutdown!");
 
-  mozilla::SafeAutoJSContext cx;
+  mozilla::AutoSafeJSContext cx;
 
   nsresult rv = InitWifi(cx);
   if (NS_FAILED(rv)) {
@@ -472,13 +437,6 @@ SystemWorkerManager::Init()
   InitializeTimeZoneSettingObserver();
   rv = InitNetd(cx);
   NS_ENSURE_SUCCESS(rv, rv);
-#endif
-
-#ifdef MOZ_B2G_NFC
-  rv = InitNfc(cx);
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Failed to initialized NFC!");
-  }
 #endif
 
   nsCOMPtr<nsIObserverService> obs =
@@ -542,7 +500,11 @@ SystemWorkerManager::Shutdown()
   }
 
 #ifdef MOZ_B2G_NFC
-  StopNfc();
+
+  if (mNfcConsumer) {
+    mNfcConsumer->Shutdown();
+    mNfcConsumer = nullptr;
+  }
 
   mNfcWorker = nullptr;
 #endif
@@ -590,17 +552,22 @@ SystemWorkerManager::SendRilRawData(unsigned long aClientId,
   return gInstance->mRilConsumers[aClientId]->SendSocketData(aRaw);
 }
 
+bool
+SystemWorkerManager::SendNfcRawData(UnixSocketRawData* aRaw)
+{
+  if (!gInstance->mNfcConsumer ||
+      gInstance->mNfcConsumer->GetConnectionStatus() != SOCKET_CONNECTED) {
+    // Probably shuting down.
+    delete aRaw;
+    return true;
+  }
+  return gInstance->mNfcConsumer->SendSocketData(aRaw);
+}
+
 NS_IMETHODIMP
 SystemWorkerManager::GetInterface(const nsIID &aIID, void **aResult)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
-
-#ifdef MOZ_B2G_NFC
-  if (aIID.Equals(NS_GET_IID(nsINfc))) {
-    return CallQueryInterface(mNfcWorker,
-                              reinterpret_cast<nsINfc**>(aResult));
-  }
-#endif
 
   if (aIID.Equals(NS_GET_IID(nsIWifi))) {
     return CallQueryInterface(mWifiWorker,
@@ -625,17 +592,13 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
 {
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aWorker), NS_ERROR_UNEXPECTED);
 
-  if (!mRilConsumers.EnsureLengthAtLeast(aClientId + 1)) {
-    NS_WARNING("Failed to ensure minimum length of mRilConsumers");
-    return NS_ERROR_FAILURE;
-  }
+  mRilConsumers.EnsureLengthAtLeast(aClientId + 1);
 
   if (mRilConsumers[aClientId]) {
     NS_WARNING("RilConsumer already registered");
     return NS_ERROR_FAILURE;
   }
 
-  JSAutoRequest ar(aCx);
   JSAutoCompartment ac(aCx, JSVAL_TO_OBJECT(aWorker));
 
   WorkerCrossThreadDispatcher *wctd =
@@ -645,7 +608,7 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
     return NS_ERROR_FAILURE;
   }
 
-  nsRefPtr<ConnectWorkerToRIL> connection = new ConnectWorkerToRIL(aClientId);
+  nsRefPtr<ConnectWorkerToRIL> connection = new ConnectWorkerToRIL();
   if (!wctd->PostTask(connection)) {
     NS_WARNING("Failed to connect worker to ril");
     return NS_ERROR_UNEXPECTED;
@@ -656,6 +619,82 @@ SystemWorkerManager::RegisterRilWorker(unsigned int aClientId,
   return NS_OK;
 }
 
+#ifdef MOZ_B2G_NFC
+nsresult
+SystemWorkerManager::InitNfc(JSContext *cx)
+{
+  nsCOMPtr<nsIWorkerHolder> worker = do_GetService(kNfcWorkerCID);
+  NS_ENSURE_TRUE(worker, NS_ERROR_FAILURE);
+
+  JS::Value workerval;
+  nsresult rv = worker->GetWorker(&workerval);
+  NS_ENSURE_SUCCESS(rv, rv);
+  NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(workerval), NS_ERROR_UNEXPECTED);
+
+  JSAutoCompartment ac(cx, JSVAL_TO_OBJECT(workerval));
+
+  WorkerCrossThreadDispatcher *wctd =
+    GetWorkerCrossThreadDispatcher(cx, workerval);
+  if (!wctd) {
+    NS_WARNING("Failed to GetWorkerCrossThreadDispatcher for nfcd");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<ConnectWorkerToNfc> connection = new ConnectWorkerToNfc();
+  if (!wctd->PostTask(connection)) {
+    NS_WARNING("Failed to connect worker to nfcd");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  mNfcConsumer = new NfcConsumer(wctd);
+  mNfcWorker = worker;
+  return NS_OK;
+}
+
+nsresult
+SystemWorkerManager::RegisterNfcWorker(const JS::Value& aWorker,
+                                       JSContext *aCx)
+{
+  // We're keeping as much of this implementation as possible in JS, so the real
+  // worker lives in Nfc.js. All we do here is hold it alive and
+  // hook it up to the NFC thread.
+
+  NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(aWorker), NS_ERROR_UNEXPECTED);
+
+  // Check a system property to see if NFC is enabled.
+  bool isNfcEnabled = IsNfcEnabled();
+  if (!isNfcEnabled) {
+    NS_WARNING("NFC Property not enabled.");
+    return NS_ERROR_FAILURE;
+  }
+
+  if (mNfcConsumer) {
+    NS_WARNING("NfcConsumer already registered");
+    return NS_ERROR_FAILURE;
+  }
+
+  JSAutoRequest ar(aCx);
+  JSAutoCompartment ac(aCx, JSVAL_TO_OBJECT(aWorker));
+
+  WorkerCrossThreadDispatcher *wctd =
+    GetWorkerCrossThreadDispatcher(aCx, aWorker);
+  if (!wctd) {
+    NS_WARNING("Failed to GetWorkerCrossThreadDispatcher for nfc");
+    return NS_ERROR_FAILURE;
+  }
+
+  nsRefPtr<ConnectWorkerToNfc> connection = new ConnectWorkerToNfc();
+  if (!wctd->PostTask(connection)) {
+    NS_WARNING("Failed to Connect to Nfc");
+    return NS_ERROR_UNEXPECTED;
+  }
+
+
+  mNfcConsumer = new NfcConsumer(wctd);
+  return NS_OK;
+}
+#endif
+
 #ifdef MOZ_WIDGET_GONK
 nsresult
 SystemWorkerManager::InitNetd(JSContext *cx)
@@ -663,12 +702,11 @@ SystemWorkerManager::InitNetd(JSContext *cx)
   nsCOMPtr<nsIWorkerHolder> worker = do_GetService(kNetworkManagerCID);
   NS_ENSURE_TRUE(worker, NS_ERROR_FAILURE);
 
-  jsval workerval;
+  JS::Value workerval;
   nsresult rv = worker->GetWorker(&workerval);
   NS_ENSURE_SUCCESS(rv, rv);
   NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(workerval), NS_ERROR_UNEXPECTED);
 
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, JSVAL_TO_OBJECT(workerval));
 
   WorkerCrossThreadDispatcher *wctd =
@@ -703,54 +741,6 @@ SystemWorkerManager::InitWifi(JSContext *cx)
 }
 
 #ifdef MOZ_B2G_NFC
-nsresult
-SystemWorkerManager::InitNfc(JSContext *cx)
-{
-  // Check a system property to see if NFC is enabled.
-  bool isNfcEnabled = IsNfcEnabled();
-  if (!isNfcEnabled) {
-    NS_WARNING("NFC Property not enabled.");
-    return NS_OK;
-  }
-
-  // We're keeping as much of this implementation as possible in JS, so the real
-  // worker lives in Nfc.js. All we do here is hold it alive and
-  // hook it up to the NFC thread.
-  nsCOMPtr<nsIWorkerHolder> worker = do_CreateInstance(kNfcWorkerCID);
-  NS_ENSURE_TRUE(worker, NS_ERROR_FAILURE);
-
-  jsval workerval;
-  nsresult rv = worker->GetWorker(&workerval);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  NS_ENSURE_TRUE(!JSVAL_IS_PRIMITIVE(workerval), NS_ERROR_UNEXPECTED);
-
-  JSAutoRequest ar(cx);
-  JSAutoCompartment ac(cx, JSVAL_TO_OBJECT(workerval));
-
-  WorkerCrossThreadDispatcher *wctd =
-    GetWorkerCrossThreadDispatcher(cx, workerval);
-  if (!wctd) {
-    NS_WARNING("Failed to GetWorkerCrossThreadDispatcher for netd");
-    return NS_ERROR_FAILURE;
-  }
-
-  nsRefPtr<ConnectWorkerToNfc> connection = new ConnectWorkerToNfc();
-  if (!wctd->PostTask(connection)) {
-    return NS_ERROR_UNEXPECTED;
-  }
-
-
-  // Now that we're set up, connect ourselves to the NFC thread.
-  mozilla::RefPtr<NfcReceiver> receiver = new NfcReceiver(wctd);
-  StartNfc(receiver);
-
-  mNfcWorker = worker;
-  return NS_OK;
-}
-#endif
-
-#ifdef MOZ_B2G_NFC
 // static
 bool SystemWorkerManager::IsNfcEnabled()
 {
@@ -780,18 +770,28 @@ SystemWorkerManager::Observe(nsISupports *aSubject, const char *aTopic,
   else if (!strcmp(aTopic, TOPIC_MOZSETTINGS_CHANGED)) {
     // Parse the JSON value.
     nsDependentString dataStr(aData);
-    JS::Value val;
-    mozilla::SafeAutoJSContext cx;
+    AutoSafeJSContext cx;
+    JS::Rooted<JS::Value> val(cx);
 
-    if (!JS_ParseJSON(cx, dataStr.get(), dataStr.Length(), &val) ||
-        !val.isObject()) {
+    if (!JS_ParseJSON(cx, dataStr.get(), dataStr.Length(), &val)) {
+      return JS_ReportPendingException(cx) ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    if (!val.isObject()) {
       return NS_OK;
     }
 
-    JSObject &obj(val.toObject());
+    JSObject& obj(val.toObject());
+
     JS::Value key;
-    if (!JS_GetProperty(cx, &obj, "key", &key) ||
-        !key.isString()) {
+
+
+    if (!JS_GetProperty(cx, &obj, "key", &key)) {
+      MOZ_ASSERT(!JS_IsExceptionPending(cx));
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    if (!key.isString()) {
       return NS_OK;
     }
 
@@ -800,21 +800,38 @@ SystemWorkerManager::Observe(nsISupports *aSubject, const char *aTopic,
     // Check for NFC state events:
     // nfc_worker.js sits in JS, but the connection we want to manage is in C++.
     JSBool match;
-    if (!JS_StringEqualsAscii(cx, key.toString(), "nfc.enabled", &match) ||
-        match != JS_TRUE) {
-      return NS_OK;
+    if (!JS_StringEqualsAscii(cx, key.toString(), NFC_ENABLED_SETTING, &match)) {
+      MOZ_ASSERT(!JS_IsExceptionPending(cx));
+      return NS_ERROR_OUT_OF_MEMORY;
     }
+
+    if (match) {
+      JS::Value value;
+      if (!JS_GetProperty(cx, &obj, "value", &value)) {
+        MOZ_ASSERT(!JS_IsExceptionPending(cx));
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
+
+      if (!value.isBoolean()) {
+        MOZ_ASSERT(false, "Expecting a boolean for 'nfc.enabled'!");
+        return NS_ERROR_UNEXPECTED;
+      }
+    }
+
 
     JS::Value value;
     if (!JS_GetProperty(cx, &obj, "value", &value) ||
         !value.isBoolean()) {
       return NS_OK;
     }
-    if (value.toBoolean() && !isNfcListening()) {
-      InitNfc(cx);
-    } else if (!value.toBoolean() && isNfcListening()) {
-      StopNfc();
-      mNfcWorker = nullptr;
+
+    if (gInstance->mNfcConsumer) {
+      if (value.toBoolean() && (gInstance->mNfcConsumer->GetConnectionStatus() != SOCKET_CONNECTED)  ) {
+        InitNfc(cx);
+      } else if (!value.toBoolean() && (gInstance->mNfcConsumer->GetConnectionStatus() == SOCKET_CONNECTED)) {
+        gInstance->mNfcConsumer->Shutdown();
+        gInstance->mNfcConsumer = nullptr;
+      }
     }
   }
 #endif

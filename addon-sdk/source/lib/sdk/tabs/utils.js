@@ -16,9 +16,10 @@ const { Ci } = require('chrome');
 const { defer } = require("../lang/functional");
 const { windows, isBrowser } = require('../window/utils');
 const { isPrivateBrowsingSupported } = require('../self');
+const { isGlobalPBSupported } = require('../private-browsing/utils');
 
 // Bug 834961: ignore private windows when they are not supported
-function getWindows() windows(null, { includePrivate: isPrivateBrowsingSupported });
+function getWindows() windows(null, { includePrivate: isPrivateBrowsingSupported || isGlobalPBSupported });
 
 function activateTab(tab, window) {
   let gBrowser = getTabBrowserForTab(tab);
@@ -132,13 +133,21 @@ exports.isTabOpen = isTabOpen;
 function closeTab(tab) {
   let gBrowser = getTabBrowserForTab(tab);
   // normal case?
-  if (gBrowser)
+  if (gBrowser) {
+    // Bug 699450: the tab may already have been detached
+    if (!tab.parentNode)
+      return;
     return gBrowser.removeTab(tab);
+  }
 
   let window = getWindowHoldingTab(tab);
   // fennec?
-  if (window && window.BrowserApp)
+  if (window && window.BrowserApp) {
+    // Bug 699450: the tab may already have been detached
+    if (!tab.browser)
+      return;
     return window.BrowserApp.closeTab(tab);
+  }
   return null;
 }
 exports.closeTab = closeTab;
@@ -165,12 +174,6 @@ function getBrowserForTab(tab) {
   return tab.linkedBrowser;
 }
 exports.getBrowserForTab = getBrowserForTab;
-
-
-function getContentWindowForTab(tab) {
-  return getBrowserForTab(tab).contentWindow;
-}
-exports.getContentWindowForTab = getContentWindowForTab;
 
 function getTabId(tab) {
   if (tab.browser) // fennec
@@ -210,14 +213,20 @@ exports.getAllTabContentWindows = getAllTabContentWindows;
 function getTabForContentWindow(window) {
   // Retrieve the topmost frame container. It can be either <xul:browser>,
   // <xul:iframe/> or <html:iframe/>. But in our case, it should be xul:browser.
-  let browser = window.QueryInterface(Ci.nsIInterfaceRequestor)
-                   .getInterface(Ci.nsIWebNavigation)
-                   .QueryInterface(Ci.nsIDocShell)
-                   .chromeEventHandler;
+  let browser;
+  try {
+    browser = window.QueryInterface(Ci.nsIInterfaceRequestor)
+                    .getInterface(Ci.nsIWebNavigation)
+                    .QueryInterface(Ci.nsIDocShell)
+                    .chromeEventHandler;
+  } catch(e) {
+    // Bug 699450: The tab may already have been detached so that `window` is
+    // in a almost destroyed state and can't be queryinterfaced anymore.
+  }
 
   // Is null for toplevel documents
   if (!browser) {
-    return false;
+    return null;
   }
 
   // Retrieve the owner window, should be browser.xul one
@@ -308,3 +317,53 @@ function getTabForBrowser(browser) {
 }
 exports.getTabForBrowser = getTabForBrowser;
 
+function pin(tab) {
+  let gBrowser = getTabBrowserForTab(tab);
+  // TODO: Implement Fennec support
+  if (gBrowser) gBrowser.pinTab(tab);
+}
+exports.pin = pin;
+
+function unpin(tab) {
+  let gBrowser = getTabBrowserForTab(tab);
+  // TODO: Implement Fennec support
+  if (gBrowser) gBrowser.unpinTab(tab);
+}
+exports.unpin = unpin;
+
+function isPinned(tab) !!tab.pinned
+exports.isPinned = isPinned;
+
+function reload(tab) {
+  let gBrowser = getTabBrowserForTab(tab);
+  // Firefox
+  if (gBrowser) gBrowser.unpinTab(tab);
+  // Fennec
+  else if (tab.browser) tab.browser.reload();
+}
+exports.reload = reload
+
+function getIndex(tab) {
+  let gBrowser = getTabBrowserForTab(tab);
+  // Firefox
+  if (gBrowser) {
+    let document = getBrowserForTab(tab).contentDocument;
+    return gBrowser.getBrowserIndexForDocument(document);
+  }
+  // Fennec
+  else {
+    let window = getWindowHoldingTab(tab)
+    let tabs = window.BrowserApp.tabs;
+    for (let i = tabs.length; i >= 0; i--)
+      if (tabs[i] === tab) return i;
+  }
+}
+exports.getIndex = getIndex;
+
+function move(tab, index) {
+  let gBrowser = getTabBrowserForTab(tab);
+  // Firefox
+  if (gBrowser) gBrowser.moveTabTo(tab, index);
+  // TODO: Implement fennec support
+}
+exports.move = move;

@@ -1,5 +1,5 @@
 const gHttpTestRoot = getRootDirectory(gTestPath).replace("chrome://mochitests/content/", "http://127.0.0.1:8888/");
-const EXPECTED_PLUGINSCRIPTED_EVENT_COUNT = 7;
+const EXPECTED_PLUGINSCRIPTED_EVENT_COUNT = 6;
 
 var gTestBrowser = null;
 var gNextTestList = [];
@@ -13,10 +13,14 @@ function test() {
   waitForExplicitFinish();
   registerCleanupFunction(function() {
     Services.prefs.clearUserPref("plugins.click_to_play");
+    var plugin = getTestPlugin();
+    plugin.enabledState = Ci.nsIPluginTag.STATE_ENABLED;
     gTestBrowser.removeEventListener("load", pageLoad, true);
     gTestBrowser.removeEventListener("PluginScripted", pluginScripted, true);
   });
   Services.prefs.setBoolPref("plugins.click_to_play", true);
+  var plugin = getTestPlugin();
+  plugin.enabledState = Ci.nsIPluginTag.STATE_CLICKTOPLAY;
 
   gBrowser.selectedTab = gBrowser.addTab();
   gTestBrowser = gBrowser.selectedBrowser;
@@ -103,16 +107,12 @@ function testDenyPermissionPart1() {
 }
 
 function testDenyPermissionPart2() {
-  var condition = function() gPluginScriptedFired;
+  var condition = function() XPCNativeWrapper.unwrap(gTestBrowser.contentWindow).gScriptingFinished;
   waitForCondition(condition, testDenyPermissionPart3, "test deny permission: waited too long for PluginScripted event");
 }
 
 function testDenyPermissionPart3() {
-  var condition = function() gTestBrowser._pluginScriptedState == gPluginHandler.PLUGIN_SCRIPTED_STATE_DONE;
-  waitForCondition(condition, testDenyPermissionPart4, "test deny permission: waited too long for PluginScripted event handling");
-}
-
-function testDenyPermissionPart4() {
+  ok(!gPluginScriptedFired, "Should not fire plugin-scripted event for disabled plugins");
   var notification = PopupNotifications.getNotification("click-to-play-plugins", gTestBrowser);
   ok(!notification, "test deny permission: should not have a click-to-play notification");
 

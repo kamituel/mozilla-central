@@ -54,7 +54,9 @@ using namespace std;
 #endif
 #include <gdk/gdkx.h>
 #include <gdk/gdk.h>
+#if (MOZ_WIDGET_GTK == 2)
 #include "gtk2xtbin.h"
+#endif
 
 #elif defined(MOZ_WIDGET_QT)
 #undef KeyPress
@@ -113,7 +115,7 @@ PluginInstanceChild::PluginInstanceChild(const NPPluginFuncs* aPluginIface)
     , mAsyncInvalidateTask(0)
     , mCachedWindowActor(nullptr)
     , mCachedElementActor(nullptr)
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
     , mXEmbed(false)
 #endif // MOZ_WIDGET_GTK
 #if defined(OS_WIN)
@@ -161,7 +163,7 @@ PluginInstanceChild::PluginInstanceChild(const NPPluginFuncs* aPluginIface)
 #if defined(MOZ_X11) && defined(XP_UNIX) && !defined(XP_MACOSX)
     mWindow.ws_info = &mWsInfo;
     memset(&mWsInfo, 0, sizeof(mWsInfo));
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
     mWsInfo.display = NULL;
     mXtClient.top_widget = NULL;
 #else
@@ -503,7 +505,7 @@ PluginInstanceChild::NPN_SetValue(NPPVariable aVar, void* aValue)
             return NPERR_GENERIC_ERROR;
 
         NPWindowType newWindowType = windowed ? NPWindowTypeWindow : NPWindowTypeDrawable;
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
         if (mWindow.type != newWindowType && mWsInfo.display) {
            // plugin type has been changed but we already have a valid display
            // so update it for the recent plugin mode
@@ -1047,7 +1049,7 @@ bool PluginInstanceChild::CreateWindow(const NPRemoteWindow& aWindow)
                       aWindow.x, aWindow.y,
                       aWindow.width, aWindow.height));
 
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
     if (mXEmbed) {
         mWindow.window = reinterpret_cast<void*>(aWindow.window);
     }
@@ -1076,7 +1078,7 @@ void PluginInstanceChild::DeleteWindow()
   if (!mWindow.window)
       return;
 
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
   if (mXtClient.top_widget) {     
       xt_client_unrealize(&mXtClient);
       xt_client_destroy(&mXtClient); 
@@ -1257,7 +1259,7 @@ PluginInstanceChild::AnswerNPP_SetWindow(const NPRemoteWindow& aWindow)
 bool
 PluginInstanceChild::Initialize()
 {
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
     NPError rv;
 
     if (mWsInfo.display) {
@@ -2713,18 +2715,16 @@ PluginInstanceChild::RecvAsyncSetWindow(const gfxSurfaceType& aSurfaceType,
         mCurrentAsyncSetWindowTask = nullptr;
     }
 
-    if (mPendingPluginCall) {
-        // We shouldn't process this now. Run it later.
-        mCurrentAsyncSetWindowTask =
-            NewRunnableMethod<PluginInstanceChild,
-                              void (PluginInstanceChild::*)(const gfxSurfaceType&, const NPRemoteWindow&, bool),
-                              gfxSurfaceType, NPRemoteWindow, bool>
-                (this, &PluginInstanceChild::DoAsyncSetWindow,
-                 aSurfaceType, aWindow, true);
-        MessageLoop::current()->PostTask(FROM_HERE, mCurrentAsyncSetWindowTask);
-    } else {
-        DoAsyncSetWindow(aSurfaceType, aWindow, false);
-    }
+    // We shouldn't process this now because it may be received within a nested
+    // RPC call, and both Flash and Java don't expect to receive setwindow calls
+    // at arbitrary times.
+    mCurrentAsyncSetWindowTask =
+        NewRunnableMethod<PluginInstanceChild,
+                          void (PluginInstanceChild::*)(const gfxSurfaceType&, const NPRemoteWindow&, bool),
+                          gfxSurfaceType, NPRemoteWindow, bool>
+        (this, &PluginInstanceChild::DoAsyncSetWindow,
+         aSurfaceType, aWindow, true);
+    MessageLoop::current()->PostTask(FROM_HERE, mCurrentAsyncSetWindowTask);
 
     return true;
 }
@@ -3835,13 +3835,9 @@ PluginInstanceChild::RecvUpdateBackground(const SurfaceDescriptor& aBackground,
     // XXX refactor me
     mAccumulatedInvalidRect.UnionRect(aRect, mAccumulatedInvalidRect);
 
-    // The browser is limping along with a stale copy of our pixels.
-    // Try to repaint ASAP.  This will ClearCurrentBackground() if we
-    // needed it.
-    if (!ShowPluginFrame()) {
-        NS_WARNING("Couldn't immediately repaint plugin instance");
-        AsyncShowPluginFrame();
-    }
+    // This must be asynchronous, because we may be nested within RPC messages
+    // which do not expect to receiving paint events.
+    AsyncShowPluginFrame();
 
     return true;
 }
@@ -4153,7 +4149,7 @@ PluginInstanceChild::AnswerNPP_Destroy(NPError* aResult)
         mAsyncBitmaps.Enumerate(DeleteSurface, this);
     }
 
-#if defined(MOZ_WIDGET_GTK)
+#if (MOZ_WIDGET_GTK == 2)
     if (mWindow.type == NPWindowTypeWindow && !mXEmbed) {
       xt_client_xloop_destroy();
     }

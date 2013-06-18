@@ -721,6 +721,20 @@ Database::InitSchema(bool* aDatabaseMigrated)
 
       // Firefox 14 uses schema version 21.
 
+      if (currentSchemaVersion < 22) {
+        rv = MigrateV22Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      // Firefox 22 uses schema version 22.
+
+      if (currentSchemaVersion < 23) {
+        rv = MigrateV23Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      // Firefox 24 uses schema version 23.
+
       // Schema Upgrades must add migration code here.
 
       rv = UpdateBookmarkRootTitles();
@@ -1857,12 +1871,34 @@ Database::MigrateV21Up()
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
-  // Update prefixes.
+  return NS_OK;
+}
+
+nsresult
+Database::MigrateV22Up()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // Reset all session IDs to 0 since we don't support them anymore.
+  // We don't set them to NULL to avoid breaking downgrades.
+  nsresult rv = mMainConn->ExecuteSimpleSQL(NS_LITERAL_CSTRING(
+    "UPDATE moz_historyvisits SET session = 0"
+  ));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  return NS_OK;
+}
+
+
+nsresult
+Database::MigrateV23Up()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+
+  // Recalculate hosts prefixes.
   nsCOMPtr<mozIStorageAsyncStatement> updatePrefixesStmt;
-  rv = mMainConn->CreateAsyncStatement(NS_LITERAL_CSTRING(
-    "UPDATE moz_hosts SET prefix = ( "
-      HOSTS_PREFIX_PRIORITY_FRAGMENT
-    ") "
+  nsresult rv = mMainConn->CreateAsyncStatement(NS_LITERAL_CSTRING(
+    "UPDATE moz_hosts SET prefix = ( " HOSTS_PREFIX_PRIORITY_FRAGMENT ") "
   ), getter_AddRefs(updatePrefixesStmt));
   NS_ENSURE_SUCCESS(rv, rv);
 

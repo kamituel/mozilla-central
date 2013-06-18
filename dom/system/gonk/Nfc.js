@@ -42,6 +42,9 @@ XPCOMUtils.defineLazyServiceGetter(this, "ppmm",
 XPCOMUtils.defineLazyServiceGetter(this, "gSystemMessenger",
                                    "@mozilla.org/system-message-internal;1",
                                    "nsISystemMessagesInternal");
+XPCOMUtils.defineLazyServiceGetter(this, "gSystemWorkerManager",
+                                   "@mozilla.org/telephony/system-worker-manager;1",
+                                   "nsISystemWorkerManager");
 XPCOMUtils.defineLazyServiceGetter(this, "gSettingsService",
                                    "@mozilla.org/settingsService;1",
                                    "nsISettingsService");
@@ -62,8 +65,8 @@ function Nfc() {
   lock.get("nfc.enabled", this);
 
   debug("Starting Worker");
+  gSystemWorkerManager.registerNfcWorker(this.worker);
 }
-
 Nfc.prototype = {
 
   classID:   NFC_CID,
@@ -73,7 +76,9 @@ Nfc.prototype = {
                                                  Ci.nsINfc]}),
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIWorkerHolder,
-                                         Ci.nsINfc]),
+                                         Ci.nsINfc,
+                                         Ci.nsIObserver]),
+
 
   onerror: function onerror(event) {
     debug("Got an error: " + event.filename + ":" +
@@ -126,7 +131,6 @@ Nfc.prototype = {
       return;
     if (aResult === null)
       aResult = true;
-    debug("XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX");
     debug("Setting current nfc.enabled preference value to system: " + aResult);
     this.worker.postMessage({type: "setNfcEnabled", content: {enabled: aResult}});
   },
