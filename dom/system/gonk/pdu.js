@@ -196,21 +196,20 @@ var PDU = Class.extend({
 });
 
 PDU.IDS = {
-    PDUNotification: 0,
-    PDURequest: 1,
-    PDUResponse: 2,
-    PDUTechDiscoveredNotification: 3,
-    PDUTechLostNotification: 4,
-    PDUConnectRequest: 5,
-    PDUCloseRequest: 6,
-    PDUNDEFDetailsRequest: 7,
-    PDUNDEFDetailsResponse: 8,
-    PDUNDEFReadRequest: 9,
-    PDUNDEFReadResponse: 10,
-    PDUNDEFWriteRequest: 11,
-    PDUNDEFMakeReadOnlyRequest: 12,
-    PDUConfigRequest: 13,
-    PDUConfigResponse: 14
+    PDUConfigRequest: 0,
+    PDUConnectRequest: 1,
+    PDUCloseRequest: 2,
+    PDUNDEFDetailsRequest: 3,
+    PDUNDEFReadRequest: 4,
+    PDUNDEFWriteRequest: 5,
+    PDUNDEFMakeReadOnlyRequest: 6,
+    PDUResponse: 1000,
+    PDUConfigResponse: 1001,
+    PDUNDEFDetailsResponse: 1002,
+    PDUNDEFReadResponse: 1003,
+    PDUInitializedNotification: 2000,
+    PDUTechDiscoveredNotification: 2001,
+    PDUTechLostNotification: 2002
 }
 
 PDU.parse = function(buffer) {
@@ -221,11 +220,14 @@ PDU.parse = function(buffer) {
         case PDU.IDS.PDUResponse:
             pdu = new PDUResponse();
             break;
+        case PDU.IDS.PDUConfigResponse:
+            pdu = new PDUConfigResponse();
+            break;
         case PDU.IDS.PDUNDEFReadResponse:
             pdu = new PDUNDEFReadResponse();
             break;
-        case PDU.IDS.PDUNotification:
-            pdu = new PDUNotification();
+        case PDU.IDS.PDUInitializedNotification:
+            pdu = new PDUInitializedNotification();
             break;
         case PDU.IDS.PDUTechDiscoveredNotification:
             pdu = new PDUTechDiscoveredNotification();
@@ -237,7 +239,7 @@ PDU.parse = function(buffer) {
             pdu = new PDUConfigResponse();
             break;
         default:
-            console.log("PDU.parse() error");
+            return undefined;
     }
     pdu.unmarshall(codec);
     return pdu;
@@ -288,6 +290,23 @@ var PDUResponse = PDU.extend({
     }
 });
 
+var PDUInitializedNotification = PDU.extend({
+    construct: function(id) {
+        id = typeof id !== 'undefined' ? id : PDU.IDS.PDUInitializedNotification;
+        this.$.construct.call(this, id);
+        this.status = 0;
+        this.majorVersion = 0;
+        this.minorVersion = 0;
+    },
+    
+    unmarshall: function(codec) {
+        this.$.unmarshall.call(this, codec);
+        this.status = codec.getULong();
+        this.majorVersion = codec.getULong();
+        this.minorVersion = codec.getULong();
+    }
+});
+
 
 var TECH = {
     TECH_NDEF: 0,
@@ -317,6 +336,32 @@ var PDUTechLostNotification = PDUNotification.extend({
     
     unmarshall: function(codec) {
         this.$.unmarshall.call(this, codec);
+    }
+});
+
+var PDUConfigRequest = PDU.extend({
+    construct: function(id) {
+        id = typeof id !== 'undefined' ? id : PDU.IDS.PDUConfigRequest;
+        this.$.construct.call(this, id);
+        this.powerLevel = -1;
+    },
+    
+    marshall: function(codec) {
+        this.$.marshall.call(this, codec);
+        codec.putULong(this.powerLevel);
+    }
+});
+
+var PDUConfigResponse = PDU.extend({
+    construct: function(id) {
+        id = typeof id !== 'undefined' ? id : PDU.IDS.PDUConfigResponse;
+        this.$.construct.call(this, id);
+        this.status = 0;
+    },
+    
+    unmarshall: function(codec) {
+        this.$.unmarshall.call(this, codec);
+        this.status = codec.getULong();
     }
 });
 
@@ -452,8 +497,8 @@ var PDUConfigResponse = PDU.extend({
 var a = new Uint8Array(100);
 var i = 0;
 
-a[i++] = 0x0a;
-a[i++] = 0;
+a[i++] = 0xeb; // Note: 0x03eb == 1003
+a[i++] = 0x03;
 a[i++] = 0;
 a[i++] = 0;
 a[i++] = 4;
@@ -524,4 +569,5 @@ pdu.marshall(codec);
 for (var i = 0; i < codec.pos; i++) {
     console.log(codec.buffer[i]);
 }
+
 */
