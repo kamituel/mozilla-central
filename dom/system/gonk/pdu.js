@@ -250,11 +250,11 @@ var PDUNotification = PDU.extend({
     construct: function(id) {
         id = typeof id !== 'undefined' ? id : PDU.IDS.PDUNotification;
         this.$.construct.call(this, id);
-        this.sessionId = new Uint8Array(0);
+        this.sessionId = 0;
     },
     
     unmarshall: function(codec) {
-        this.sessionId = codec.getOctetArray();
+        this.sessionId = codec.getULong();
     }
 });
 
@@ -263,12 +263,12 @@ var PDURequest = PDU.extend({
     construct: function(id) {
         id = typeof id !== 'undefined' ? id : PDU.IDS.PDURequest;
         this.$.construct.call(this, id);
-        this.sessionId = new Uint8Array(0);
+        this.sessionId = 0;
     },
     
     marshall: function(codec) {
         this.$.marshall.call(this, codec);
-        codec.putOctetArray(this.sessionId);
+        codec.putULong(this.sessionId);
     }
 });
 
@@ -276,12 +276,12 @@ var PDUResponse = PDU.extend({
     construct: function() {
         id = typeof id !== 'undefined' ? id : PDU.IDS.PDUResponse;
         this.$.construct.call(this, id);
-        this.sessionId = new Uint8Array(0);
+        this.sessionId = 0;
         this.status = 0;
     },
 
     unmarshall: function(codec) {
-        this.sessionId = codec.getOctetArray();
+        this.sessionId = codec.getULong();
         this.status = codec.getULong();
     },
     
@@ -556,11 +556,7 @@ console.log("------------------------------------------");
 pdu = new PDUCloseRequest();
 console.log(">>>>>>>>>>>>>> " + pdu.getId());
 
-pdu.sessionId = new Uint8Array(4);
-pdu.sessionId[0] = 0xef;
-pdu.sessionId[1] = 0xbe;
-pdu.sessionId[2] = 0xea;
-pdu.sessionId[3] = 0xde;
+pdu.sessionId = 0x1234;
 console.log(pdu);
 
 var codec = new LECodec();
