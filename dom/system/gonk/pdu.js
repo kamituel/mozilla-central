@@ -42,6 +42,23 @@ Class.extend = function(def) {
 
 /*-----------------------------------------------------------------------------*/
 
+function b64tob(v) {
+    var str = atob(v);
+    var b = new Uint8Array(str.length);
+    for (var i = 0; i < str.length; i++) {
+        b[i] = str.charCodeAt(i);
+    }
+    return b;
+}
+
+function btob64(v) {
+    var str = "";
+    for (var i = 0; i < v.byteLength; i++) {
+        str += String.fromCharCode(v[i])
+    }
+    return btoa(str);
+}
+
 var LECodec = Class.extend({
     construct: function(buffer) {
         buffer = typeof buffer !== 'undefined' ? buffer : new Uint8Array(8096);
@@ -125,53 +142,30 @@ var LECodec = Class.extend({
     }
 });
 
-var NDEFRecord = Class.extend({
-    construct: function() {
-        this.tnf = 0;
-        this.type = new Uint8Array(0);
-        this.id = new Uint8Array(0);
-        this.payload = new Uint8Array(0);
-    },
+var NDEFMessage = {};
 
-    marshall: function(codec) {
-        codec.putUShort(this.tnf);
-        codec.putOctetArray(this.type);
-        codec.putOctetArray(this.id);
-        codec.putOctetArray(this.payload);
+NDEFMessage.marshall = function(codec, ndefMsg) {
+    codec.putULong(ndefMsg.length);
+    for (var i = 0; i < ndefMsg.length; i++) {
+        var ndefRec = ndefMsg[i];
+        codec.putUShort(ndefRec.tnf);
+        codec.putOctetArray(b64tob(ndefRec.type));
+        codec.putOctetArray(b64tob(ndefRec.id));
+        codec.putOctetArray(b64tob(ndefRec.payload));
     }
-});
-
-NDEFRecord.unmarshall = function(codec) {
-    var record = new NDEFRecord();
-    record.tnf = codec.getUShort();
-    record.type = codec.getOctetArray();
-    record.id = codec.getOctetArray();
-    record.payload = codec.getOctetArray();
-    return record;
 }
 
-
-var NDEFMessage = Class.extend({
-    construct: function() {
-        this.records = new Array();
-    },
-
-    marshall: function(codec) {
-        codec.putULong(this.records.length);
-        var i = 0;
-        for (i = 0; i < this.records.length; i++) {
-            this.records[i].marshall(codec);
-        }
-    }
-});
-
 NDEFMessage.unmarshall = function(codec) {
-    var msg = new NDEFMessage();
+    var msg = new Array();
     var num = codec.getULong();
     var i = 0;
     for (i = 0; i < num; i++) {
-        var record = NDEFRecord.unmarshall(codec);
-        msg.records.push(record);
+        var record = {};
+        record.tnf = codec.getUShort();
+        record.type = btob64(codec.getOctetArray());
+        record.id = btob64(codec.getOctetArray());
+        record.payload = btob64(codec.getOctetArray());
+        msg.push(record);
     }
     return msg;
 }
@@ -432,7 +426,7 @@ var PDUNDEFReadResponse = PDUResponse.extend({
     construct: function(id) {
         id = typeof id !== 'undefined' ? id : PDU.IDS.PDUNDEFReadResponse;
         this.$.construct.call(this, id);
-        this.ndef = 0;
+        this.ndef = [];
     },
 
     unmarshall: function(codec) {
@@ -445,10 +439,12 @@ var PDUNDEFWriteRequest = PDURequest.extend({
     construct: function(id) {
         id = typeof id !== 'undefined' ? id : PDU.IDS.PDUNDEFWriteRequest;
         this.$.construct.call(this, id);
+        this.ndef = [];
     },
     
     marshall: function(codec) {
         this.$.marshall.call(this, codec);
+        NDEFMessage.marshall(codec, this.ndef);
     }
 });
 
@@ -505,10 +501,6 @@ a[i++] = 4;
 a[i++] = 0;
 a[i++] = 0;
 a[i++] = 0;
-a[i++] = 0xde;
-a[i++] = 0xad;
-a[i++] = 0xbe;
-a[i++] = 0xef;
 a[i++] = 0x1f;
 a[i++] = 0x83;
 a[i++] = 0xd8;
@@ -557,7 +549,6 @@ pdu = new PDUCloseRequest();
 console.log(">>>>>>>>>>>>>> " + pdu.getId());
 
 pdu.sessionId = 0x1234;
-console.log(pdu);
 
 var codec = new LECodec();
 pdu.marshall(codec);
