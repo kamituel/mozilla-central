@@ -116,9 +116,26 @@ PostToNfc(JSContext *cx, unsigned argc, JS::Value *vp)
 
     size = JS_GetStringLength(str);
     data = abs.ptr();
+  } else if (!JSVAL_IS_PRIMITIVE(v)) {
+    JSObject *obj = JSVAL_TO_OBJECT(v);
+    if (!JS_IsTypedArrayObject(obj)) {
+      JS_ReportError(cx, "Object passed in wasn't a typed array");
+      return false;
+    }
+
+    uint32_t type = JS_GetArrayBufferViewType(obj);
+    if (type != js::ArrayBufferView::TYPE_INT8 &&
+        type != js::ArrayBufferView::TYPE_UINT8 &&
+        type != js::ArrayBufferView::TYPE_UINT8_CLAMPED) {
+      JS_ReportError(cx, "Typed array data is not octets");
+      return false;
+    }
+
+    size = JS_GetTypedArrayByteLength(obj);
+    data = JS_GetArrayBufferViewData(obj);
   } else {
     JS_ReportError(cx,
-                   "Incorrect argument. Expecting a string.");
+                   "Incorrect argument. Expecting a string or typed Array.");
     return false;
   }
   UnixSocketRawData* raw = new UnixSocketRawData(size);
