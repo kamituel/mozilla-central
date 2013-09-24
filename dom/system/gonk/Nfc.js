@@ -113,13 +113,13 @@ Nfc.prototype = {
     switch (message.type) {
       case "techDiscovered":
         this._connectedSessionId = message.sessionId;
-        gSystemMessenger.broadcastMessage("nfc-manager-tech-discovered", message);
         ppmm.broadcastAsyncMessage("NFC:TechDiscovered", message);
+        gSystemMessenger.broadcastMessage("nfc-manager-tech-discovered", message);
         break;
       case "techLost":
         this._connectedSessionId = null;
-        gSystemMessenger.broadcastMessage("nfc-manager-tech-lost", message);
         ppmm.broadcastAsyncMessage("NFC:TechLost", message);
+        gSystemMessenger.broadcastMessage("nfc-manager-tech-lost", message);
         break;
       case "NDEFDetailsResponse":
         ppmm.broadcastAsyncMessage("NFC:NDEFDetailsResponse", message);
@@ -138,6 +138,9 @@ Nfc.prototype = {
         break;
       case "ConnectResponse":
         ppmm.broadcastAsyncMessage("NFC:ConnectResponse", message);
+        break;
+      case "NfcReqResponse":
+        ppmm.broadcastAsyncMessage("NFC:Response", message);
         break;
       case "CloseResponse":
         ppmm.broadcastAsyncMessage("NFC:CloseResponse", message);
@@ -183,6 +186,15 @@ Nfc.prototype = {
 
   ndefWrite: function ndefWrite(message) {
     var records = message.records;
+
+    /*var pdu = new PDUNDEFWriteRequest();
+    debug(">>>>>>>>>>>>>> " + pdu.getId());
+
+    pdu.sessionId = message.sessionId;
+    pdu.ndef      = records;
+
+    var codec = new LECodec();
+    pdu.marshall(codec);*/
 
     debug("ndefWriteRequest message: " + JSON.stringify(message));
     var outMessage = {

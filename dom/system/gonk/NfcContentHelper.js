@@ -41,7 +41,8 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:NfcATagDetailsResponse",
   "NFC:NfcATagTransceiveResponse",
   "NFC:ConnectResponse",
-  "NFC:CloseResponse"
+  "NFC:CloseResponse",
+  "NFC:Response"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -53,6 +54,7 @@ function NfcContentHelper() {
   Services.obs.addObserver(this, "xpcom-shutdown", false);
 
   this._requestMap = new Array();
+  this._sLastRequestId = 0;
 }
 
 NfcContentHelper.prototype = {
@@ -69,6 +71,10 @@ NfcContentHelper.prototype = {
 
   _requestMap: null,
   _connectedSessionId: null,
+  // TBD: Work Around to remember the last DOM request
+  //      To be fixed later, and move to a queue implementation and 
+  //      enforce serialization of Nfc requests and responses.
+  _sLastRequestId: null,
 
   encodeNdefRecords: function encodeNdefRecords(records) {
     var encodedRecords = new Array();
@@ -93,6 +99,7 @@ NfcContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
+    this._sLastRequestId = requestId;
 
     cpmm.sendAsyncMessage("NFC:NdefDetails", {
       requestId: requestId,
@@ -110,6 +117,8 @@ NfcContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
+    // TBD: To be fixed later
+    this._sLastRequestId = requestId;
 
     cpmm.sendAsyncMessage("NFC:NdefRead", {
       requestId: requestId,
@@ -128,6 +137,7 @@ NfcContentHelper.prototype = {
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
 
+    this._sLastRequestId = requestId;
     let encodedRecords = this.encodeNdefRecords(records);
 
     cpmm.sendAsyncMessage("NFC:NdefWrite", {
@@ -147,6 +157,7 @@ NfcContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
+    this._sLastRequestId = requestId;
 
     cpmm.sendAsyncMessage("NFC:NdefMakeReadOnly", {
       requestId: requestId,
@@ -165,6 +176,7 @@ NfcContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
+    this._sLastRequestId = requestId;
 
     let encodedRecords = this.encodeNdefRecords(records);
 
@@ -220,6 +232,8 @@ NfcContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
+    // TBD: To be fixed later
+    this._sLastRequestId = requestId;    
 
     cpmm.sendAsyncMessage("NFC:Connect", {
       requestId: requestId,
@@ -238,6 +252,7 @@ NfcContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = {win: window};
+    this._sLastRequestId = requestId;
 
     cpmm.sendAsyncMessage("NFC:Close", {
       requestId: requestId,
@@ -376,6 +391,9 @@ NfcContentHelper.prototype = {
       case "NFC:ConnectResponse":
         this.handleConnectResponse(message.json);
         break;
+      case "NFC:Response":
+        this.handleResponse(message.json);
+        break;
       case "NFC:CloseResponse":
         this.handleCloseResponse(message.json);
         break;
@@ -418,14 +436,14 @@ NfcContentHelper.prototype = {
 
   handleNDEFReadResponse: function handleNDEFReadResponse(message) {
     debug("NDEFReadResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
+    let requester = this._requestMap[this._sLastRequestId];
     if ((typeof requester === 'undefined') ||
         (message.sessionId != this._connectedSessionId)) {
        return; // Nothing to do in this instance.
     }
-    delete this._requestMap[message.requestId];
+    delete this._requestMap[this._sLastRequestId];
     let result = message.content;
-    let requestId = atob(message.requestId);
+    let requestId = atob(this._sLastRequestId);
     let records = result.records.map(function(r) {
       r.type = atob(r.type);
       r.id = atob(r.id);
@@ -443,18 +461,19 @@ NfcContentHelper.prototype = {
 
   handleNDEFWriteResponse: function handleNDEFWriteResponse(message) {
     debug("NDEFWriteResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
+    let requester = this._requestMap[this._sLastRequestId];
     if ((typeof requester === 'undefined') ||
         (message.sessionId != this._connectedSessionId)) {
        debug('Returning: requester: ' + requester);
        debug('Returning: sessionId matches?: ' + (message.sessionId == this._connectedSessionId));
        debug('Returning: sessionId matches? sessionId: ' + message.sessionId);
        debug('Returning: sessionId matches?: saved sessionId: ' + this._connectedSessionId);
-       return; // Nothing to do in this instance.
+       debug("Fallback on last saved requestID...");
+       requester = this._sLastRequestId;
     }
-    delete this._requestMap[message.requestId];
+    delete this._requestMap[this._sLastRequestId];
     let result = message.content;
-    let requestId = atob(message.requestId);
+    let requestId = atob(this._sLastRequestId);
 
     if (result.status != "OK") {
       this.fireRequestError(requestId, result.status);
@@ -465,15 +484,16 @@ NfcContentHelper.prototype = {
 
   handleNDEFReadOnlyResponse: function handleNDEFReadOnlyResponse(message) {
     debug("handleNDEFReadOnlyResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
+    let requester = this._requestMap[this._sLastRequestId];
     if ((typeof requester === 'undefined') ||
         (message.sessionId != this._connectedSessionId)) {
        debug('Returning: requester: ' + requester);
-       return; // Nothing to do in this instance.
+       debug("Fallback on last saved requestID...");
+       requester = this._sLastRequestId;
     }
-    delete this._requestMap[message.requestId];
+    delete this._requestMap[this._sLastRequestId];
     let result = message.content;
-    let requestId = atob(message.requestId);
+    let requestId = atob(this._sLastRequestId);
 
     if (result.status != "OK") {
       this.fireRequestError(requestId, ObjectWrapper.wrap(result, requester.win));
@@ -484,16 +504,17 @@ NfcContentHelper.prototype = {
 
   handleNDEFPushResponse: function handleNDEFPushResponse(message) {
     debug("NDEFPushResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
+    let requester = this._requestMap[this._sLastRequestId];
     if ((typeof requester === 'undefined') ||
         (message.sessionId != this._connectedSessionId)) {
        debug('Returning: requester: ' + requester);
        debug('Returning: sessionId matches?: ' + (message.sessionId == this._connectedSessionId));
-       return; // Nothing to do in this instance.
+       debug("Fallback on last saved requestID...");
+       requester = this._sLastRequestId;
     }
-    delete this._requestMap[message.requestId];
+    delete this._requestMap[this._sLastRequestId];
     let result = message.content;
-    let requestId = atob(message.requestId);
+    let requestId = atob(this._sLastRequestId);
 
     if (result.status != "OK") {
       this.fireRequestError(requestId, result.status);
@@ -538,16 +559,40 @@ NfcContentHelper.prototype = {
     }
   },
 
-  handleConnectResponse: function handleConnectResponse(message) {
-    debug("ConnectResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
+  handleResponse: function handleResponse(message) {
+    debug("handleResponse(" + JSON.stringify(message) + ")");
+    let requester = this._requestMap[this._sLastRequestId];
+    debug("message.sessionId " + message.sessionId);
+    debug("this._connectedSessionId" + this._connectedSessionId);
     if ((typeof requester === 'undefined') ||
         (message.sessionId != this._connectedSessionId)) {
-       return; // Nothing to do in this instance.
+         debug("Fallback on last saved requestID...");
+         requester = this._sLastRequestId;
     }
-    delete this._requestMap[message.requestId];
+    delete this._requestMap[this._sLastRequestId];
     let result = message.content;
-    let requestId = atob(message.requestId);
+    let requestId = atob(this._sLastRequestId);
+
+    if (message.content.status != "OK") {
+      this.fireRequestError(requestId, result.status);
+    } else  {
+      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
+    }
+  },
+
+  handleConnectResponse: function handleConnectResponse(message) {
+    debug("ConnectResponse(" + JSON.stringify(message) + ")");
+    let requester = this._requestMap[this._sLastRequestId];
+    debug("message.sessionId " + message.sessionId);
+    debug("this._connectedSessionId" + this._connectedSessionId);
+    if ((typeof requester === 'undefined') ||
+        (message.sessionId != this._connectedSessionId)) {
+         debug("Fallback on last saved requestID...");
+         requester = this._sLastRequestId;
+    }
+    delete this._requestMap[this._sLastRequestId];
+    let result = message.content;
+    let requestId = atob(this._sLastRequestId);
 
     if (message.content.status != "OK") {
       this.fireRequestError(requestId, result.status);
