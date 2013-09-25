@@ -188,7 +188,6 @@ var LECodec = Class.extend({
     putOctetArray: function(buf) {
         var len = buf.length;
         this.putULong(len);
-        dump("DBG: Length " + len);
         var i = 0;
         for (i = 0; i < len; i++) {
             this.putOctet(buf[i]);
@@ -205,7 +204,6 @@ NDEFMessage.marshall = function(codec, ndefMsg) {
     for (var i = 0; i < ndefMsg.length; i++) {
         var ndefRec = ndefMsg[i];
         codec.putUShort(ndefRec.tnf);
-        dump("DBG: ...");
         codec.putOctetArray(b64tob(ndefRec.type));
         codec.putOctetArray(b64tob(ndefRec.id));
         codec.putOctetArray(b64tob(ndefRec.payload));
