@@ -5,7 +5,7 @@
 
 /* Copyright © 2013 Deutsche Telekom, Inc. */
 
-[Constructor(octet tnf, DOMString type, DOMString id, DOMString payload)]
+[Constructor(octet tnf, DOMString type, DOMString id, Uint8Array payload)]
 interface MozNdefRecord
 {
   /**
@@ -19,20 +19,24 @@ interface MozNdefRecord
    *   tnf_unchanged: 0x06
    *   tnf_reserved: 0x07
    */
+  [Constant]
   readonly attribute octet tnf;
 
   /**
    * type - Describes the content of the payload. This can be a mime type.
    */
+  [Constant]
   readonly attribute DOMString type;
 
   /**
    * id - Identifer is application dependent.
    */
+  [Constant]
   readonly attribute DOMString id;
 
   /**
    * payload - Binary data blob. The meaning of this field is application dependent.
    */
-  readonly attribute DOMString payload;
+  [Constant]
+  readonly attribute Uint8Array payload;
 };

@@ -19,8 +19,9 @@
 
 #include "nsIDocument.h"
 
-//#include "nsDOMEventTargetHelper.h"
 #include "mozilla/dom/MozNdefRecordBinding.h"
+#include "mozilla/dom/TypedArray.h"
+#include "jsfriendapi.h"
 
 struct JSContext;
 
@@ -36,7 +37,7 @@ public:
 
 public:
 
-  MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const nsAString& aPlayload);
+  MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPlayload);
 
   ~MozNdefRecord();
 
@@ -47,7 +48,7 @@ public:
 
   virtual JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
-  static already_AddRefed<MozNdefRecord> Constructor(const GlobalObject& aGlobal, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const nsAString& aPayload, ErrorResult& aRv);
+  static already_AddRefed<MozNdefRecord> Constructor(const GlobalObject& aGlobal, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPayload, ErrorResult& aRv);
 
   uint8_t Tnf() const
   {
@@ -64,19 +65,26 @@ public:
     aId = mId;
   }
 
-  void GetPayload(nsString& aPayload) const
+  JSObject* Payload(JSContext* cx) const
   {
-    aPayload = mPayload;
+    return GetPayloadObject();
+  }
+  JSObject* GetPayloadObject() const
+  {
+    JS::ExposeObjectToActiveJS(mPayload);
+    return mPayload;
   }
 
 private:
   MozNdefRecord() MOZ_DELETE;
   nsRefPtr<nsPIDOMWindow> mWindow;
+  void HoldData();
+  void DropData();
 
   uint8_t mTnf;
   nsString mType;
   nsString mId;
-  nsString mPayload;
+  JS::Heap<JSObject*> mPayload;
 };
 
 } // namespace dom
