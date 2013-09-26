@@ -8,7 +8,9 @@
 
 #include "MozNdefRecord.h"
 #include "mozilla/dom/MozNdefRecordBinding.h"
+#include "mozilla/HoldDropJSObjects.h"
 #include "nsContentUtils.h"
+
 
 namespace mozilla {
 namespace dom {
@@ -21,39 +23,59 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(MozNdefRecord)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
+void
+MozNdefRecord::HoldData()
+{
+  mozilla::HoldJSObjects(this);
+}
+
+void
+MozNdefRecord::DropData()
+{
+  if (mPayload) {
+    mPayload = nullptr;
+    mozilla::DropJSObjects(this);
+  }
+}
+
 /* static */
 already_AddRefed<MozNdefRecord>
 MozNdefRecord::Constructor(const GlobalObject& aGlobal,
-                           uint8_t aTnf, const nsAString& aType,
-                           const nsAString& aId, const nsAString& aPayload,
-                           ErrorResult& aRv)
+  uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPayload,
+  ErrorResult& aRv)
 {
   nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.GetAsSupports());
   if (!win) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
   }
-  nsRefPtr<MozNdefRecord> ndefrecord =
-    new MozNdefRecord(win, aTnf, aType, aId, aPayload);
+
+  nsRefPtr<MozNdefRecord> ndefrecord = new MozNdefRecord(win, aTnf, aType, aId, aPayload);
+  if (!ndefrecord) {
+    aRv.Throw(NS_ERROR_FAILURE);
+    return nullptr;
+  }
   return ndefrecord.forget();
 }
 
-MozNdefRecord::MozNdefRecord(nsPIDOMWindow* aWindow,
-                             uint8_t aTnf, const nsAString& aType,
-                             const nsAString& aId, const nsAString& aPayload)
+MozNdefRecord::MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPayload)
   : mTnf(aTnf)
   , mType(aType)
   , mId(aId)
-  , mPayload(aPayload)
 {
-  mWindow = aWindow;
+  mWindow = aWindow; // For GetParentObject()
+
+  mPayload = aPayload.Obj();
+
   SetIsDOMBinding();
   MOZ_COUNT_CTOR(MozNdefRecord);
+  HoldData();
 }
 
 MozNdefRecord::~MozNdefRecord()
 {
   MOZ_COUNT_DTOR(MozNdefRecord);
+  DropData();
 }
 
 JSObject*
