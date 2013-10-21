@@ -8,9 +8,9 @@
 if CONFIG['MOZ_NFC']:
     MODULE = 'dom'
     EXTRA_COMPONENTS += [
-      'MozNdefRecord.js',
       'MozNFCPeer.js',
       'MozNFCTag.js',
+      'MozNdefRecord.js',
       'nsNfc.js',
       'nsNfc.manifest',
     ]
