@@ -461,6 +461,14 @@ if CONFIG['MOZ_B2G_RIL']:
         'MozVoicemail.webidl',
     ]
 
+if CONFIG['MOZ_NFC']:
+    WEBIDL_FILES += [
+         'MozNFCPeer.webidl',
+         'MozNFCTag.webidl',
+         'MozNdefRecord.webidl',
+         'MozNfc.webidl',
+    ]
+
 WEBIDL_FILES += [
     'CloseEvent.webidl',
     'CustomEvent.webidl',
