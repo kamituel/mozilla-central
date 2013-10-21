@@ -18,6 +18,9 @@ XPIDL_SOURCES += [
     'nsIAudioManager.idl',
     'nsINetworkInterfaceListService.idl',
     'nsINetworkManager.idl',
+    'nsINfc.idl',
+    'nsINfcCallback.idl',
+    'nsINfcContentHelper.idl',
     'nsIRadioInterfaceLayer.idl',
     'nsISystemWorkerManager.idl',
     'nsIVolume.idl',
@@ -68,6 +71,9 @@ EXTRA_COMPONENTS += [
     'NetworkInterfaceListService.manifest',
     'NetworkManager.js',
     'NetworkManager.manifest',
+    'Nfc.js',
+    'Nfc.manifest',
+    'NfcContentHelper.js',
     'RILContentHelper.js',
     'RadioInterfaceLayer.js',
     'RadioInterfaceLayer.manifest',
@@ -75,6 +81,8 @@ EXTRA_COMPONENTS += [
 
 EXTRA_JS_MODULES += [
     'net_worker.js',
+    'nfc_consts.js',
+    'nfc_worker.js',
     'ril_consts.js',
     'ril_worker.js',
     'systemlibs.js',
