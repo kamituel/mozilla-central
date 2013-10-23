@@ -204,8 +204,7 @@ let Nfc = {
       Buf.writeInt32(typeLength);
       for (let j = 0; j < typeLength; j++) {
         debug("type ["+j+"]=  "+record.type[j]);
-        debug("type ["+j+"]=  "+record.type.charCodeAt(j));
-        Buf.writeUint8(record.type.charCodeAt(j));
+        Buf.writeUint8(record.type[j]);
       }
       let padding = getPaddingLen(typeLength);
       debug("type padding ="+padding);
@@ -218,8 +217,7 @@ let Nfc = {
       Buf.writeInt32(idLength);
       for (let j = 0; j < idLength; j++) {
         debug("id ["+j+"]=  "+record.id[j]);
-        debug("id ["+j+"]=  "+record.id.charCodeAt(j));
-        Buf.writeUint8(record.id.charCodeAt(j));
+        Buf.writeUint8(record.id[j]);
       }
       padding = getPaddingLen(idLength);
       debug("id padding ="+padding);
@@ -232,8 +230,7 @@ let Nfc = {
       Buf.writeInt32(payloadLength);
       for (let j = 0; j < payloadLength; j++) {
         debug("payload ["+j+"]=  "+record.payload[j]);
-        debug("payload ["+j+"]=  "+record.payload.charCodeAt(j));
-        Buf.writeUint8(record.payload.charCodeAt(j));
+        Buf.writeUint8(record.payload[j]);
       }
       padding = getPaddingLen(payloadLength);
       debug("payload padding ="+padding);
