@@ -32,16 +32,22 @@ MozNdefRecord::HoldData()
 void
 MozNdefRecord::DropData()
 {
+  if (mType) {
+    mType = nullptr;
+  }
+  if (mId) {
+    mId = nullptr;
+  }
   if (mPayload) {
     mPayload = nullptr;
-    mozilla::DropJSObjects(this);
   }
+  mozilla::DropJSObjects(this);
 }
 
 /* static */
 already_AddRefed<MozNdefRecord>
 MozNdefRecord::Constructor(const GlobalObject& aGlobal,
-  uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPayload,
+  uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload,
   ErrorResult& aRv)
 {
   nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.GetAsSupports());
@@ -58,13 +64,13 @@ MozNdefRecord::Constructor(const GlobalObject& aGlobal,
   return ndefrecord.forget();
 }
 
-MozNdefRecord::MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPayload)
+MozNdefRecord::MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload)
   : mTnf(aTnf)
-  , mType(aType)
-  , mId(aId)
 {
   mWindow = aWindow; // For GetParentObject()
 
+  mType = aType.Obj();
+  mId = aId.Obj();
   mPayload = aPayload.Obj();
 
   SetIsDOMBinding();

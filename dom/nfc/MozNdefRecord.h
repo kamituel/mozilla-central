@@ -36,7 +36,7 @@ public:
 
 public:
 
-  MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPlayload);
+  MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPlayload);
 
   ~MozNdefRecord();
 
@@ -48,21 +48,31 @@ public:
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
-  static already_AddRefed<MozNdefRecord> Constructor(const GlobalObject& aGlobal, uint8_t aTnf, const nsAString& aType, const nsAString& aId, const Uint8Array& aPayload, ErrorResult& aRv);
+  static already_AddRefed<MozNdefRecord> Constructor(const GlobalObject& aGlobal, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload, ErrorResult& aRv);
 
   uint8_t Tnf() const
   {
     return mTnf;
   }
 
-  void GetType(nsString& aType) const
+  JSObject* Type(JSContext* cx) const
   {
-    aType = mType;
+    return GetTypeObject();
+  }
+  JSObject* GetTypeObject() const
+  {
+    JS::ExposeObjectToActiveJS(mType);
+    return mType;
   }
 
-  void GetId(nsString& aId) const
+  JSObject* Id(JSContext* cx) const
   {
-    aId = mId;
+    return GetIdObject();
+  }
+  JSObject* GetIdObject() const
+  {
+    JS::ExposeObjectToActiveJS(mId);
+    return mId;
   }
 
   JSObject* Payload(JSContext* cx) const
@@ -82,8 +92,8 @@ private:
   void DropData();
 
   uint8_t mTnf;
-  nsString mType;
-  nsString mId;
+  JS::Heap<JSObject*> mType;
+  JS::Heap<JSObject*> mId;
   JS::Heap<JSObject*> mPayload;
 };
 
