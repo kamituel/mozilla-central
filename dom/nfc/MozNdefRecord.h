@@ -20,6 +20,7 @@
 #include "mozilla/dom/MozNdefRecordBinding.h"
 #include "mozilla/dom/TypedArray.h"
 #include "jsfriendapi.h"
+#include "js/GCAPI.h"
 
 struct JSContext;
 
