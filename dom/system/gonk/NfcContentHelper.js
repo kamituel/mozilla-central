@@ -24,11 +24,11 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 Cu.import("resource://gre/modules/DOMRequestHelper.jsm");
 
-var NFC = {};
+let NFC = {};
 Cu.import("resource://gre/modules/nfc_consts.js", NFC);
 
 // set to true to in nfc_consts.js to see debug messages
-var DEBUG = NFC.DEBUG_CONTENT_HELPER;
+let DEBUG = NFC.DEBUG_CONTENT_HELPER;
 
 let debug;
 if (DEBUG) {
@@ -43,9 +43,9 @@ const NFCCONTENTHELPER_CID =
   Components.ID("{4d72c120-da5f-11e1-9b23-0800200c9a66}");
 
 const NFC_IPC_MSG_NAMES = [
-  "NFC:DetailsNDEFResponse",
   "NFC:ReadNDEFResponse",
   "NFC:WriteNDEFResponse",
+  "NFC:GetDetailsNDEFResponse",
   "NFC:MakeReadOnlyNDEFResponse",
   "NFC:ConnectResponse",
   "NFC:CloseResponse"
@@ -76,11 +76,10 @@ NfcContentHelper.prototype = {
 
   _requestMap: null,
 
-  // FIXME: btoa's will be unneeded when binary nfcd/gonk protocol is merged.
   encodeNdefRecords: function encodeNdefRecords(records) {
-    var encodedRecords = [];
-    for(var i=0; i < records.length; i++) {
-      var record = records[i];
+    let encodedRecords = [];
+    for (let i = 0; i < records.length; i++) {
+      let record = records[i];
       encodedRecords.push({
         tnf: record.tnf,
         type: record.type,
@@ -92,8 +91,8 @@ NfcContentHelper.prototype = {
   },
 
   // NFC interface:
-  setSessionToken: function setSession(sessionToken) {
-    if (sessionToken== null) {
+  setSessionToken: function setSessionToken(sessionToken) {
+    if (sessionToken == null) {
       throw Components.Exception("No session token!",
                                   Cr.NS_ERROR_UNEXPECTED);
       return false;
@@ -113,11 +112,11 @@ NfcContentHelper.prototype = {
     }
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = {win: window};
+    this._requestMap[requestId] = window;
 
     cpmm.sendAsyncMessage("NFC:GetDetailsNDEF", {
       requestId: requestId,
-      sessionId: sessionToken
+      sessionToken: sessionToken
     });
     return request;
   },
@@ -129,11 +128,11 @@ NfcContentHelper.prototype = {
     }
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = {win: window};
+    this._requestMap[requestId] = window;
 
     cpmm.sendAsyncMessage("NFC:ReadNDEF", {
       requestId: requestId,
-      sessionId: sessionToken
+      sessionToken: sessionToken
     });
     return request;
   },
@@ -146,13 +145,13 @@ NfcContentHelper.prototype = {
 
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = {win: window};
+    this._requestMap[requestId] = window;
 
     let encodedRecords = this.encodeNdefRecords(records);
 
     cpmm.sendAsyncMessage("NFC:WriteNDEF", {
       requestId: requestId,
-      sessionId: sessionToken,
+      sessionToken: sessionToken,
       records: encodedRecords
     });
     return request;
@@ -166,11 +165,11 @@ NfcContentHelper.prototype = {
 
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = {win: window};
+    this._requestMap[requestId] = window;
 
     cpmm.sendAsyncMessage("NFC:MakeReadOnlyNDEF", {
       requestId: requestId,
-      sessionId: sessionToken
+      sessionToken: sessionToken
     });
     return request;
   },
@@ -182,11 +181,11 @@ NfcContentHelper.prototype = {
     }
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = {win: window};
+    this._requestMap[requestId] = window;
 
     cpmm.sendAsyncMessage("NFC:Connect", {
       requestId: requestId,
-      sessionId: sessionToken,
+      sessionToken: sessionToken,
       techType: techType
     });
     return request;
@@ -199,50 +198,14 @@ NfcContentHelper.prototype = {
     }
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
-    this._requestMap[requestId] = {win: window};
+    this._requestMap[requestId] = window;
 
     cpmm.sendAsyncMessage("NFC:Close", {
       requestId: requestId,
-      sessionId: sessionToken
+      sessionToken: sessionToken
     });
     return request;
   },
-
-  registerCallback: function registerCallback(callbackType, callback) {
-    let callbacks = this[callbackType];
-    if (!callbacks) {
-      callbacks = this[callbackType] = [];
-    }
-
-    if (callbacks.indexOf(callback) != -1) {
-      throw new Error("Already registered this callback!");
-    }
-
-    callbacks.push(callback);
-    debug("Registered " + callbackType + " callback: " + callback);
-  },
-
-  unregisterCallback: function unregisterCallback(callbackType, callback) {
-    let callbacks = this[callbackType];
-    if (!callbacks) {
-      return;
-    }
-
-    let index = callbacks.indexOf(callback);
-    if (index != -1) {
-      callbacks.splice(index, 1);
-      debug("Unregistered telephony callback: " + callback);
-    }
-  },
-
-  registerNfcCallback: function registerNfcCallback(callback) {
-    this.registerCallback("_nfcCallbacks", callback);
-  },
-
-  unregisterNfcCallback: function unregisterNfcCallback(callback) {
-    this.unregisterCallback("_nfcCallbacks", callback);
-  },
-
 
   // nsIObserver
 
@@ -299,52 +262,29 @@ NfcContentHelper.prototype = {
   receiveMessage: function receiveMessage(message) {
     debug("Message received: " + JSON.stringify(message));
     switch (message.name) {
-      case "NFC:DetailsNDEFResponse":
-        this.handleDetailsNDEFResponse(message.json);
-        break;
       case "NFC:ReadNDEFResponse":
         this.handleReadNDEFResponse(message.json);
         break;
-      case "NFC:WriteNDEFResponse":
-        this.handleWriteNDEFResponse(message.json);
-        break;
-      case "NFC:MakeReadOnlyNDEFResponse":
-        this.handleMakeReadOnlyNDEFResponse(message.json);
-        break;
-      case "NFC:ConnectResponse":
-        this.handleConnectResponse(message.json);
-        break;
+      case "NFC:ConnectResponse": // Fall through.
       case "NFC:CloseResponse":
-        this.handleCloseResponse(message.json);
+      case "NFC:WriteNDEFResponse":
+      case "NFC:MakeReadOnlyNDEFResponse":
+      case "NFC:GetDetailsNDEFResponse":
+        this.handleResponse(message.json);
         break;
-    }
-  },
-
-  handleDetailsNDEFResponse: function handleDetailsNDEFResponse(message) {
-    debug("DetailsNDEFResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
-    if (typeof requester === 'undefined') {
-       return; // Nothing to do in this instance.
-    }
-    delete this._requestMap[message.requestId];
-    let result = message.content;
-    let requestId = atob(message.requestId);
-
-    if (message.content.status != "OK") {
-      this.fireRequestError(requestId, result.status);
-    } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
     }
   },
 
   handleReadNDEFResponse: function handleReadNDEFResponse(message) {
     debug("ReadNDEFResponse(" + JSON.stringify(message) + ")");
     let requester = this._requestMap[message.requestId];
-    if (typeof requester === 'undefined') {
+    if (!requester) {
+       debug("ReadNDEFResponse Invalid requester=" + requester +
+             " message.sessionToken=" + message.sessionToken);
        return; // Nothing to do in this instance.
     }
     delete this._requestMap[message.requestId];
-    let result = message.content;
+    let result = message;
     let requestId = atob(message.requestId);
     let records = result.records.map(function(r) {
       let type = "";
@@ -364,107 +304,30 @@ NfcContentHelper.prototype = {
       r.payload = payload;
       return r;
     });
-    let resultA = {records: records};
 
-    if (!resultA.records) {
+    if (result.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
       this.fireRequestError(requestId, result.status);
     } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
+      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester));
     }
   },
 
-  handleWriteNDEFResponse: function handleWriteNDEFResponse(message) {
-    debug("WriteNDEFResponse(" + JSON.stringify(message) + ")");
+  handleResponse: function handleResponse(message) {
+    debug("Response(" + JSON.stringify(message) + ")");
     let requester = this._requestMap[message.requestId];
-    if (typeof requester === 'undefined') {
-       debug('Returning: requester: ' + requester);
+    if (!requester) {
+       debug("Response Invalid requester=" + requester +
+             " message.sessionToken=" + message.sessionToken);
        return; // Nothing to do in this instance.
     }
     delete this._requestMap[message.requestId];
-    let result = message.content;
+    let result = message;
     let requestId = atob(message.requestId);
 
-    if (result.status != "OK") {
+    if (message.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
       this.fireRequestError(requestId, result.status);
     } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
-    }
-  },
-
-  handleMakeReadOnlyNDEFResponse: function handleReadOnlyNDEFResponse(message) {
-    debug("MakeReadOnlyNDEFResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
-    if (typeof requester === 'undefined') {
-       debug('Returning: requester: ' + requester);
-       return; // Nothing to do in this instance.
-    }
-    delete this._requestMap[message.requestId];
-    let result = message.content;
-    let requestId = atob(message.requestId);
-
-    if (result.status != "OK") {
-      this.fireRequestError(requestId, ObjectWrapper.wrap(result, requester.win));
-    } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
-    }
-  },
-
-  handleConnectResponse: function handleConnectResponse(message) {
-    debug("ConnectResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
-    if (typeof requester === 'undefined') {
-       debug('ConnectResponse return requester='+requester+" message.sessionId="+message.sessionId);
-       return; // Nothing to do in this instance.
-    }
-    delete this._requestMap[message.requestId];
-    let result = message.content;
-    let requestId = atob(message.requestId);
-
-    if (message.content.status != "OK") {
-      this.fireRequestError(requestId, result.status);
-    } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
-    }
-  },
-
-  handleCloseResponse: function handleCloseResponse(message) {
-    debug("CloseResponse(" + JSON.stringify(message) + ")");
-    let requester = this._requestMap[message.requestId];
-    if (typeof requester === 'undefined') {
-       return; // Nothing to do in this instance.
-    }
-    delete this._requestMap[message.requestId];
-    let result = message.content;
-    let requestId = atob(message.requestId);
-
-
-    if (message.content.status != "OK") {
-      this.fireRequestError(requestId, result.status);
-    } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester.win));
-    }
-  },
-
-  _deliverCallback: function _deliverCallback(callbackType, name, args) {
-    let thisCallbacks = this[callbackType];
-    if (!thisCallbacks) {
-      return;
-    }
-
-    let callbacks = thisCallbacks.slice();
-    for each (let callback in callbacks) {
-      if (thisCallbacks.indexOf(callback) == -1) {
-        continue;
-      }
-      let handler = callback[name];
-      if (typeof handler != "function") {
-        throw new Error("No handler for " + name);
-      }
-      try {
-        handler.apply(callback, args);
-      } catch (e) {
-        debug("callback handler for " + name + " threw an exception: " + e);
-      }
+      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester));
     }
   },
 };

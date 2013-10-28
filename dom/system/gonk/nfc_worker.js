@@ -41,7 +41,8 @@ let Buf = {
    */
   processParcel: function processParcel() {
     let pduType = this.readInt32();
-    Nfc.handleParcel(pduType, this.mCallback, this.readAvailable);
+    if (DEBUG) debug("No of bytes available in Parcel : " + this.readAvailable);
+    NfcWorker.handleParcel(pduType, this.mCallback);
   },
 
   /**
@@ -79,14 +80,12 @@ let Buf = {
   mCallback: null,
 };
 
-
 /**
- * Provide a high-level API representing NFC capabilities. This is
- * where JSON is sent and received from and translated into API calls.
- * For the most part, this object is pretty boring as it simply translates
- * between method calls and NFC JSON. Somebody's gotta do the job...
+ * Provide a high-level API representing NFC capabilities.
+ * Rensponsible for converting NFC requests from Content process to binary data
+ * and NFC Responses from binary data to dictionary objects.
  */
-let Nfc = {
+let NfcWorker = {
   /**
    * Handle incoming messages from the main UI thread.
    *
@@ -110,64 +109,50 @@ let Nfc = {
    */
   readNDEF: function readNDEF(message) {
     let cb = function callback() {
-      let erorr = Buf.readInt32();
-      let sessionId = Buf.readInt32();
-      let numOfRecords = Buf.readInt32();
-      debug("numOfRecords="+numOfRecords);
       let records = [];
+      let error        = Buf.readInt32();
+      let sessionId    = Buf.readInt32();
+      let numOfRecords = Buf.readInt32();
+
       for (let i = 0; i < numOfRecords; i++) {
-        let tnf = Buf.readInt32();
-        debug("tnf="+tnf.toString(16));
+        let tnf        = Buf.readInt32();
         let typeLength = Buf.readInt32();
-        debug("typeLength="+typeLength);
-        let type = Buf.readUint8Array(typeLength);
-        debug("type="+type);
-        let padding = getPaddingLen(typeLength);
-        debug("type padding ="+padding);
+        let type       = Buf.readUint8Array(typeLength);
+        let padding    = getPaddingLen(typeLength);
         for (let i = 0; i < padding; i++) {
           Buf.readUint8();
         }
 
         let idLength = Buf.readInt32();
-        debug("idLength="+idLength);
-        let id = Buf.readUint8Array(idLength);
-        debug("id="+id);
-        padding = getPaddingLen(idLength);
-        debug("id padding ="+padding);
+        let id       = Buf.readUint8Array(idLength);
+        padding      = getPaddingLen(idLength);
         for (let i = 0; i < padding; i++) {
           Buf.readUint8();
         }
 
         let payloadLength = Buf.readInt32();
-        debug("payloadLength="+payloadLength);
-        //TODO using Uint8Array will make the payload become an object, not an array.
-        let payload = [];
-        for (let i = 0; i < payloadLength; i++) {
-          payload.push(Buf.readUint8());
-        }
-
-        padding = getPaddingLen(payloadLength);
-        debug("payload padding ="+padding);
+        let payload       = Buf.readUint8Array(payloadLength);
+        padding           = getPaddingLen(payloadLength);
         for (let i = 0; i < padding; i++) {
           Buf.readUint8();
         }
-        debug("payload="+payload);
-
         records.push({tnf: tnf,
                       type: type,
                       id: id,
                       payload: payload});
       }
 
-      message.requestId = message.content.requestId;
+      message.type      = "ReadNDEFResponse";
       message.sessionId = sessionId;
-      message.content.records = records;
-      message.type = "ReadNDEFResponse";
+      message.requestId = message.requestId;
+      message.records   = records;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
     }
 
     Buf.newParcel(NFC_REQUEST_READ_NDEF, cb);
-    Buf.writeInt32(message.content.sessionId);
+    Buf.writeInt32(message.sessionId);
     Buf.sendParcel();
   },
 
@@ -176,68 +161,56 @@ let Nfc = {
    */
   writeNDEF: function writeNDEF(message) {
     let cb = function callback() {
-      debug("ndefWrite callback");
-      message.type = "WriteNDEFResponse";
-      let error = Buf.readInt32();
-      let sessionId = Buf.readInt32();
-      message.requestId = message.content.requestId;
+      let error         = Buf.readInt32();
+      let sessionId     = Buf.readInt32();
+
+      message.type      = "WriteNDEFResponse";
       message.sessionId = sessionId;
-      message.content.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS : GECKO_NFC_ERROR_GENERIC_FAILURE;
+      message.requestId = message.requestId;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
     };
 
-    debug("ndefWrite message="+JSON.stringify(message));
     Buf.newParcel(NFC_REQUEST_WRITE_NDEF, cb);
-    Buf.writeInt32(message.content.sessionId);
-    let records = message.content.records;
+    Buf.writeInt32(message.sessionId);
+    let records    = message.records;
     let numRecords = records.length;
-    debug("ndefWrite numRecords="+numRecords);
     Buf.writeInt32(numRecords);
 
     for (let i = 0; i < numRecords; i++) {
       let record = records[i];
-      debug("tnf="+record.tnf);
       Buf.writeInt32(record.tnf);
 
       let typeLength = record.type.length;
-      debug("typeLength="+typeLength);
       Buf.writeInt32(typeLength);
       for (let j = 0; j < typeLength; j++) {
-        debug("type ["+j+"]=  "+record.type[j]);
         Buf.writeUint8(record.type[j]);
       }
       let padding = getPaddingLen(typeLength);
-      debug("type padding ="+padding);
       for (let i = 0; i < padding; i++) {
         Buf.writeUint8(0x00);
       }
 
       let idLength = record.id.length;
-      debug("idLength="+idLength);
       Buf.writeInt32(idLength);
       for (let j = 0; j < idLength; j++) {
-        debug("id ["+j+"]=  "+record.id[j]);
         Buf.writeUint8(record.id[j]);
       }
       padding = getPaddingLen(idLength);
-      debug("id padding ="+padding);
       for (let i = 0; i < padding; i++) {
         Buf.writeUint8(0x00);
       }
 
       let payloadLength = record.payload && record.payload.length;
-      debug("payloadLength="+payloadLength);
       Buf.writeInt32(payloadLength);
       for (let j = 0; j < payloadLength; j++) {
-        debug("payload ["+j+"]=  "+record.payload[j]);
         Buf.writeUint8(record.payload[j]);
       }
       padding = getPaddingLen(payloadLength);
-      debug("payload padding ="+padding);
       for (let i = 0; i < padding; i++) {
         Buf.writeUint8(0x00);
       }
-
     }
 
     Buf.sendParcel();
@@ -248,17 +221,19 @@ let Nfc = {
    */
   makeReadOnlyNDEF: function makeReadOnlyNDEF(message) {
     let cb = function callback() {
-      debug("ndefWrite callback");
-      message.type = "MakeReadOnlyNDEFResponse";
-      let error = Buf.readInt32();
-      let sessionId = Buf.readInt32();
-      message.requestId = message.content.requestId;
+      let error         = Buf.readInt32();
+      let sessionId     = Buf.readInt32();
+
+      message.type      = "MakeReadOnlyNDEFResponse";
       message.sessionId = sessionId;
-      message.content.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS : GECKO_NFC_ERROR_GENERIC_FAILURE;
+      message.requestId = message.requestId;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
     };
+
     Buf.newParcel(NFC_REQUEST_MAKE_NDEF_READ_ONLY, cb);
-    Buf.writeInt32(message.content.sessionId);
+    Buf.writeInt32(message.sessionId);
     Buf.sendParcel();
   },
 
@@ -267,79 +242,100 @@ let Nfc = {
    */
   getDetailsNDEF: function getDetailsNDEF(message) {
     let cb = function callback() {
-      debug("ndefWrite callback");
-      message.type = "DetailsNDEFResponse";
-      let error = Buf.readInt32();
-      let sessionId = Buf.readInt32();
-      let maxSupportedLength = Buf.readInt32();
-      let mode = Buf.readInt32();
-      message.requestId = message.content.requestId;
-      message.sessionId = sessionId;
+      let error                  = Buf.readInt32();
+      let sessionId              = Buf.readInt32();
+      let isReadOnly             = Buf.readUint8();
+      let canBeMadeReadOnly      = Buf.readUint8();
+      // Ensure that padding is taken care here after reading two successive uint8's
+      Buf.readUint8();
+      Buf.readUint8();
+      let maxSupportedLength     = Buf.readInt32();
+
+      message.type               = "GetDetailsNDEFResponse";
+      message.sessionId          = sessionId;
+      message.requestId          = message.requestId;
+      message.isReadOnly         = isReadOnly;
+      message.canBeMadeReadOnly  = canBeMadeReadOnly;
       message.maxSupportedLength = maxSupportedLength;
-      message.mode = mode;
-      message.content.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS : GECKO_NFC_ERROR_GENERIC_FAILURE;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
     };
     Buf.newParcel(NFC_REQUEST_GET_DETAILS, cb);
-    Buf.writeInt32(message.content.sessionId);
+    Buf.writeInt32(message.sessionId);
     Buf.sendParcel();
   },
 
 
   /**
-   * Open a connection to the NFC target. Request ID is required.
+   * Open a connection to the NFC target.
    */
   connect: function connect(message) {
-    debug("connect message=.."+JSON.stringify(message));
     let cb = function callback() {
-      message.type = "ConnectResponse";
-      let error = Buf.readInt32();
-      let sessionId = Buf.readInt32();
-      message.requestId = message.content.requestId;
+      let error         = Buf.readInt32();
+      let sessionId     = Buf.readInt32();
+
+      message.type      = "ConnectResponse";
       message.sessionId = sessionId;
-      message.content.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS : GECKO_NFC_ERROR_GENERIC_FAILURE;
+      message.requestId = message.requestId;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
     };
+
     Buf.newParcel(NFC_REQUEST_CONNECT, cb);
-    Buf.writeInt32(message.content.sessionId);
-    Buf.writeInt32(message.content.techType);
+    Buf.writeInt32(message.sessionId);
+    Buf.writeInt32(message.techType);
     Buf.sendParcel();
   },
 
   /**
    * NFC Configuration
    */
-  configRequest: function configRequest(message) {
-    debug("config:"+JSON.stringify(message.content));
+  config: function config(message) {
+    let cb = function callback() {
+      let error         = Buf.readInt32();
+
+      message.type      = "ConfigResponse";
+      message.requestId = message.requestId;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
+      this.sendDOMMessage(message);
+    };
+
+    Buf.newParcel(NFC_REQUEST_CONFIG , cb);
+    Buf.writeInt32(message.powerLevel);
+    Buf.sendParcel();
   },
 
   /**
-   * Close connection to the NFC target. Request ID is required.
+   * Close connection to the NFC target.
    */
   close: function close(message) {
     let cb = function callback() {
-      message.type = "CloseResponse";
-      let error = Buf.readInt32();
-      let sessionId = Buf.readInt32();
-      message.requestId = message.content.requestId;
+      let error         = Buf.readInt32();
+      let sessionId     = Buf.readInt32();
+
+      message.type      = "CloseResponse";
       message.sessionId = sessionId;
-      message.content.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS : GECKO_NFC_ERROR_GENERIC_FAILURE;
+      message.requestId = message.requestId;
+      message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
+                                       GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
     };
 
     Buf.newParcel(NFC_REQUEST_CLOSE , cb);
-    Buf.writeInt32(message.content.sessionId);
+    Buf.writeInt32(message.sessionId);
     Buf.sendParcel();
   },
 
-  handleParcel: function handleParcel(request_type, callback, length) {
+  handleParcel: function handleParcel(request_type, callback) {
     let method = this[request_type];
     if (typeof method == "function") {
       if (DEBUG) debug("Handling parcel as " + method.name);
-      method.call(this, length);
-    } else if (callback && typeof callback == "function") {
+      method.call(this);
+    } else if (typeof callback == "function") {
       callback.call(this, request_type);
-      delete this.mCallback;
       this.mCallback = null;
     } else {
       debug("Unable to handle ReqType:"+request_type);
@@ -357,33 +353,36 @@ let Nfc = {
 /**
  * Notification Handlers
  */
-Nfc[NFC_NOTIFICATION_INITIALIZED] = function NFC_NOTIFICATION_INITIALIZED (length) {
-  let status = Buf.readInt32();
+NfcWorker[NFC_NOTIFICATION_INITIALIZED] = function NFC_NOTIFICATION_INITIALIZED () {
+  let status       = Buf.readInt32();
   let majorVersion = Buf.readInt32();
   let minorVersion = Buf.readInt32();
-  debug("NFC_NOTIFICATION_INITIALIZED status:"+status+" major:"+majorVersion+" minor:"+minorVersion);
+  debug("NFC_NOTIFICATION_INITIALIZED status:" + status + " major:" + majorVersion + " minor:" + minorVersion);
 };
 
-Nfc[NFC_NOTIFICATION_TECH_DISCOVERED] = function NFC_NOTIFICATION_TECH_DISCOVERED(length) {
+NfcWorker[NFC_NOTIFICATION_TECH_DISCOVERED] = function NFC_NOTIFICATION_TECH_DISCOVERED() {
   debug("NFC_NOTIFICATION_TECH_DISCOVERED");
+  let techs     = [];
   let sessionId = Buf.readInt32();
-  let num = Buf.readInt32();
+  let num       = Buf.readInt32();
 
-  let techs = [];
   for (let i = 0; i < num; i++) {
-    techs.push(NFC_TECHS[Buf.readUint8()]);
+    var t = Buf.readUint8();
+    if (t in NFC_TECHS) {
+      techs.push(NFC_TECHS[t]);
+    }
   }
-  debug("techs = "+techs);
+  debug("sessionId = " + sessionId + "  techs = "+techs);
   this.sendDOMMessage({type: "techDiscovered",
                        sessionId: sessionId,
                        content: { tech: techs}
                        });
 };
 
-Nfc[NFC_NOTIFICATION_TECH_LOST] = function NFC_NOTIFICATION_TECH_LOST(length) {
+NfcWorker[NFC_NOTIFICATION_TECH_LOST] = function NFC_NOTIFICATION_TECH_LOST() {
   debug("NFC_NOTIFICATION_TECH_LOST");
   let sessionId = Buf.readInt32();
-  debug("sessionId="+sessionId);
+  debug("sessionId = " + sessionId);
   this.sendDOMMessage({type: "techLost",
                        sessionId: sessionId,
                        });
@@ -409,7 +408,7 @@ function onNfcMessage(data) {
 };
 
 onmessage = function onmessage(event) {
-  Nfc.handleDOMMessage(event.data);
+  NfcWorker.handleDOMMessage(event.data);
 };
 
 onerror = function onerror(event) {
