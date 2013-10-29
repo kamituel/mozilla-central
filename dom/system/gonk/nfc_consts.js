@@ -16,7 +16,7 @@
 /* Copyright © 2013, Deutsche Telekom, Inc. */
 
 // Set to true to debug all NFC layers
-this.DEBUG_ALL = false;
+this.DEBUG_ALL = true;
 
 // Set individually to debug specific layers
 this.DEBUG_WORKER = false || DEBUG_ALL;
@@ -44,8 +44,7 @@ this.NFC_TECHS = {
   0:'NDEF',
   1:'NDEF_WRITEABLE',
   2:'NDEF_FORMATABLE',
-  3:'P2P',
-  4:'NFC_A'
+  3:'P2P'
 };
 
 // TODO: Fill-in all error codes for Gonk/nfcd protocol

@@ -286,24 +286,7 @@ NfcContentHelper.prototype = {
     delete this._requestMap[message.requestId];
     let result = message;
     let requestId = atob(message.requestId);
-    let records = result.records.map(function(r) {
-      let type = "";
-      for (let i = 0; i < r.type.length; i++) {
-        type += String.fromCharCode(r.type[i]);
-      }
-      r.type = type;
-      let id = "";
-      for (let i = 0; i < r.id.length; i++) {
-        id += String.fromCharCode(r.id[i]);
-      }
-      r.id = id;
-      let payload = "";
-      for (let i = 0; i < r.payload.length; i++) {
-        payload += String.fromCharCode(r.payload[i]);
-      }
-      r.payload = payload;
-      return r;
-    });
+    let records = result.records;
 
     if (result.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
       this.fireRequestError(requestId, result.status);
