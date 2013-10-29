@@ -74,13 +74,11 @@ MozNdefRecord::MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Ar
   mPayload = aPayload.Obj();
 
   SetIsDOMBinding();
-  MOZ_COUNT_CTOR(MozNdefRecord);
   HoldData();
 }
 
 MozNdefRecord::~MozNdefRecord()
 {
-  MOZ_COUNT_DTOR(MozNdefRecord);
   DropData();
 }
 
