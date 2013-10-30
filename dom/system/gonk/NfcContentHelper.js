@@ -286,7 +286,6 @@ NfcContentHelper.prototype = {
     delete this._requestMap[message.requestId];
     let result = message;
     let requestId = atob(message.requestId);
-    let records = result.records;
 
     if (result.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
       this.fireRequestError(requestId, result.status);
