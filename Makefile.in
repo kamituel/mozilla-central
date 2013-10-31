@@ -7,8 +7,9 @@ ifndef .PYMAKE
 ifeq (,$(MAKE_VERSION))
 $(error GNU Make is required)
 endif
-ifeq (,$(filter-out 3.78 3.79,$(MAKE_VERSION)))
-$(error GNU Make 3.80 or higher is required)
+make_min_ver := 3.81
+ifneq ($(make_min_ver),$(firstword $(sort $(make_min_ver) $(MAKE_VERSION))))
+$(error GNU Make $(make_min_ver) or higher is required)
 endif
 endif
 
@@ -31,9 +32,9 @@ DIST_GARBAGE = config.cache config.log config.status* config-defs.h \
    .mozconfig.mk
 
 ifndef MOZ_PROFILE_USE
-# We need to explicitly put backend.RecursiveMakeBackend.built here
+# We need to explicitly put backend.RecursiveMakeBackend here
 # otherwise the rule in rules.mk doesn't run early enough.
-libs binaries export tools:: CLOBBER $(topsrcdir)/configure config.status backend.RecursiveMakeBackend.built
+libs binaries export tools:: CLOBBER $(topsrcdir)/configure config.status backend.RecursiveMakeBackend
 ifndef LIBXUL_SDK
 libs binaries export tools:: js-config-status
 endif
@@ -62,7 +63,7 @@ config.status: $(topsrcdir)/configure
 ifndef LIBXUL_SDK
 .PHONY: js-config-status
 js-config-status:
-	$(call SUBMAKE,backend.RecursiveMakeBackend.built,js/src,1)
+	$(call SUBMAKE,backend.RecursiveMakeBackend,js/src,1)
 endif
 
 install_manifests := bin idl include public private sdk
@@ -70,7 +71,7 @@ install_manifest_depends = \
   CLOBBER \
   $(topsrcdir)/configure \
   config.status \
-  backend.RecursiveMakeBackend.built \
+  backend.RecursiveMakeBackend \
   $(NULL)
 
 ifndef LIBXUL_SDK
@@ -243,10 +244,8 @@ ifdef MOZ_PSEUDO_DERECURSE
 js/xpconnect/src/export: dom/bindings/export
 accessible/src/xpcom/export: xpcom/xpidl/export
 js/src/export: mfbt/export
-# Temporary interdependencies for binaries, until bug 921307 is fixed.
-# Avoid traversal of those directories when creating the aggregate dependency file
-ifneq (binaries-deps,$(MAKECMDGOALS))
-toolkit/library/binaries: js/src/binaries media/webrtc/trunk/binaries media/webrtc/signaling/binaries media/webrtc/trunk/testing/binaries media/webrtc/signalingtest/binaries media/mtransport/third_party/nrappkit/binaries media/mtransport/third_party/nICEr/binaries
+ifdef ENABLE_CLANG_PLUGIN
+js/src/export config/export: build/clang-plugin/export
 endif
 endif
 endif

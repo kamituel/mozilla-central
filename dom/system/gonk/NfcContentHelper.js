@@ -66,6 +66,7 @@ NfcContentHelper.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
 
   QueryInterface: XPCOMUtils.generateQI([Ci.nsINfcContentHelper,
+                                         Ci.nsISupportsWeakReference,
                                          Ci.nsIObserver]),
   classID:   NFCCONTENTHELPER_CID,
   classInfo: XPCOMUtils.generateCI({
@@ -95,13 +96,12 @@ NfcContentHelper.prototype = {
     if (sessionToken == null) {
       throw Components.Exception("No session token!",
                                   Cr.NS_ERROR_UNEXPECTED);
-      return false;
+      return;
     }
     // Report session to Nfc.js only.
     cpmm.sendAsyncMessage("NFC:SetSessionToken", {
       sessionToken: sessionToken,
     });
-    return true;
   },
 
   // NFCTag interface
@@ -232,7 +232,7 @@ NfcContentHelper.prototype = {
     Services.DOMRequest.fireSuccess(request, result);
   },
 
-  dispatchFireRequestSuccess: function dispatchFireRequestSuccess(requestId, result) {
+  fireRequestSuccessAsync: function fireRequestSuccessAsync(requestId, result) {
     let currentThread = Services.tm.currentThread;
 
     currentThread.dispatch(this.fireRequestSuccess.bind(this, requestId, result),
@@ -252,7 +252,7 @@ NfcContentHelper.prototype = {
     Services.DOMRequest.fireError(request, error);
   },
 
-  dispatchFireRequestError: function dispatchFireRequestError(requestId, error) {
+  fireRequestErrorAsync: function fireRequestErrorAsync(requestId, error) {
     let currentThread = Services.tm.currentThread;
 
     currentThread.dispatch(this.fireRequestError.bind(this, requestId, error),
@@ -262,10 +262,8 @@ NfcContentHelper.prototype = {
   receiveMessage: function receiveMessage(message) {
     debug("Message received: " + JSON.stringify(message));
     switch (message.name) {
-      case "NFC:ReadNDEFResponse":
-        this.handleReadNDEFResponse(message.json);
-        break;
-      case "NFC:ConnectResponse": // Fall through.
+      case "NFC:ReadNDEFResponse": // Fall through.
+      case "NFC:ConnectResponse":
       case "NFC:CloseResponse":
       case "NFC:WriteNDEFResponse":
       case "NFC:MakeReadOnlyNDEFResponse":
@@ -308,7 +306,7 @@ NfcContentHelper.prototype = {
 
     if (message.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
       this.fireRequestError(requestId, result.status);
-    } else  {
+    } else {
       this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester));
     }
   },

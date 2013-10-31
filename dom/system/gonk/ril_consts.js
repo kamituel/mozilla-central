@@ -712,6 +712,7 @@ this.COMPREHENSIONTLV_TAG_DATE_TIME_ZONE = 0x26;
 this.COMPREHENSIONTLV_TAG_IMMEDIATE_RESPONSE = 0x2b;
 this.COMPREHENSIONTLV_TAG_LANGUAGE = 0x2d;
 this.COMPREHENSIONTLV_TAG_URL = 0x31;
+this.COMPREHENSIONTLV_TAG_BROWSER_TERMINATION_CAUSE = 0x34;
 this.COMPREHENSIONTLV_TAG_ACCESS_TECH = 0x3f;
 this.COMPREHENSIONTLV_TAG_SERVICE_RECORD = 0x41;
 this.COMPREHENSIONTLV_TAG_IMEISV = 0x62;
@@ -964,6 +965,10 @@ this.STK_TIMER_START = 0x00;
 this.STK_TIMER_DEACTIVATE = 0x01;
 this.STK_TMIER_GET_CURRENT_VALUE = 0x02;
 
+// Browser Termination Cause.
+this.STK_BROWSER_TERMINATION_CAUSE_USER = 0x00;
+this.STK_BROWSER_TERMINATION_CAUSE_ERROR = 0x01;
+
 /**
  * Supported Terminal Facilities.
  *
@@ -1016,7 +1021,7 @@ this.STK_TERMINAL_SUPPORT_EVENT_IDLE_SCREEN_AVAILABLE  = 1;
 this.STK_TERMINAL_SUPPORT_EVENT_CARD_READER_STATUS     = 0;
 
 this.STK_TERMINAL_SUPPORT_EVENT_LANGUAGE_SELECTION     = 1;
-this.STK_TERMINAL_SUPPORT_EVENT_BROWSER_TERMINATION    = 0;
+this.STK_TERMINAL_SUPPORT_EVENT_BROWSER_TERMINATION    = 1;
 this.STK_TERMINAL_SUPPORT_EVENT_DATA_AVAILABLE         = 0;
 this.STK_TERMINAL_SUPPORT_EVENT_CHANNEL_STATUS         = 0;
 
@@ -1152,6 +1157,7 @@ this.GECKO_ICC_SERVICES = {
     ADN: 2,
     FDN: 3,
     PLMNSEL: 7,
+    MSISDN: 9,
     CBMI: 14,
     SPN: 17,
     SDN: 18,
@@ -1161,6 +1167,7 @@ this.GECKO_ICC_SERVICES = {
     BDN: 31,
     PNN: 51,
     OPL: 52,
+    MDN: 53,
     SPDI: 56
   },
   usim: {
@@ -1170,10 +1177,12 @@ this.GECKO_ICC_SERVICES = {
     CBMI: 15,
     CBMIR: 16,
     SPN: 19,
+    MSISDN: 21,
     DATA_DOWNLOAD_SMS_PP: 28,
     DATA_DOWNLOAD_SMS_CB: 29,
     PNN: 45,
     OPL: 46,
+    MDN: 47,
     SPDI: 51
   },
   ruim: {
@@ -2754,7 +2763,14 @@ this.PDU_CDMA_MSG_USERDATA_MSG_ID = 0x00;           // Message Identifier
 this.PDU_CDMA_MSG_USERDATA_BODY = 0x01;             // User Data Body
 this.PDU_CDMA_MSG_USERDATA_TIMESTAMP = 0x03;        // Message Center Time Stamp
 this.PDU_CDMA_REPLY_OPTION = 0x0A;                  // Reply Option
+this.PDU_CDMA_LANGUAGE_INDICATOR = 0x0D;            // Language Indicator
 this.PDU_CDMA_MSG_USERDATA_CALLBACK_NUMBER = 0x0E;  // Callback Number
+
+// CDMA Language Indicator: Language groups
+// see 3GPP2 C.R1001-F table 9.2-1
+this.CB_CDMA_LANG_GROUP = [
+  null, "en", "fr", "es", "ja", "ko", "zh", "he"
+];
 
 // IS-91 Message Type, as defined in TIA/EIA/IS-91-A, Table 9
 this.PDU_CDMA_MSG_CODING_IS_91_TYPE_VOICEMAIL_STATUS = 0x82;

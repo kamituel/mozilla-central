@@ -696,33 +696,30 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
                   new String[] { String.valueOf(id) });
     }
 
+    /**
+     * Get the favicon from the database, if any, associated with the given favicon URL. (That is,
+     * the URL of the actual favicon image, not the URL of the page with which the favicon is associated.)
+     * @param cr The ContentResolver to use.
+     * @param faviconURL The URL of the favicon to fetch from the database.
+     * @return The decoded Bitmap from the database, if any. null if none is stored.
+     */
     @Override
-    public Bitmap getFaviconForUrl(ContentResolver cr, String uri) {
-        final byte[] b = getFaviconBytesForUrl(cr, uri);
-        if (b == null) {
-            return null;
-        }
-
-        return BitmapUtils.decodeByteArray(b);
-    }
-
-    @Override
-    public byte[] getFaviconBytesForUrl(ContentResolver cr, String uri) {
+    public Bitmap getFaviconForUrl(ContentResolver cr, String faviconURL) {
         Cursor c = null;
         byte[] b = null;
 
         try {
-            c = cr.query(mCombinedUriWithProfile,
-                         new String[] { Combined.FAVICON },
-                         Combined.URL + " = ?",
-                         new String[] { uri },
+            c = cr.query(mFaviconsUriWithProfile,
+                         new String[] { Favicons.DATA },
+                         Favicons.URL + " = ?",
+                         new String[] { faviconURL },
                          null);
 
             if (!c.moveToFirst()) {
                 return null;
             }
 
-            final int faviconIndex = c.getColumnIndexOrThrow(Combined.FAVICON);
+            final int faviconIndex = c.getColumnIndexOrThrow(Favicons.DATA);
             b = c.getBlob(faviconIndex);
         } finally {
             if (c != null) {
@@ -730,7 +727,11 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
             }
         }
 
-        return b;
+        if (b == null) {
+            return null;
+        }
+
+        return BitmapUtils.decodeByteArray(b);
     }
 
     @Override
@@ -752,28 +753,6 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         }
 
         return null;
-    }
-
-    @Override
-    public Cursor getFaviconsForUrls(ContentResolver cr, List<String> urls) {
-        StringBuilder selection = new StringBuilder();
-        selection.append(Favicons.URL + " IN (");
-
-        for (int i = 0; i < urls.size(); i++) {
-            final String url = urls.get(i);
-
-            if (i > 0)
-                selection.append(", ");
-
-            DatabaseUtils.appendEscapedSQLString(selection, url);
-        }
-
-        selection.append(")");
-
-        return cr.query(mCombinedUriWithProfile,
-                        new String[] { Combined.URL, Combined.FAVICON },
-                        selection.toString(),
-                        null, null);
     }
 
     @Override
@@ -1182,26 +1161,18 @@ public class LocalBrowserDB implements BrowserDB.BrowserDBIface {
         values.put(Bookmarks.POSITION, position);
         values.put(Bookmarks.IS_DELETED, 0);
 
-        // If this site is already pinned, unpin it
-        cr.delete(mBookmarksUriWithProfile,
-                  Bookmarks.PARENT + " == ? AND " + Bookmarks.URL + " == ?",
-                  new String[] {
-                      String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID),
-                      url
-                  });
-
-        // If something is already pinned in this spot update it
-        int updated = cr.update(mBookmarksUriWithProfile,
-                                values,
-                                Bookmarks.POSITION + " = ? AND " +
-                                Bookmarks.PARENT + " = ?",
-                                new String[] { Integer.toString(position),
-                                               String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) });
-
-        // Otherwise just insert a new item
-        if (updated == 0) {
-            cr.insert(mBookmarksUriWithProfile, values);
-        }
+        // We do an update-and-replace here without deleting any existing pins for the given URL.
+        // That means if the user pins a URL, then edits another thumbnail to use the same URL,
+        // we'll end up with two pins for that site. This is the intended behavior, which
+        // incidentally saves us a delete query.
+        Uri uri = mBookmarksUriWithProfile.buildUpon()
+                .appendQueryParameter(BrowserContract.PARAM_INSERT_IF_NEEDED, "true").build();
+        cr.update(uri,
+                  values,
+                  Bookmarks.POSITION + " = ? AND " +
+                  Bookmarks.PARENT + " = ?",
+                  new String[] { Integer.toString(position),
+                                 String.valueOf(Bookmarks.FIXED_PINNED_LIST_ID) });
     }
 
     @Override

@@ -23,6 +23,10 @@ this.DEBUG_WORKER = false || DEBUG_ALL;
 this.DEBUG_CONTENT_HELPER = false || DEBUG_ALL;
 this.DEBUG_NFC = false || DEBUG_ALL;
 
+// Current version
+this.NFC_MAJOR_VERSION = 1;
+this.NFC_MINOR_VERSION = 7;
+
 this.NFC_REQUEST_CONFIG = 0;
 this.NFC_REQUEST_CONNECT = 1;
 this.NFC_REQUEST_CLOSE = 2;
@@ -59,6 +63,7 @@ this.NFC_POWER_LEVEL_ENABLED        = 2;
 this.TOPIC_MOZSETTINGS_CHANGED      = "mozsettings-changed";
 this.TOPIC_XPCOM_SHUTDOWN           = "xpcom-shutdown";
 this.SETTING_NFC_ENABLED            = "nfc.enabled";
+this.SETTING_NFC_POWER_LEVEL        = "nfc.powerlevel";
 
 // Allow this file to be imported via Components.utils.import().
 this.EXPORTED_SYMBOLS = Object.keys(this);

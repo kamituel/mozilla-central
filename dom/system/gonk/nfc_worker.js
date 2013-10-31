@@ -41,7 +41,7 @@ let Buf = {
    */
   processParcel: function processParcel() {
     let pduType = this.readInt32();
-    if (DEBUG) debug("No of bytes available in Parcel : " + this.readAvailable);
+    if (DEBUG) debug("Number of bytes available in Parcel : " + this.readAvailable);
     NfcWorker.handleParcel(pduType, this.mCallback);
   },
 
@@ -54,13 +54,6 @@ let Buf = {
    */
   newParcel: function newParcel(type, callback) {
     if (DEBUG) debug("New outgoing parcel of type " + type);
-
-    if(this.mCallback) debug("Warning! Callback override :"+ type );
-    /**
-     * TODO: This needs to be fixed. A map of NFC_RESPONSE_XXX and RequestID
-     *       needs to be maintained ?? For Generic Responses (1000) ,
-     *       we may still rely on callback approach.
-     */
     this.mCallback = callback;
     // We're going to leave room for the parcel size at the beginning.
     this.outgoingIndex = this.PARCEL_SIZE_SIZE;
@@ -76,7 +69,10 @@ let Buf = {
     postNfcMessage(parcel);
   },
 
-  //TODO maintain callback
+  /**
+   * TODO: Callback map of NFC_RESPONSE_XXX and RequestID
+   *       needs to be maintained
+   */
   mCallback: null,
 };
 
@@ -105,14 +101,12 @@ let NfcWorker = {
   },
 
   /**
-   * Read and return NDEF data, if present.
+   * Unmarshals a NDEF message
    */
-  readNDEF: function readNDEF(message) {
-    let cb = function callback() {
+  unMarshallNdefMessage: function unMarshallNdefMessage() {
       let records = [];
-      let error        = Buf.readInt32();
-      let sessionId    = Buf.readInt32();
       let numOfRecords = Buf.readInt32();
+      debug("numOfRecords = " + numOfRecords);
 
       for (let i = 0; i < numOfRecords; i++) {
         let tnf        = Buf.readInt32();
@@ -141,6 +135,18 @@ let NfcWorker = {
                       id: id,
                       payload: payload});
       }
+      return records;
+  },
+
+  /**
+   * Read and return NDEF data, if present.
+   */
+  readNDEF: function readNDEF(message) {
+    let cb = function callback() {
+      let records = [];
+      let error        = Buf.readInt32();
+      let sessionId    = Buf.readInt32();
+      let records      = this.unMarshallNdefMessage();
 
       message.type      = "ReadNDEFResponse";
       message.sessionId = sessionId;
@@ -177,7 +183,6 @@ let NfcWorker = {
     let records    = message.records;
     let numRecords = records.length;
     Buf.writeInt32(numRecords);
-
     for (let i = 0; i < numRecords; i++) {
       let record = records[i];
       Buf.writeInt32(record.tnf);
@@ -357,25 +362,41 @@ NfcWorker[NFC_NOTIFICATION_INITIALIZED] = function NFC_NOTIFICATION_INITIALIZED 
   let status       = Buf.readInt32();
   let majorVersion = Buf.readInt32();
   let minorVersion = Buf.readInt32();
-  debug("NFC_NOTIFICATION_INITIALIZED status:" + status + " major:" + majorVersion + " minor:" + minorVersion);
+  debug("NFC_NOTIFICATION_INITIALIZED status:" + status);
+  if ((majorVersion != NFC_MAJOR_VERSION) || (minorVersion != NFC_MINOR_VERSION)) {
+    debug("Version Mismatch! Current Supported Version : " +
+            NFC_MAJOR_VERSION + NFC_MINOR_VERSION + "." +
+           " Received Version : " + majorVersion + "." + minorVersion);
+  }
 };
 
 NfcWorker[NFC_NOTIFICATION_TECH_DISCOVERED] = function NFC_NOTIFICATION_TECH_DISCOVERED() {
   debug("NFC_NOTIFICATION_TECH_DISCOVERED");
   let techs     = [];
-  let sessionId = Buf.readInt32();
-  let num       = Buf.readInt32();
+  let ndefMsgs  = [];
 
-  for (let i = 0; i < num; i++) {
+  let sessionId = Buf.readInt32();
+  let techCount = Buf.readInt32();
+  for (let count = 0; count < techCount; count++) {
     var t = Buf.readUint8();
     if (t in NFC_TECHS) {
       techs.push(NFC_TECHS[t]);
     }
   }
-  debug("sessionId = " + sessionId + "  techs = "+techs);
+
+  let padding   = getPaddingLen(techCount);
+  for (let i = 0; i < padding; i++) {
+    Buf.readUint8();
+  }
+
+  let ndefMsgCount = Buf.readInt32();
+  for (let count = 0; count < ndefMsgCount; count++) {
+    ndefMsgs.push(this.unMarshallNdefMessage());
+  }
   this.sendDOMMessage({type: "techDiscovered",
                        sessionId: sessionId,
-                       content: { tech: techs}
+                       tech: techs,
+                       ndef: ndefMsgs
                        });
 };
 

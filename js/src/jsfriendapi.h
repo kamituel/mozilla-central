@@ -119,11 +119,11 @@ JS_GetCompartmentPrincipals(JSCompartment *compartment);
 extern JS_FRIEND_API(void)
 JS_SetCompartmentPrincipals(JSCompartment *compartment, JSPrincipals *principals);
 
-/* Safe to call with input obj == NULL. Returns non-NULL iff obj != NULL. */
+/* Safe to call with input obj == nullptr. Returns non-nullptr iff obj != nullptr. */
 extern JS_FRIEND_API(JSObject *)
 JS_ObjectToInnerObject(JSContext *cx, JSObject *obj);
 
-/* Requires obj != NULL. */
+/* Requires obj != nullptr. */
 extern JS_FRIEND_API(JSObject *)
 JS_ObjectToOuterObject(JSContext *cx, JSObject *obj);
 
@@ -198,7 +198,7 @@ struct JSFunctionSpecWithHelp {
 #define JS_FN_HELP(name,call,nargs,flags,usage,help)                          \
     {name, call, nargs, (flags) | JSPROP_ENUMERATE | JSFUN_STUB_GSOPS, usage, help}
 #define JS_FS_HELP_END                                                        \
-    {NULL, NULL, 0, 0, NULL, NULL}
+    {nullptr, nullptr, 0, 0, nullptr, nullptr}
 
 extern JS_FRIEND_API(bool)
 JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *obj, const JSFunctionSpecWithHelp *fs);
@@ -240,24 +240,6 @@ SetSourceHook(JSRuntime *rt, SourceHook *hook);
 /* Remove |rt|'s source hook, and return it. The caller now owns the hook. */
 extern JS_FRIEND_API(SourceHook *)
 ForgetSourceHook(JSRuntime *rt);
-
-inline JSRuntime *
-GetRuntime(const JSContext *cx)
-{
-    return ContextFriendFields::get(cx)->runtime_;
-}
-
-inline JSCompartment *
-GetContextCompartment(const JSContext *cx)
-{
-    return ContextFriendFields::get(cx)->compartment_;
-}
-
-inline JS::Zone *
-GetContextZone(const JSContext *cx)
-{
-    return ContextFriendFields::get(cx)->zone_;
-}
 
 extern JS_FRIEND_API(JS::Zone *)
 GetCompartmentZone(JSCompartment *comp);
@@ -316,7 +298,7 @@ struct WeakMapTracer;
  * Weak map tracer callback, called once for every binding of every
  * weak map that was live at the time of the last garbage collection.
  *
- * m will be NULL if the weak map is not contained in a JS Object.
+ * m will be nullptr if the weak map is not contained in a JS Object.
  */
 typedef void
 (* WeakMapTraceCallback)(WeakMapTracer *trc, JSObject *m,
@@ -498,7 +480,7 @@ IsOriginalScriptFunction(JSFunction *fun);
 
 /*
  * Return the outermost enclosing function (script) of the scripted caller.
- * This function returns NULL in several cases:
+ * This function returns nullptr in several cases:
  *  - no script is running on the context
  *  - the caller is in global or eval code
  * In particular, this function will "stop" its outermost search at eval() and
@@ -639,7 +621,6 @@ ErrorFromException(JS::Value val);
 #define JSITER_KEYVALUE   0x4   /* destructuring for-in wants [key, value] */
 #define JSITER_OWNONLY    0x8   /* iterate over obj's own properties only */
 #define JSITER_HIDDEN     0x10  /* also enumerate non-enumerable properties */
-#define JSITER_FOR_OF     0x20  /* harmony for-of loop */
 
 JS_FRIEND_API(bool)
 RunningWithTrustedPrincipals(JSContext *cx);
@@ -768,7 +749,7 @@ CastToJSFreeOp(FreeOp *fop)
 
 /*
  * Get an error type name from a JSExnType constant.
- * Returns NULL for invalid arguments and JSEXN_INTERNALERR
+ * Returns nullptr for invalid arguments and JSEXN_INTERNALERR
  */
 extern JS_FRIEND_API(const jschar*)
 GetErrorTypeName(JSRuntime* rt, int16_t exnType);
@@ -1084,9 +1065,9 @@ extern JS_FRIEND_API(bool)
 JS_IsFloat64Array(JSObject *obj);
 
 /*
- * Unwrap Typed arrays all at once. Return NULL without throwing if the object
- * cannot be viewed as the correct typed array, or the typed array object on
- * success, filling both outparameters.
+ * Unwrap Typed arrays all at once. Return nullptr without throwing if the
+ * object cannot be viewed as the correct typed array, or the typed array
+ * object on success, filling both outparameters.
  */
 extern JS_FRIEND_API(JSObject *)
 JS_GetObjectAsInt8Array(JSObject *obj, uint32_t *length, int8_t **data);
@@ -1242,6 +1223,12 @@ extern JS_FRIEND_API(JSObject *)
 JS_GetArrayBufferViewBuffer(JSObject *obj);
 
 /*
+ * Set an ArrayBuffer's length to 0 and neuter all of its views.
+ */
+extern JS_FRIEND_API(void)
+JS_NeuterArrayBuffer(JSObject *obj, JSContext *cx);
+
+/*
  * Check whether obj supports JS_GetDataView* APIs.
  */
 JS_FRIEND_API(bool)
@@ -1263,7 +1250,7 @@ JS_GetDataViewByteOffset(JSObject *obj);
  *
  * |obj| must have passed a JS_IsDataViewObject test, or somehow be known that
  * it would pass such a test: it is a data view or a wrapper of a data view,
- * and the unwrapping will succeed. If cx is NULL, then DEBUG builds may be
+ * and the unwrapping will succeed. If cx is nullptr, then DEBUG builds may be
  * unable to assert when unwrapping should be disallowed.
  */
 JS_FRIEND_API(uint32_t)
@@ -1274,7 +1261,7 @@ JS_GetDataViewByteLength(JSObject *obj);
  *
  * |obj| must have passed a JS_IsDataViewObject test, or somehow be known that
  * it would pass such a test: it is a data view or a wrapper of a data view,
- * and the unwrapping will succeed. If cx is NULL, then DEBUG builds may be
+ * and the unwrapping will succeed. If cx is nullptr, then DEBUG builds may be
  * unable to assert when unwrapping should be disallowed.
  */
 JS_FRIEND_API(void *)
@@ -1405,7 +1392,7 @@ struct JSJitInfo {
 };
 
 #define JS_JITINFO_NATIVE_PARALLEL(op)                                         \
-    {{NULL},0,0,JSJitInfo::OpType_None,false,false,false,JSVAL_TYPE_MISSING,op}
+    {{nullptr},0,0,JSJitInfo::OpType_None,false,false,false,JSVAL_TYPE_MISSING,op}
 
 static JS_ALWAYS_INLINE const JSJitInfo *
 FUNCTION_VALUE_TO_JITINFO(const JS::Value& v)
@@ -1493,7 +1480,7 @@ JSID_TO_ATOM(jsid id)
     return (JSAtom *)JSID_TO_STRING(id);
 }
 
-JS_STATIC_ASSERT(sizeof(jsid) == JS_BYTES_PER_WORD);
+JS_STATIC_ASSERT(sizeof(jsid) == sizeof(void*));
 
 namespace js {
 
@@ -1570,7 +1557,7 @@ class JS_FRIEND_API(AutoCTypesActivityCallback) {
     void DoEndCallback() {
         if (callback) {
             callback(cx, endType);
-            callback = NULL;
+            callback = nullptr;
         }
     }
 };
