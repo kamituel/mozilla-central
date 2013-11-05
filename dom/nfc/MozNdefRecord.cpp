@@ -56,7 +56,7 @@ MozNdefRecord::Constructor(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  nsRefPtr<MozNdefRecord> ndefrecord = new MozNdefRecord(win, aTnf, aType, aId, aPayload);
+  nsRefPtr<MozNdefRecord> ndefrecord = new MozNdefRecord(aGlobal.GetContext(), win, aTnf, aType, aId, aPayload);
   if (!ndefrecord) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -64,14 +64,14 @@ MozNdefRecord::Constructor(const GlobalObject& aGlobal,
   return ndefrecord.forget();
 }
 
-MozNdefRecord::MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload)
+MozNdefRecord::MozNdefRecord(JSContext* aCx, nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload)
   : mTnf(aTnf)
 {
   mWindow = aWindow; // For GetParentObject()
 
-  mType = aType.Obj();
-  mId = aId.Obj();
-  mPayload = aPayload.Obj();
+  mType = Uint8Array::Create(aCx, this, aType.Length(), aType.Data());
+  mId = Uint8Array::Create(aCx, this, aId.Length(), aId.Data());
+  mPayload = Uint8Array::Create(aCx, this, aPayload.Length(), aPayload.Data());
 
   SetIsDOMBinding();
   HoldData();

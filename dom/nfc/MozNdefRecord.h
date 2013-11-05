@@ -36,7 +36,7 @@ public:
 
 public:
 
-  MozNdefRecord(nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPlayload);
+  MozNdefRecord(JSContext* aCx, nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPlayload);
 
   ~MozNdefRecord();
 
