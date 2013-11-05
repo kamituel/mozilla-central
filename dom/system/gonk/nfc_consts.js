@@ -51,11 +51,12 @@ this.NFC_TECHS = {
   3:'P2P'
 };
 
-// TODO: Fill-in all error codes for Gonk/nfcd protocol
+// TODO: Bug 933595. Fill-in all error codes for Gonk/nfcd protocol
 this.GECKO_NFC_ERROR_SUCCESS             = 0;
 this.GECKO_NFC_ERROR_GENERIC_FAILURE     = 1;
 
 // NFC powerlevels must match config PDUs.
+this.NFC_POWER_LEVEL_UNKNOWN        = -1;
 this.NFC_POWER_LEVEL_DISABLED       = 0;
 this.NFC_POWER_LEVEL_LOW            = 1;
 this.NFC_POWER_LEVEL_ENABLED        = 2;

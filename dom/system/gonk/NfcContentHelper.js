@@ -77,6 +77,10 @@ NfcContentHelper.prototype = {
 
   _requestMap: null,
 
+  /* TODO: Bug 815526: This is a limitation when a DOMString is used in sequences of Moz DOM Objects.
+   *       Strings such as 'type', 'id' 'payload' will not be acccessible to NfcWorker.
+   *       Therefore this function exists till the bug is addressed.
+   */
   encodeNdefRecords: function encodeNdefRecords(records) {
     let encodedRecords = [];
     for (let i = 0; i < records.length; i++) {
@@ -232,13 +236,6 @@ NfcContentHelper.prototype = {
     Services.DOMRequest.fireSuccess(request, result);
   },
 
-  fireRequestSuccessAsync: function fireRequestSuccessAsync(requestId, result) {
-    let currentThread = Services.tm.currentThread;
-
-    currentThread.dispatch(this.fireRequestSuccess.bind(this, requestId, result),
-                           Ci.nsIThread.DISPATCH_NORMAL);
-  },
-
   fireRequestError: function fireRequestError(requestId, error) {
     let request = this.takeRequest(requestId);
     if (!request) {
@@ -252,18 +249,13 @@ NfcContentHelper.prototype = {
     Services.DOMRequest.fireError(request, error);
   },
 
-  fireRequestErrorAsync: function fireRequestErrorAsync(requestId, error) {
-    let currentThread = Services.tm.currentThread;
-
-    currentThread.dispatch(this.fireRequestError.bind(this, requestId, error),
-                           Ci.nsIThread.DISPATCH_NORMAL);
-  },
-
   receiveMessage: function receiveMessage(message) {
     debug("Message received: " + JSON.stringify(message));
     switch (message.name) {
-      case "NFC:ReadNDEFResponse": // Fall through.
-      case "NFC:ConnectResponse":
+      case "NFC:ReadNDEFResponse":
+        this.handleReadNDEFResponse(message.json);
+        break;
+      case "NFC:ConnectResponse": // Fall through.
       case "NFC:CloseResponse":
       case "NFC:WriteNDEFResponse":
       case "NFC:MakeReadOnlyNDEFResponse":
@@ -282,13 +274,21 @@ NfcContentHelper.prototype = {
        return; // Nothing to do in this instance.
     }
     delete this._requestMap[message.requestId];
-    let result = message;
+    let result = message.records;
     let requestId = atob(message.requestId);
 
-    if (result.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
-      this.fireRequestError(requestId, result.status);
-    } else  {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester));
+    if (message.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
+      this.fireRequestError(requestId, message.status);
+    } else {
+      let ndefMsg = new Array();
+      for(let i = 0; i < result.length; i++) {
+        let record = result[i];
+        ndefMsg.push(new requester.MozNdefRecord(record.tnf,
+                                                 record.type,
+                                                 record.id,
+                                                 record.payload));
+      }
+      this.fireRequestSuccess(requestId, ndefMsg);
     }
   },
 
@@ -307,7 +307,7 @@ NfcContentHelper.prototype = {
     if (message.status !== NFC.GECKO_NFC_ERROR_SUCCESS) {
       this.fireRequestError(requestId, result.status);
     } else {
-      this.fireRequestSuccess(requestId, ObjectWrapper.wrap(result, requester));
+      this.fireRequestSuccess(requestId, result);
     }
   },
 };

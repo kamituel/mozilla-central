@@ -70,7 +70,7 @@ let Buf = {
   },
 
   /**
-   * TODO: Callback map of NFC_RESPONSE_XXX and RequestID
+   * TODO: Bug 933593. Callback map of NFC_RESPONSE_XXX and RequestID
    *       needs to be maintained
    */
   mCallback: null,
@@ -134,8 +134,8 @@ let NfcWorker = {
                       type: type,
                       id: id,
                       payload: payload});
-      }
-      return records;
+    }
+    return records;
   },
 
   /**
@@ -143,14 +143,12 @@ let NfcWorker = {
    */
   readNDEF: function readNDEF(message) {
     let cb = function callback() {
-      let records = [];
       let error        = Buf.readInt32();
       let sessionId    = Buf.readInt32();
       let records      = this.unMarshallNdefMessage();
 
       message.type      = "ReadNDEFResponse";
       message.sessionId = sessionId;
-      message.requestId = message.requestId;
       message.records   = records;
       message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
                                        GECKO_NFC_ERROR_GENERIC_FAILURE;
@@ -172,7 +170,6 @@ let NfcWorker = {
 
       message.type      = "WriteNDEFResponse";
       message.sessionId = sessionId;
-      message.requestId = message.requestId;
       message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
                                        GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
@@ -231,7 +228,6 @@ let NfcWorker = {
 
       message.type      = "MakeReadOnlyNDEFResponse";
       message.sessionId = sessionId;
-      message.requestId = message.requestId;
       message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
                                        GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
@@ -258,7 +254,6 @@ let NfcWorker = {
 
       message.type               = "GetDetailsNDEFResponse";
       message.sessionId          = sessionId;
-      message.requestId          = message.requestId;
       message.isReadOnly         = isReadOnly;
       message.canBeMadeReadOnly  = canBeMadeReadOnly;
       message.maxSupportedLength = maxSupportedLength;
@@ -282,7 +277,6 @@ let NfcWorker = {
 
       message.type      = "ConnectResponse";
       message.sessionId = sessionId;
-      message.requestId = message.requestId;
       message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
                                        GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
@@ -302,7 +296,6 @@ let NfcWorker = {
       let error         = Buf.readInt32();
 
       message.type      = "ConfigResponse";
-      message.requestId = message.requestId;
       message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
                                        GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
@@ -323,7 +316,6 @@ let NfcWorker = {
 
       message.type      = "CloseResponse";
       message.sessionId = sessionId;
-      message.requestId = message.requestId;
       message.status = (error === 0) ? GECKO_NFC_ERROR_SUCCESS :
                                        GECKO_NFC_ERROR_GENERIC_FAILURE;
       this.sendDOMMessage(message);
@@ -365,7 +357,7 @@ NfcWorker[NFC_NOTIFICATION_INITIALIZED] = function NFC_NOTIFICATION_INITIALIZED 
   debug("NFC_NOTIFICATION_INITIALIZED status:" + status);
   if ((majorVersion != NFC_MAJOR_VERSION) || (minorVersion != NFC_MINOR_VERSION)) {
     debug("Version Mismatch! Current Supported Version : " +
-            NFC_MAJOR_VERSION + NFC_MINOR_VERSION + "." +
+            NFC_MAJOR_VERSION + "." + NFC_MINOR_VERSION  +
            " Received Version : " + majorVersion + "." + minorVersion);
   }
 };
@@ -437,4 +429,3 @@ onerror = function onerror(event) {
   debug("NFC Worker error " + event.message + " " + event.filename + ":" +
         event.lineno + ":\n");
 };
-
