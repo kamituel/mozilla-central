@@ -995,10 +995,8 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     /*
      * Number of the committed arenas in all GC chunks including empty chunks.
-     * The counter is volatile as it is read without the GC lock, see comments
-     * in MaybeGC.
      */
-    volatile uint32_t   gcNumArenasFreeCommitted;
+    mozilla::Atomic<uint32_t, mozilla::ReleaseAcquire> gcNumArenasFreeCommitted;
     js::GCMarker        gcMarker;
     void                *gcVerifyPreData;
     void                *gcVerifyPostData;
@@ -1380,6 +1378,9 @@ struct JSRuntime : public JS::shadow::Runtime,
   public:
     js::MathCache *getMathCache(JSContext *cx) {
         return mathCache_ ? mathCache_ : createMathCache(cx);
+    }
+    js::MathCache *maybeGetMathCache() {
+        return mathCache_;
     }
 
     js::GSNCache        gsnCache;
