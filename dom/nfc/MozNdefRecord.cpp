@@ -66,8 +66,9 @@ MozNdefRecord::DropData()
 /* static */
 already_AddRefed<MozNdefRecord>
 MozNdefRecord::Constructor(const GlobalObject& aGlobal,
-  uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload,
-  ErrorResult& aRv)
+                           uint8_t aTnf, const Uint8Array& aType,
+                           const Uint8Array& aId, const Uint8Array& aPayload,
+                           ErrorResult& aRv)
 {
   nsCOMPtr<nsPIDOMWindow> win = do_QueryInterface(aGlobal.GetAsSupports());
   if (!win) {
@@ -75,7 +76,9 @@ MozNdefRecord::Constructor(const GlobalObject& aGlobal,
     return nullptr;
   }
 
-  nsRefPtr<MozNdefRecord> ndefrecord = new MozNdefRecord(aGlobal.GetContext(), win, aTnf, aType, aId, aPayload);
+  nsRefPtr<MozNdefRecord> ndefrecord = new MozNdefRecord(aGlobal.GetContext(),
+                                                         win, aTnf, aType, aId,
+                                                         aPayload);
   if (!ndefrecord) {
     aRv.Throw(NS_ERROR_FAILURE);
     return nullptr;
@@ -83,7 +86,9 @@ MozNdefRecord::Constructor(const GlobalObject& aGlobal,
   return ndefrecord.forget();
 }
 
-MozNdefRecord::MozNdefRecord(JSContext* aCx, nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload)
+MozNdefRecord::MozNdefRecord(JSContext* aCx, nsPIDOMWindow* aWindow,
+                             uint8_t aTnf, const Uint8Array& aType,
+                             const Uint8Array& aId, const Uint8Array& aPayload)
   : mTnf(aTnf)
 {
   mWindow = aWindow; // For GetParentObject()

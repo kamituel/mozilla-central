@@ -35,7 +35,8 @@ interface MozNdefRecord
   readonly attribute Uint8Array id;
 
   /**
-   * payload - Binary data blob. The meaning of this field is application dependent.
+   * payload - Binary data blob. The meaning of this field is application
+   * dependent.
    */
   [Constant]
   readonly attribute Uint8Array payload;

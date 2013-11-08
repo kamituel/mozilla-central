@@ -17,7 +17,6 @@
 
 #include "nsIDocument.h"
 
-#include "mozilla/dom/MozNdefRecordBinding.h"
 #include "mozilla/dom/TypedArray.h"
 #include "jsfriendapi.h"
 #include "js/GCAPI.h"
@@ -36,7 +35,9 @@ public:
 
 public:
 
-  MozNdefRecord(JSContext* aCx, nsPIDOMWindow* aWindow, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPlayload);
+  MozNdefRecord(JSContext* aCx, nsPIDOMWindow* aWindow, uint8_t aTnf,
+                const Uint8Array& aType, const Uint8Array& aId,
+                const Uint8Array& aPlayload);
 
   ~MozNdefRecord();
 
@@ -48,7 +49,10 @@ public:
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
 
-  static already_AddRefed<MozNdefRecord> Constructor(const GlobalObject& aGlobal, uint8_t aTnf, const Uint8Array& aType, const Uint8Array& aId, const Uint8Array& aPayload, ErrorResult& aRv);
+  static already_AddRefed<MozNdefRecord>
+                  Constructor(const GlobalObject& aGlobal, uint8_t aTnf,
+                              const Uint8Array& aType, const Uint8Array& aId,
+                              const Uint8Array& aPayload, ErrorResult& aRv);
 
   uint8_t Tnf() const
   {
