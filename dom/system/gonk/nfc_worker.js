@@ -104,36 +104,39 @@ let NfcWorker = {
    * Unmarshals a NDEF message
    */
   unMarshallNdefMessage: function unMarshallNdefMessage() {
-      let records = [];
-      let numOfRecords = Buf.readInt32();
-      debug("numOfRecords = " + numOfRecords);
+    let numOfRecords = Buf.readInt32();
+    debug("numOfRecords = " + numOfRecords);
+    if (numOfRecords <= 0) {
+      return null;
+    }
+    let records = [];
 
-      for (let i = 0; i < numOfRecords; i++) {
-        let tnf        = Buf.readInt32();
-        let typeLength = Buf.readInt32();
-        let type       = Buf.readUint8Array(typeLength);
-        let padding    = getPaddingLen(typeLength);
-        for (let i = 0; i < padding; i++) {
-          Buf.readUint8();
-        }
+    for (let i = 0; i < numOfRecords; i++) {
+      let tnf        = Buf.readInt32() & 0xff;
+      let typeLength = Buf.readInt32();
+      let type       = Buf.readUint8Array(typeLength);
+      let padding    = getPaddingLen(typeLength);
+      for (let i = 0; i < padding; i++) {
+        Buf.readUint8();
+      }
 
-        let idLength = Buf.readInt32();
-        let id       = Buf.readUint8Array(idLength);
-        padding      = getPaddingLen(idLength);
-        for (let i = 0; i < padding; i++) {
-          Buf.readUint8();
-        }
+      let idLength = Buf.readInt32();
+      let id       = Buf.readUint8Array(idLength);
+      padding      = getPaddingLen(idLength);
+      for (let i = 0; i < padding; i++) {
+        Buf.readUint8();
+      }
 
-        let payloadLength = Buf.readInt32();
-        let payload       = Buf.readUint8Array(payloadLength);
-        padding           = getPaddingLen(payloadLength);
-        for (let i = 0; i < padding; i++) {
-          Buf.readUint8();
-        }
-        records.push({tnf: tnf,
-                      type: type,
-                      id: id,
-                      payload: payload});
+      let payloadLength = Buf.readInt32();
+      let payload       = Buf.readUint8Array(payloadLength);
+      padding           = getPaddingLen(payloadLength);
+      for (let i = 0; i < padding; i++) {
+        Buf.readUint8();
+      }
+      records.push({tnf: tnf,
+                    type: type,
+                    id: id,
+                    payload: payload});
     }
     return records;
   },
@@ -184,7 +187,7 @@ let NfcWorker = {
       let record = records[i];
       Buf.writeInt32(record.tnf);
 
-      let typeLength = record.type.length;
+      let typeLength = record.type ? record.type.length : 0;
       Buf.writeInt32(typeLength);
       for (let j = 0; j < typeLength; j++) {
         Buf.writeUint8(record.type[j]);
@@ -194,7 +197,7 @@ let NfcWorker = {
         Buf.writeUint8(0x00);
       }
 
-      let idLength = record.id.length;
+      let idLength = record.id ? record.id.length : 0;
       Buf.writeInt32(idLength);
       for (let j = 0; j < idLength; j++) {
         Buf.writeUint8(record.id[j]);
@@ -204,7 +207,7 @@ let NfcWorker = {
         Buf.writeUint8(0x00);
       }
 
-      let payloadLength = record.payload && record.payload.length;
+      let payloadLength = record.payload ? record.payload.length : 0;
       Buf.writeInt32(payloadLength);
       for (let j = 0; j < payloadLength; j++) {
         Buf.writeUint8(record.payload[j]);
@@ -370,9 +373,9 @@ NfcWorker[NFC_NOTIFICATION_TECH_DISCOVERED] = function NFC_NOTIFICATION_TECH_DIS
   let sessionId = Buf.readInt32();
   let techCount = Buf.readInt32();
   for (let count = 0; count < techCount; count++) {
-    var t = Buf.readUint8();
-    if (t in NFC_TECHS) {
-      techs.push(NFC_TECHS[t]);
+    let tech = NFC_TECHS[Buf.readUint8()];
+    if (tech) {
+      techs.push(tech);
     }
   }
 
