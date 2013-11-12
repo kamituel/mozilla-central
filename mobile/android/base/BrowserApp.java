@@ -21,6 +21,7 @@ import org.mozilla.gecko.home.HomePager;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
 import org.mozilla.gecko.home.SearchEngine;
 import org.mozilla.gecko.menu.GeckoMenu;
+import org.mozilla.gecko.preferences.GeckoPreferences;
 import org.mozilla.gecko.prompts.Prompt;
 import org.mozilla.gecko.util.Clipboard;
 import org.mozilla.gecko.util.GamepadUtils;
@@ -108,7 +109,7 @@ abstract public class BrowserApp extends GeckoApp
     private BrowserSearch mBrowserSearch;
     private View mBrowserSearchContainer;
 
-    public static BrowserToolbar mBrowserToolbar;
+    private BrowserToolbar mBrowserToolbar;
     private HomePager mHomePager;
     private View mHomePagerContainer;
     protected Telemetry.Timer mAboutHomeStartupTimer = null;
@@ -712,7 +713,7 @@ abstract public class BrowserApp extends GeckoApp
 
         if (itemId == R.id.subscribe) {
             Tab tab = Tabs.getInstance().getSelectedTab();
-            if (tab != null && tab.getFeedsEnabled()) {
+            if (tab != null && tab.hasFeeds()) {
                 JSONObject args = new JSONObject();
                 try {
                     args.put("tabId", tab.getId());
@@ -720,6 +721,21 @@ abstract public class BrowserApp extends GeckoApp
                     Log.e(LOGTAG, "error building json arguments");
                 }
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Feeds:Subscribe", args.toString()));
+            }
+            return true;
+        }
+
+        if (itemId == R.id.add_search_engine) {
+            Tab tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null && tab.hasOpenSearch()) {
+                JSONObject args = new JSONObject();
+                try {
+                    args.put("tabId", tab.getId());
+                } catch (JSONException e) {
+                    Log.e(LOGTAG, "error building json arguments");
+                    return true;
+                }
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:Add", args.toString()));
             }
             return true;
         }
@@ -832,7 +848,7 @@ abstract public class BrowserApp extends GeckoApp
         mBrowserToolbar.updateBackButton(false);
         mBrowserToolbar.updateForwardButton(false);
 
-        mDoorHangerPopup.setAnchor(mBrowserToolbar.mFavicon);
+        mDoorHangerPopup.setAnchor(mBrowserToolbar.getDoorHangerAnchor());
 
         // Listen to margin changes to position the toolbar correctly
         if (isDynamicToolbarEnabled()) {

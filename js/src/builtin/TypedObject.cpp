@@ -1249,6 +1249,8 @@ js_InitTypedObjectClass(JSContext *cx, HandleObject obj)
 
     RootedObject module(cx, NewObjectWithClassProto(cx, &JSObject::class_,
                                                     objProto, global));
+    if (!module)
+        return nullptr;
 
     // Define TypedObject global.
 
@@ -2006,7 +2008,7 @@ TypedDatum::obj_deleteElement(JSContext *cx, HandleObject obj, uint32_t index,
                                bool *succeeded)
 {
     RootedId id(cx);
-    if (!IndexToId(cx, index, &id))
+    if (!IndexToId(cx, index, id.address()))
         return false;
 
     if (IsOwnId(cx, obj, id))
@@ -2167,6 +2169,7 @@ const Class TypedObject::class_ = {
         TypedDatum::obj_deleteProperty,
         TypedDatum::obj_deleteElement,
         TypedDatum::obj_deleteSpecial,
+        nullptr, nullptr, // watch/unwatch
         TypedDatum::obj_enumerate,
         nullptr, /* thisObject */
     }
@@ -2257,6 +2260,7 @@ const Class TypedHandle::class_ = {
         TypedDatum::obj_deleteProperty,
         TypedDatum::obj_deleteElement,
         TypedDatum::obj_deleteSpecial,
+        nullptr, nullptr, // watch/unwatch
         TypedDatum::obj_enumerate,
         nullptr, /* thisObject */
     }

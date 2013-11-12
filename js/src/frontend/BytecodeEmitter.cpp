@@ -38,6 +38,7 @@
 
 #include "frontend/ParseMaps-inl.h"
 #include "frontend/ParseNode-inl.h"
+#include "vm/ScopeObject-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -1143,12 +1144,8 @@ TryConvertFreeName(BytecodeEmitter *bce, ParseNode *pn)
         // The only statements within a lazy function which can push lexical
         // scopes are try/catch blocks. Use generic ops in this case.
         for (StmtInfoBCE *stmt = bce->topStmt; stmt; stmt = stmt->down) {
-            switch (stmt->type) {
-              case STMT_TRY:
-              case STMT_FINALLY:
+            if (stmt->type == STMT_CATCH)
                 return true;
-              default:;
-            }
         }
 
         size_t hops = 0;
@@ -1165,9 +1162,9 @@ TryConvertFreeName(BytecodeEmitter *bce, ParseNode *pn)
         if (bce->script->directlyInsideEval)
             return false;
         RootedObject outerScope(bce->sc->context, bce->script->enclosingStaticScope());
-        for (StaticScopeIter ssi(bce->sc->context, outerScope); !ssi.done(); ssi++) {
-            if (ssi.type() != StaticScopeIter::FUNCTION) {
-                if (ssi.type() == StaticScopeIter::BLOCK) {
+        for (StaticScopeIter<CanGC> ssi(bce->sc->context, outerScope); !ssi.done(); ssi++) {
+            if (ssi.type() != StaticScopeIter<CanGC>::FUNCTION) {
+                if (ssi.type() == StaticScopeIter<CanGC>::BLOCK) {
                     // Use generic ops if a catch block is encountered.
                     return false;
                 }
@@ -4809,7 +4806,7 @@ EmitFunc(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
 
             // Inherit most things (principals, version, etc) from the parent.
             Rooted<JSScript*> parent(cx, bce->script);
-            CompileOptions options(bce->parser->options());
+            CompileOptions options(cx, bce->parser->options());
             options.setPrincipals(parent->principals())
                    .setOriginPrincipals(parent->originPrincipals())
                    .setCompileAndGo(parent->compileAndGo)
@@ -6445,6 +6442,12 @@ frontend::EmitTree(ExclusiveContext *cx, BytecodeEmitter *bce, ParseNode *pn)
              ? EmitLet(cx, bce, pn)
              : EmitVariables(cx, bce, pn, InitializeVars);
         break;
+
+      case PNK_IMPORT:
+      case PNK_EXPORT:
+       // TODO: Implement emitter support for modules
+       bce->reportError(nullptr, JSMSG_MODULES_NOT_IMPLEMENTED);
+       return false;
 
       case PNK_ARRAYPUSH: {
         int slot;

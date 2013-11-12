@@ -298,6 +298,10 @@ MarkupView.prototype = {
         this.navigate(selection);
         break;
       }
+      case Ci.nsIDOMKeyEvent.DOM_VK_F2: {
+        this.beginEditingOuterHTML(this._selectedContainer.node);
+        break;
+      }
       default:
         handled = false;
     }
@@ -689,7 +693,11 @@ MarkupView.prototype = {
         return;
       }
       this.htmlEditor.show(container.tagLine, oldValue);
-      this.htmlEditor.once("popup-hidden", (e, aCommit, aValue) => {
+      this.htmlEditor.once("popuphidden", (e, aCommit, aValue) => {
+        // Need to focus the <html> element instead of the frame / window
+        // in order to give keyboard focus back to doc (from editor).
+        this._frame.contentDocument.documentElement.focus();
+
         if (aCommit) {
           this.updateNodeOuterHTML(aNode, aValue, oldValue);
         }
@@ -987,7 +995,8 @@ MarkupView.prototype = {
    * Initialize the preview panel.
    */
   _initPreview: function() {
-    if (!Services.prefs.getBoolPref("devtools.inspector.markupPreview")) {
+    this._previewEnabled = Services.prefs.getBoolPref("devtools.inspector.markupPreview");
+    if (!this._previewEnabled) {
       return;
     }
 
@@ -1017,6 +1026,9 @@ MarkupView.prototype = {
    * Move the preview viewbox.
    */
   _updatePreview: function() {
+    if (!this._previewEnabled) {
+      return;
+    }
     let win = this._frame.contentWindow;
 
     if (win.scrollMaxY == 0) {
@@ -1052,6 +1064,9 @@ MarkupView.prototype = {
    * Hide the preview while resizing, to avoid slowness.
    */
   _resizePreview: function() {
+    if (!this._previewEnabled) {
+      return;
+    }
     let win = this._frame.contentWindow;
     this._previewBar.classList.add("hide");
     win.clearTimeout(this._resizePreviewTimeout);

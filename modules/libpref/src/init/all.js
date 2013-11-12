@@ -27,10 +27,6 @@ pref("general.useragent.compatMode.firefox", false);
 // overrides by default, don't initialize UserAgentOverrides.jsm.
 pref("general.useragent.site_specific_overrides", true);
 
-// This pref controls whether or not to enable UA overrides in the
-// product code that end users use (as opposed to testing code).
-pref("general.useragent.enable_overrides", false);
-
 pref("general.config.obscure_value", 13); // for MCD .cfg files
 
 pref("general.warnOnAboutConfig", true);
@@ -215,9 +211,6 @@ pref("media.wave.enabled", true);
 #ifdef MOZ_WEBM
 pref("media.webm.enabled", true);
 #endif
-#ifdef MOZ_DASH
-pref("media.dash.enabled", false);
-#endif
 #ifdef MOZ_GSTREAMER
 pref("media.gstreamer.enabled", true);
 #endif
@@ -282,7 +275,7 @@ pref("media.video-queue.default-size", 10);
 pref("media.video_stats.enabled", true);
 
 // Whether to enable the audio writing APIs on the audio element
-pref("media.audio_data.enabled", true);
+pref("media.audio_data.enabled", false);
 
 // Whether to lock touch scrolling to one axis at a time
 // 0 = FREE (No locking at all)
@@ -1613,6 +1606,7 @@ pref("security.notification_enable_delay", 500);
 
 pref("security.csp.enable", true);
 pref("security.csp.debug", false);
+pref("security.csp.experimentalEnabled", false);
 
 // Mixed content blocking
 pref("security.mixed_content.block_active_content", false);
@@ -1880,9 +1874,6 @@ pref("layout.css.supports-rule.enabled", true);
 // Is support for CSS Filters enabled?
 pref("layout.css.filters.enabled", false);
 
-// Is support for CSS Flexbox enabled?
-pref("layout.css.flexbox.enabled", true);
-
 // Is support for CSS sticky positioning enabled?
 #ifdef RELEASE_BUILD
 pref("layout.css.sticky.enabled", false);
@@ -1920,6 +1911,13 @@ pref("layout.css.prefixes.animations", true);
 pref("layout.css.scope-pseudo.enabled", false);
 #else
 pref("layout.css.scope-pseudo.enabled", true);
+#endif
+
+// Is support for background-blend-mode enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.background-blend-mode.enabled", false);
+#else
+pref("layout.css.background-blend-mode.enabled", true);
 #endif
 
 // Is support for CSS vertical text enabled?
@@ -4565,8 +4563,8 @@ pref("dom.inter-app-communication-api.enabled", false);
 // The tables used for Safebrowsing phishing and malware checks.
 pref("urlclassifier.malware_table", "goog-malware-shavar");
 pref("urlclassifier.phish_table", "goog-phish-shavar");
-pref("urlclassifier.download_block_table", "goog-badbinurl-shavar");
-pref("urlclassifier.download_allow_table", "goog-downloadwhite-digest256");
+pref("urlclassifier.download_block_table", "");
+pref("urlclassifier.download_allow_table", "");
 
 // Turn off Spatial navigation by default.
 pref("snav.enabled", false);

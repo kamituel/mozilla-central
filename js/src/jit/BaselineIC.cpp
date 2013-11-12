@@ -419,6 +419,11 @@ ICStub::trace(JSTracer *trc)
         MarkObject(trc, &stub->templateObject(), "baseline-newobject-template");
         break;
       }
+      case ICStub::Rest_Fallback: {
+        ICRest_Fallback *stub = toRest_Fallback();
+        MarkObject(trc, &stub->templateObject(), "baseline-rest-template");
+        break;
+      }
       default:
         break;
     }
@@ -582,7 +587,7 @@ ICStubCompiler::getStubCode()
     if (!generateStubCode(masm))
         return nullptr;
     Linker linker(masm);
-    Rooted<IonCode *> newStubCode(cx, linker.newCode(cx, JSC::BASELINE_CODE));
+    Rooted<IonCode *> newStubCode(cx, linker.newCode<CanGC>(cx, JSC::BASELINE_CODE));
     if (!newStubCode)
         return nullptr;
 
@@ -1460,7 +1465,7 @@ DoTypeUpdateFallback(JSContext *cx, BaselineFrame *frame, ICUpdatedStub *stub, H
         JS_ASSERT(obj->isNative());
         jsbytecode *pc = stub->getChainFallback()->icEntry()->pc(script);
         if (*pc == JSOP_SETALIASEDVAR)
-            id = NameToId(ScopeCoordinateName(cx, script, pc));
+            id = NameToId(ScopeCoordinateName(script, pc));
         else
             id = NameToId(script->getName(pc));
         types::AddTypePropertyId(cx, obj, id, value);
@@ -6843,7 +6848,7 @@ DoSetPropFallback(JSContext *cx, BaselineFrame *frame, ICSetProp_Fallback *stub,
 
     RootedPropertyName name(cx);
     if (op == JSOP_SETALIASEDVAR)
-        name = ScopeCoordinateName(cx, script, pc);
+        name = ScopeCoordinateName(script, pc);
     else
         name = script->getName(pc);
     RootedId id(cx, NameToId(name));
@@ -7439,6 +7444,18 @@ GetTemplateObjectForNative(JSContext *cx, HandleScript script, jsbytecode *pc,
         return true;
     }
 
+    if (native == intrinsic_NewDenseArray) {
+        res.set(NewDenseUnallocatedArray(cx, 0, nullptr, TenuredObject));
+        if (!res)
+            return false;
+
+        types::TypeObject *type = types::TypeScript::InitObject(cx, script, pc, JSProto_Array);
+        if (!type)
+            return false;
+        res->setType(type);
+        return true;
+    }
+
     if (native == js::array_concat) {
         if (args.thisv().isObject() && args.thisv().toObject().is<ArrayObject>() &&
             !args.thisv().toObject().hasSingletonType())
@@ -7449,6 +7466,18 @@ GetTemplateObjectForNative(JSContext *cx, HandleScript script, jsbytecode *pc,
             res->setType(args.thisv().toObject().type());
             return true;
         }
+    }
+
+    if (native == js::str_split && args.length() == 1 && args[0].isString()) {
+        res.set(NewDenseUnallocatedArray(cx, 0, nullptr, TenuredObject));
+        if (!res)
+            return false;
+
+        types::TypeObject *type = types::TypeScript::InitObject(cx, script, pc, JSProto_Array);
+        if (!type)
+            return false;
+        res->setType(type);
+        return true;
     }
 
     if (native == js_String) {

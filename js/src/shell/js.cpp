@@ -291,7 +291,7 @@ GetLine(FILE *file, const char * prompt)
         }
         if (len + 1 == size) {
             size = size * 2;
-            char *tmp = (char *) realloc(buffer, size);
+            char *tmp = (char *) js_realloc(buffer, size);
             if (!tmp) {
                 free(buffer);
                 return nullptr;
@@ -336,7 +336,7 @@ NewContextData()
         return nullptr;
 
     JSShellContextData *data = (JSShellContextData *)
-                               calloc(sizeof(JSShellContextData), 1);
+                               js_calloc(sizeof(JSShellContextData), 1);
     if (!data)
         return nullptr;
     data->startTime = PRMJ_Now();
@@ -458,10 +458,9 @@ EvalAndPrint(JSContext *cx, Handle<JSObject*> global, const char *bytes, size_t 
 {
     // Eval.
     JS::CompileOptions options(cx);
-    options.utf8 = true;
-    options.compileAndGo = true;
-    options.filename = "typein";
-    options.lineno = lineno;
+    options.setUTF8(true)
+           .setCompileAndGo(true)
+           .setFileAndLine("typein", lineno);
     RootedScript script(cx);
     script = JS::Compile(cx, global, options, bytes, length);
     if (!script)
@@ -4129,10 +4128,6 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 "intern(str)",
 "  Internalize str in the atom table."),
 
-    JS_FN_HELP("clone", Clone, 1, 0,
-"clone(fun[, scope])",
-"  Clone function object."),
-
     JS_FN_HELP("getpda", GetPDA, 1, 0,
 "getpda(obj)",
 "  Get the property descriptors for obj."),
@@ -4277,6 +4272,10 @@ static const JSFunctionSpecWithHelp shell_functions[] = {
 };
 
 static const JSFunctionSpecWithHelp fuzzing_unsafe_functions[] = {
+    JS_FN_HELP("clone", Clone, 1, 0,
+"clone(fun[, scope])",
+"  Clone function object."),
+
     JS_FN_HELP("getSelfHostedValue", GetSelfHostedValue, 1, 0,
 "getSelfHostedValue()",
 "  Get a self-hosted value by its name. Note that these values don't get \n"
@@ -5169,12 +5168,12 @@ ShellCloseAsmJSCacheEntryForWrite(HandleObject global, size_t serializedSize, ui
 }
 
 static bool
-ShellBuildId(mozilla::Vector<char> *buildId)
+ShellBuildId(js::Vector<char> *buildId)
 {
     // The browser embeds the date into the buildid and the buildid is embedded
     // in the binary, so every 'make' necessarily builds a new firefox binary.
     // Fortunately, the actual firefox executable is tiny -- all the code is in
-    // libxul.so and other shared modules -- so this isn't a big deal. No so
+    // libxul.so and other shared modules -- so this isn't a big deal. Not so
     // for the statically-linked JS shell. To avoid recompmiling js.cpp and
     // re-linking 'js' on every 'make', we use a constant buildid and rely on
     // the shell user to manually clear the cache (deleting the dir passed to
