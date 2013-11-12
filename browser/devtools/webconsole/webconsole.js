@@ -31,6 +31,7 @@ loader.lazyImporter(this, "ObjectClient", "resource://gre/modules/devtools/dbg-c
 loader.lazyImporter(this, "VariablesView", "resource:///modules/devtools/VariablesView.jsm");
 loader.lazyImporter(this, "VariablesViewController", "resource:///modules/devtools/VariablesViewController.jsm");
 loader.lazyImporter(this, "PluralForm", "resource://gre/modules/PluralForm.jsm");
+loader.lazyImporter(this, "gDevTools", "resource:///modules/devtools/gDevTools.jsm");
 
 const STRINGS_URI = "chrome://browser/locale/devtools/webconsole.properties";
 let l10n = new WebConsoleUtils.l10n(STRINGS_URI);
@@ -198,6 +199,7 @@ function WebConsoleFrame(aWebConsoleOwner)
   this.output = new ConsoleOutput(this);
 
   this._toggleFilter = this._toggleFilter.bind(this);
+  this._onPanelSelected = this._onPanelSelected.bind(this);
   this._flushMessageQueue = this._flushMessageQueue.bind(this);
 
   this._outputTimer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
@@ -357,6 +359,11 @@ WebConsoleFrame.prototype = {
   // Used in tests.
   _saveRequestAndResponseBodies: false,
 
+  // Chevron width at the starting of Web Console's input box.
+  _chevronWidth: 0,
+  // Width of the monospace characters in Web Console's input box.
+  _inputCharWidth: 0,
+
   /**
    * Tells whether to save the bodies of network requests and responses.
    * Disabled by default to save memory.
@@ -509,6 +516,10 @@ WebConsoleFrame.prototype = {
       }
     }
 
+    // Update the character width and height needed for the popup offset
+    // calculations.
+    this._updateCharSize();
+
     let updateSaveBodiesPrefUI = (aElement) => {
       this.getSaveRequestAndResponseBodies().then(aValue => {
         aElement.setAttribute("checked", aValue);
@@ -554,6 +565,21 @@ WebConsoleFrame.prototype = {
 
     this.jsterm = new JSTerm(this);
     this.jsterm.init();
+    this.jsterm.inputNode.focus();
+
+    let toolbox = gDevTools.getToolbox(this.owner.target);
+    if (toolbox) {
+      toolbox.on("webconsole-selected", this._onPanelSelected);
+    }
+  },
+
+  /**
+   * Sets the focus to JavaScript input field when the web console tab is
+   * selected.
+   * @private
+   */
+  _onPanelSelected: function WCF__onPanelSelected()
+  {
     this.jsterm.inputNode.focus();
   },
 
@@ -709,6 +735,34 @@ WebConsoleFrame.prototype = {
       this.outputNode.style.fontSize = "";
       Services.prefs.clearUserPref("devtools.webconsole.fontSize");
     }
+    this._updateCharSize();
+  },
+
+  /**
+   * Calculates the width and height of a single character of the input box.
+   * This will be used in opening the popup at the correct offset.
+   *
+   * @private 
+   */
+  _updateCharSize: function WCF__updateCharSize()
+  {
+    let doc = this.document;
+    let tempLabel = doc.createElementNS(XHTML_NS, "span");
+    let style = tempLabel.style;
+    style.position = "fixed";
+    style.padding = "0";
+    style.margin = "0";
+    style.width = "auto";
+    style.color = "transparent";
+    WebConsoleUtils.copyTextStyles(this.inputNode, tempLabel);
+    tempLabel.textContent = "x";
+    doc.documentElement.appendChild(tempLabel);
+    this._inputCharWidth = tempLabel.offsetWidth;
+    tempLabel.parentNode.removeChild(tempLabel);
+    // Calculate the width of the chevron placed at the beginning of the input
+    // box. Remove 4 more pixels to accomodate the padding of the popup.
+    this._chevronWidth = +doc.defaultView.getComputedStyle(this.inputNode)
+                             .paddingLeft.replace(/[^0-9.]/g, "") - 4;
   },
 
   /**
@@ -2826,6 +2880,11 @@ WebConsoleFrame.prototype = {
 
     this._destroyer = promise.defer();
 
+    let toolbox = gDevTools.getToolbox(this.owner.target);
+    if (toolbox) {
+      toolbox.off("webconsole-selected", this._onPanelSelected);
+    }
+
     this._repeatNodes = {};
     this._outputQueue = [];
     this._pruneCategoriesQueue = {};
@@ -4348,7 +4407,10 @@ JSTerm.prototype = {
     };
 
     if (items.length > 1 && !popup.isOpen) {
-      popup.openPopup(inputNode);
+      let str = this.inputNode.value.substr(0, this.inputNode.selectionStart);
+      let offset = str.length - (str.lastIndexOf("\n") + 1) - lastPart.length;
+      let x = offset * this.hud._inputCharWidth;
+      popup.openPopup(inputNode, x + this.hud._chevronWidth);
       this._autocompletePopupNavigated = false;
     }
     else if (items.length < 2 && popup.isOpen) {
@@ -5139,7 +5201,6 @@ function gSequenceId()
   return gSequenceId.n++;
 }
 gSequenceId.n = 0;
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Context Menu

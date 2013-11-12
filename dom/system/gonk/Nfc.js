@@ -219,6 +219,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
      */
 
     receiveMessage: function receiveMessage(msg) {
+      debug("Received '" + msg.name + "' message from content process");
       if (msg.name == "child-process-shutdown") {
         // By the time we receive child-process-shutdown, the child process has
         // already forgotten its permissions so we need to unregister the target
