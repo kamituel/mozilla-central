@@ -10,7 +10,7 @@ interface MozNfc : EventTarget {
    MozNFCTag getNFCTag(DOMString sessionId);
    MozNFCPeer getNFCPeer(DOMString sessionId);
 
-   /*attribute EventHandler onpeerfound;
+   void setPeerWindow(Window window);
+   attribute EventHandler onpeerfound;
    attribute EventHandler onpeerlost;
-   attribute EventHandler onforegrounddispatch;*/
 };
