@@ -67,5 +67,8 @@ this.TOPIC_XPCOM_SHUTDOWN           = "xpcom-shutdown";
 this.SETTING_NFC_ENABLED            = "nfc.enabled";
 this.SETTING_NFC_POWER_LEVEL        = "nfc.powerlevel";
 
+this.NFC_PEER_EVENT_FOUND = 1;
+this.NFC_PEER_EVENT_LOST  = 2;
+
 // Allow this file to be imported via Components.utils.import().
 this.EXPORTED_SYMBOLS = Object.keys(this);
