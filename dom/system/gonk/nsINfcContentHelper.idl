@@ -7,9 +7,29 @@
 
 interface nsIVariant;
 
+[scriptable, function,uuid(271f48b0-c884-4f0b-a348-e29824c95168)]
+interface nsINfcPeerCallback : nsISupports
+{
+  /**
+   * Callback function used to notify NFC peer events.
+   *
+   * @param event
+   *        An event indicating 'PeerFound' or 'PeerLost'
+   *        One of NFC_EVENT_PEER_XXXX
+   *
+   * @param sessionToken
+   *        SessionToken received from Chrome
+   */
+   void peerNotification(in unsigned long event,
+                         [optional] in DOMString sessionToken);
+};
+
 [scriptable, uuid(28c8f240-da8c-11e1-9b23-0800200c9a66)]
 interface nsINfcContentHelper : nsISupports
 {
+  const long NFC_EVENT_PEER_FOUND = 1;
+  const long NFC_EVENT_PEER_LOST  = 2;
+
   void setSessionToken(in DOMString sessionToken);
 
   nsIDOMDOMRequest getDetailsNDEF(in nsIDOMWindow window, in DOMString sessionToken);
@@ -19,4 +39,12 @@ interface nsINfcContentHelper : nsISupports
 
   nsIDOMDOMRequest connect(in nsIDOMWindow window, in unsigned long techType, in DOMString sessionToken);
   nsIDOMDOMRequest close(in nsIDOMWindow window, in DOMString sessionToken);
+
+  void registerTargetForPeerEvent(in nsIDOMWindow window,
+                                  in unsigned long event,
+                                  in nsINfcPeerCallback callback);
+  void unRegisterTargetForPeerEvent(in nsIDOMWindow window,
+                                    in unsigned long event);
+
+  void setPeerWindow(in nsIDOMWindow window);
 };

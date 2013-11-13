@@ -47,7 +47,8 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:GetDetailsNDEFResponse",
   "NFC:MakeReadOnlyNDEFResponse",
   "NFC:ConnectResponse",
-  "NFC:CloseResponse"
+  "NFC:CloseResponse",
+  "NFC:PeerEvent"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -59,6 +60,7 @@ function NfcContentHelper() {
   Services.obs.addObserver(this, "xpcom-shutdown", false);
 
   this._requestMap = [];
+  this.peerEventsCallbackMap = [];
 }
 
 NfcContentHelper.prototype = {
@@ -75,6 +77,7 @@ NfcContentHelper.prototype = {
   }),
 
   _requestMap: null,
+  peerEventsCallbackMap: null,
 
   /* TODO: Bug 815526: This is a limitation when a DOMString is used in sequences of Moz DOM Objects.
    *       Strings such as 'type', 'id' 'payload' will not be acccessible to NfcWorker.
@@ -210,6 +213,47 @@ NfcContentHelper.prototype = {
     return request;
   },
 
+  registerTargetForPeerEvent: function registerTargetForPeerEvent(window,
+                                                       event, callback) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    this.peerEventsCallbackMap[event] = callback;
+    cpmm.sendAsyncMessage("NFC:RegisterPeerEvent", {
+      event: event
+    });
+    return;
+  },
+
+  unRegisterTargetForPeerEvent: function unRegisterTargetForPeerEvent(window,
+                                                                     event) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    let index = this.peerEventsCallbackMap.indexOf(event);
+    if (index > -1) {
+      this.peerEventsCallbackMap.splice(index, 1);
+    }
+
+    cpmm.sendAsyncMessage("NFC:UnRegisterPeerEvent", {
+      event: event
+    });
+    return;
+  },
+
+  setPeerWindow: function setPeerWindow(window) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    cpmm.sendAsyncMessage("NFC:PeerWindow", {});
+    return;
+  },
+
   // nsIObserver
 
   observe: function observe(subject, topic, data) {
@@ -259,7 +303,18 @@ NfcContentHelper.prototype = {
       case "NFC:WriteNDEFResponse":
       case "NFC:MakeReadOnlyNDEFResponse":
       case "NFC:GetDetailsNDEFResponse":
+      case "NFC:NotifyPeerFound":
+      case "NFC:NotifyPeerLost":
         this.handleResponse(message.json);
+        break;
+      case "NFC:PeerEvent":
+        let callback = this.peerEventsCallbackMap[message.json.event];
+        if (callback) {
+           callback.peerNotification(message.json.event,
+                             message.json.sessionToken);
+        } else {
+          debug("No Peer valid callback registered");
+        }
         break;
     }
   },

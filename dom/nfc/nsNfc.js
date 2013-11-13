@@ -19,6 +19,11 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 
+let gMozNfc = null;
+
+const NFC_PEER_EVENT_FOUND = 1;
+const NFC_PEER_EVENT_LOST  = 2;
+
 /**
  * NFCTag
  */
@@ -130,6 +135,9 @@ MozNFCPeer.prototype = {
  */
 function mozNfc() {
   debug("In mozNfc Constructor");
+  this._nfcContentHelper = Cc["@mozilla.org/nfc/content-helper;1"]
+                             .getService(Ci.nsINfcContentHelper);
+  gMozNfc = this;
 }
 mozNfc.prototype = {
   _nfcContentHelper: null,
@@ -141,6 +149,13 @@ mozNfc.prototype = {
   init: function init(aWindow) {
     debug("mozNfc init called");
     this._window = aWindow;
+  },
+
+  setPeerWindow: function setPeerWindow(window) {
+    // TODO: How to pass the current window information to ContentHelper
+    //       which in turn forwards it to Chrome process?
+    this._nfcContentHelper.setPeerWindow(this._window);
+    return;
   },
 
   getNFCTag: function getNFCTag(sessionToken) {
@@ -157,7 +172,7 @@ mozNfc.prototype = {
 
   getNFCPeer: function getNFCPeer(sessionToken) {
     let obj = new MozNFCPeer();
-    let nfcPeer = this._window.MozNFCTag._create(this._window, obj);
+    let nfcPeer = this._window.MozNFCPeer._create(this._window, obj);
     if (nfcPeer) {
       obj.initialize(this._window, sessionToken);
       return nfcPeer;
@@ -167,7 +182,51 @@ mozNfc.prototype = {
     }
   },
 
-  // get/set onpeerfound/lost onforegrounddispatch
+  // get/set onpeerfound/lost
+  get onpeerfound() {
+    return this.__DOM_IMPL__.getEventHandler("onpeerfound");
+  },
+
+  set onpeerfound(handler) {
+    this.__DOM_IMPL__.setEventHandler("onpeerfound", handler);
+    if (handler === null) {
+      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window,
+                                                  NFC_PEER_EVENT_FOUND);
+    } else {
+      this._nfcContentHelper.registerTargetForPeerEvent(this._window,
+        NFC_PEER_EVENT_FOUND, function(evt, sessionToken) {
+        gMozNfc.firePeerEvent(evt, sessionToken);
+      });
+    }
+  },
+
+  get onpeerlost() {
+    return this.__DOM_IMPL__.getEventHandler("onpeerlost");
+  },
+
+  set onpeerlost(handler) {
+    this.__DOM_IMPL__.setEventHandler("onpeerlost", handler);
+    if (handler === null) {
+      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window,
+                                                  NFC_PEER_EVENT_LOST);
+    } else {
+      this._nfcContentHelper.registerTargetForPeerEvent(this._window,
+        NFC_PEER_EVENT_LOST, function(evt, sessionToken) {
+        gMozNfc.firePeerEvent(evt);
+      });
+    }
+  },
+
+  firePeerEvent: function firePeerEvent(evt, sessionToken) {
+    let peerEvent = (NFC_PEER_EVENT_FOUND === evt) ? "peerfound" : "peerlost";
+    let detail = {
+      "detail":sessionToken
+    };
+
+    let event = new this._window.CustomEvent(peerEvent,
+      ObjectWrapper.wrap(detail, this._window));
+    this.__DOM_IMPL__.dispatchEvent(event);
+  },
 
   classID: Components.ID("{6ff2b290-2573-11e3-8224-0800200c9a66}"),
   contractID: "@mozilla.org/navigatorNfc;1",
