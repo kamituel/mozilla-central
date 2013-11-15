@@ -124,6 +124,11 @@ MozNFCPeer.prototype = {
     return this._nfcContentHelper.writeNDEF(this._window, records, this.session);
   },
 
+  sendFile: function sendFile(blob) {
+    debug("sendFile is not currently implemented.");
+    return null;
+  },
+
   classID: Components.ID("{c1b2bcf0-35eb-11e3-aa6e-0800200c9a66}"),
   contractID: "@mozilla.org/nfc/NFCPeer;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
