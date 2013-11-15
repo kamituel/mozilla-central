@@ -148,13 +148,11 @@ NfcContentHelper.prototype = {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
-
     let request = Services.DOMRequest.createRequest(window);
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = window;
 
     let encodedRecords = this.encodeNdefRecords(records);
-
     cpmm.sendAsyncMessage("NFC:WriteNDEF", {
       requestId: requestId,
       sessionToken: sessionToken,
@@ -244,12 +242,11 @@ NfcContentHelper.prototype = {
     return;
   },
 
-  setPeerWindow: function setPeerWindow(window) {
+  setPeerWindow: function setPeerWindow(window, origin) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
-
     cpmm.sendAsyncMessage("NFC:PeerWindow", {});
     return;
   },

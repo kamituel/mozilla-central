@@ -46,5 +46,5 @@ interface nsINfcContentHelper : nsISupports
   void unRegisterTargetForPeerEvent(in nsIDOMWindow window,
                                     in unsigned long event);
 
-  void setPeerWindow(in nsIDOMWindow window);
+  void setPeerWindow(in nsIDOMWindow window, in DOMString origin);
 };

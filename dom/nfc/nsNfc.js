@@ -107,7 +107,7 @@ MozNFCPeer.prototype = {
 
   initialize: function(aWindow, aSessionToken) {
     this._window = aWindow;
-    this.setSessionToken(aSessionToken);
+    this.session = aSessionToken;
   },
 
   // ChromeOnly interface
@@ -121,7 +121,7 @@ MozNFCPeer.prototype = {
   // NFCPeer interface:
   sendNDEF: function sendNDEF(records) {
     // Just forward sendNDEF to writeNDEF
-    return this._nfcContentHelper.writeNDEF(this._window, records);
+    return this._nfcContentHelper.writeNDEF(this._window, records, this.session);
   },
 
   classID: Components.ID("{c1b2bcf0-35eb-11e3-aa6e-0800200c9a66}"),
@@ -151,10 +151,8 @@ mozNfc.prototype = {
     this._window = aWindow;
   },
 
-  setPeerWindow: function setPeerWindow(window) {
-    // TODO: How to pass the current window information to ContentHelper
-    //       which in turn forwards it to Chrome process?
-    this._nfcContentHelper.setPeerWindow(this._window);
+  setPeerWindow: function setPeerWindow(origin) {
+    this._nfcContentHelper.setPeerWindow(this._window, origin);
     return;
   },
 
@@ -189,13 +187,17 @@ mozNfc.prototype = {
 
   set onpeerfound(handler) {
     this.__DOM_IMPL__.setEventHandler("onpeerfound", handler);
+    let appId = this._window.document.nodePrincipal.appId;
+    let appOrigin = this._window.document.nodePrincipal.origin;
+    debug("appOrigin : " + appOrigin + "  appId : " +  appId);
     if (handler === null) {
       this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window,
                                                   NFC_PEER_EVENT_FOUND);
     } else {
       this._nfcContentHelper.registerTargetForPeerEvent(this._window,
         NFC_PEER_EVENT_FOUND, function(evt, sessionToken) {
-        gMozNfc.firePeerEvent(evt, sessionToken);
+        this.session = sessionToken;
+        gMozNfc.firePeerEvent(evt, sessionToken, handler);
       });
     }
   },
@@ -212,17 +214,17 @@ mozNfc.prototype = {
     } else {
       this._nfcContentHelper.registerTargetForPeerEvent(this._window,
         NFC_PEER_EVENT_LOST, function(evt, sessionToken) {
-        gMozNfc.firePeerEvent(evt);
+        this.session = sessionToken;
+        gMozNfc.firePeerEvent(evt, sessionToken, handler);
       });
     }
   },
 
-  firePeerEvent: function firePeerEvent(evt, sessionToken) {
+  firePeerEvent: function firePeerEvent(evt, sessionToken, handler) {
     let peerEvent = (NFC_PEER_EVENT_FOUND === evt) ? "peerfound" : "peerlost";
     let detail = {
       "detail":sessionToken
     };
-
     let event = new this._window.CustomEvent(peerEvent,
       ObjectWrapper.wrap(detail, this._window));
     this.__DOM_IMPL__.dispatchEvent(event);
