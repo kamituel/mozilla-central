@@ -212,7 +212,7 @@ NfcContentHelper.prototype = {
   },
 
   registerTargetForPeerEvent: function registerTargetForPeerEvent(window,
-                                                       event, callback) {
+                                                  appId, event, callback) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
@@ -220,13 +220,14 @@ NfcContentHelper.prototype = {
 
     this.peerEventsCallbackMap[event] = callback;
     cpmm.sendAsyncMessage("NFC:RegisterPeerEvent", {
+      appId: appId,
       event: event
     });
     return;
   },
 
   unRegisterTargetForPeerEvent: function unRegisterTargetForPeerEvent(window,
-                                                                     event) {
+                                                                appId, event) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
@@ -237,17 +238,18 @@ NfcContentHelper.prototype = {
     }
 
     cpmm.sendAsyncMessage("NFC:UnRegisterPeerEvent", {
+      appId: appId,
       event: event
     });
     return;
   },
 
-  setPeerWindow: function setPeerWindow(window, origin) {
+  setPeerWindow: function setPeerWindow(window, appId) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
-    cpmm.sendAsyncMessage("NFC:PeerWindow", {});
+    cpmm.sendAsyncMessage("NFC:PeerWindow", {appId: appId});
     return;
   },
 

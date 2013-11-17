@@ -19,6 +19,11 @@ Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/ObjectWrapper.jsm");
 
+XPCOMUtils.defineLazyServiceGetter(this,
+                                   "appsService",
+                                   "@mozilla.org/AppsService;1",
+                                   "nsIAppsService");
+
 let gMozNfc = null;
 
 const NFC_PEER_EVENT_FOUND = 1;
@@ -156,8 +161,10 @@ mozNfc.prototype = {
     this._window = aWindow;
   },
 
-  setPeerWindow: function setPeerWindow(origin) {
-    this._nfcContentHelper.setPeerWindow(this._window, origin);
+  setPeerWindow: function setPeerWindow(manifestUrl) {
+    // Get the AppID and pass it to ContentHelper
+    let appID = appsService.getAppLocalIdByManifestURL(manifestUrl);
+    this._nfcContentHelper.setPeerWindow(this._window, appID);
     return;
   },
 
@@ -193,16 +200,15 @@ mozNfc.prototype = {
   set onpeerfound(handler) {
     this.__DOM_IMPL__.setEventHandler("onpeerfound", handler);
     let appId = this._window.document.nodePrincipal.appId;
-    let appOrigin = this._window.document.nodePrincipal.origin;
-    debug("appOrigin : " + appOrigin + "  appId : " +  appId);
+
     if (handler === null) {
-      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window,
+      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window, appId,
                                                   NFC_PEER_EVENT_FOUND);
     } else {
-      this._nfcContentHelper.registerTargetForPeerEvent(this._window,
+      this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
         NFC_PEER_EVENT_FOUND, function(evt, sessionToken) {
-        this.session = sessionToken;
-        gMozNfc.firePeerEvent(evt, sessionToken, handler);
+          this.session = sessionToken;
+          gMozNfc.firePeerEvent(evt, sessionToken, handler);
       });
     }
   },
@@ -213,14 +219,16 @@ mozNfc.prototype = {
 
   set onpeerlost(handler) {
     this.__DOM_IMPL__.setEventHandler("onpeerlost", handler);
+    let appId = this._window.document.nodePrincipal.appId;
+
     if (handler === null) {
-      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window,
+      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window, appId,
                                                   NFC_PEER_EVENT_LOST);
     } else {
-      this._nfcContentHelper.registerTargetForPeerEvent(this._window,
+      this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
         NFC_PEER_EVENT_LOST, function(evt, sessionToken) {
-        this.session = sessionToken;
-        gMozNfc.firePeerEvent(evt, sessionToken, handler);
+          this.session = sessionToken;
+          gMozNfc.firePeerEvent(evt, sessionToken, handler);
       });
     }
   },

@@ -41,10 +41,12 @@ interface nsINfcContentHelper : nsISupports
   nsIDOMDOMRequest close(in nsIDOMWindow window, in DOMString sessionToken);
 
   void registerTargetForPeerEvent(in nsIDOMWindow window,
+                                  in unsigned long appId,
                                   in unsigned long event,
                                   in nsINfcPeerCallback callback);
   void unRegisterTargetForPeerEvent(in nsIDOMWindow window,
+                                    in unsigned long appId,
                                     in unsigned long event);
 
-  void setPeerWindow(in nsIDOMWindow window, in DOMString origin);
+  void setPeerWindow(in nsIDOMWindow window, in unsigned long appId);
 };
