@@ -203,7 +203,7 @@ mozNfc.prototype = {
 
     if (handler === null) {
       this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window, appId,
-                                                  NFC_PEER_EVENT_FOUND);
+                                                        NFC_PEER_EVENT_FOUND);
     } else {
       this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
         NFC_PEER_EVENT_FOUND, function(evt, sessionToken) {
@@ -223,7 +223,7 @@ mozNfc.prototype = {
 
     if (handler === null) {
       this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window, appId,
-                                                  NFC_PEER_EVENT_LOST);
+                                                         NFC_PEER_EVENT_LOST);
     } else {
       this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
         NFC_PEER_EVENT_LOST, function(evt, sessionToken) {
