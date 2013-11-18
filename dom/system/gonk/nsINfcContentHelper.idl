@@ -39,14 +39,48 @@ interface nsINfcContentHelper : nsISupports
 
   nsIDOMDOMRequest connect(in nsIDOMWindow window, in unsigned long techType, in DOMString sessionToken);
   nsIDOMDOMRequest close(in nsIDOMWindow window, in DOMString sessionToken);
-
+ /**
+  * Register the given application id with Chrome
+  *
+  * @param window
+  *        Current window
+  *
+  * @param appId
+  *        Application ID to be registered
+  *
+  * @param event
+  *       Event to be registered. Either NFC_EVENT_PEER_FOUND or NFC_EVENT_PEER_LOST
+  *
+  * @param callback
+  *       Callback that is used to notify upper layers whenever PeerEvents happen.
+  */
   void registerTargetForPeerEvent(in nsIDOMWindow window,
                                   in unsigned long appId,
                                   in unsigned long event,
                                   in nsINfcPeerCallback callback);
+ /**
+  * Unregister the given application id with Chrome
+  *
+  * @param window
+  *        Current window
+  *
+  * @param appId
+  *        Application ID to be registered
+  *
+  * @param event
+  *       Event to be unregistered. Either NFC_EVENT_PEER_FOUND or NFC_EVENT_PEER_LOST
+  */
   void unRegisterTargetForPeerEvent(in nsIDOMWindow window,
                                     in unsigned long appId,
                                     in unsigned long event);
-
+ /**
+  * Updates the top most window's application id with the Chrome
+  *
+  * @param window
+  *        Current window
+  *
+  * @param appId
+  *        Application ID to be updated with chrome
+  */
   void setPeerWindow(in nsIDOMWindow window, in unsigned long appId);
 };

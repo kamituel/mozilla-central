@@ -60,6 +60,10 @@ function NfcContentHelper() {
   Services.obs.addObserver(this, "xpcom-shutdown", false);
 
   this._requestMap = [];
+  /**
+   * Maintains an array of PeerEvent related callbacks, mainly
+   * one for 'peerFound' and another for 'peerLost'.
+   */
   this.peerEventsCallbackMap = [];
 }
 
@@ -233,7 +237,7 @@ NfcContentHelper.prototype = {
                                   Cr.NS_ERROR_UNEXPECTED);
     }
     let index = this.peerEventsCallbackMap.indexOf(event);
-    if (index > -1) {
+    if (index != -1) {
       this.peerEventsCallbackMap.splice(index, 1);
     }
 
@@ -312,7 +316,8 @@ NfcContentHelper.prototype = {
            callback.peerNotification(message.json.event,
                              message.json.sessionToken);
         } else {
-          debug("No Peer valid callback registered");
+          debug("PeerEvent: No valid callback registered for the event " +
+            message.json.event);
         }
         break;
     }
