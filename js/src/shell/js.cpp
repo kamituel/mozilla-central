@@ -207,43 +207,6 @@ extern JS_EXPORT_API(void)   add_history(char *line);
 } // extern "C"
 #endif
 
-static void
-ReportException(JSContext *cx)
-{
-    if (JS_IsExceptionPending(cx)) {
-        if (!JS_ReportPendingException(cx))
-            JS_ClearPendingException(cx);
-    }
-}
-
-class ToStringHelper
-{
-  public:
-    ToStringHelper(JSContext *aCx, HandleValue v, bool aThrow = false)
-      : cx(aCx), mStr(cx, JS_ValueToString(cx, v))
-    {
-        if (!aThrow && !mStr)
-            ReportException(cx);
-    }
-    ToStringHelper(JSContext *aCx, HandleId id, bool aThrow = false)
-      : cx(aCx), mStr(cx, JS_ValueToString(cx, IdToValue(id)))
-    {
-        if (!aThrow && !mStr)
-            ReportException(cx);
-    }
-    bool threw() { return !mStr; }
-    jsval getJSVal() { return STRING_TO_JSVAL(mStr); }
-    const char *getBytes() {
-        if (mStr && (mBytes.ptr() || mBytes.encodeLatin1(cx, mStr)))
-            return mBytes.ptr();
-        return "(error converting value)";
-    }
-  private:
-    JSContext *cx;
-    RootedString mStr;  // Objects of this class are always stack-allocated.
-    JSAutoByteString mBytes;
-};
-
 static char *
 GetLine(FILE *file, const char * prompt)
 {
@@ -693,7 +656,7 @@ Options(JSContext *cx, unsigned argc, jsval *vp)
 
     JS::ContextOptions oldOptions = JS::ContextOptionsRef(cx);
     for (unsigned i = 0; i < args.length(); i++) {
-        JSString *str = JS_ValueToString(cx, args[i]);
+        JSString *str = JS::ToString(cx, args[i]);
         if (!str)
             return false;
         args[i].setString(str);
@@ -768,7 +731,7 @@ LoadScript(JSContext *cx, unsigned argc, jsval *vp, bool scriptRelative)
 
     RootedString str(cx);
     for (unsigned i = 0; i < args.length(); i++) {
-        str = JS_ValueToString(cx, args[i]);
+        str = JS::ToString(cx, args[i]);
         if (!str) {
             JS_ReportErrorNumber(cx, my_GetErrorMessage, nullptr, JSSMSG_INVALID_ARGS, "load");
             return false;
@@ -934,7 +897,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         if (v.isNull()) {
             fileName = nullptr;
         } else if (!v.isUndefined()) {
-            JSString *s = JS_ValueToString(cx, v);
+            JSString *s = ToString(cx, v);
             if (!s)
                 return false;
             fileName = fileNameBytes.encodeLatin1(cx, s);
@@ -950,7 +913,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         if (!JS_GetProperty(cx, opts, "sourceURL", &v))
             return false;
         if (!v.isUndefined()) {
-            sourceURL = JS_ValueToString(cx, v);
+            sourceURL = ToString(cx, v);
             if (!sourceURL)
                 return false;
         }
@@ -958,7 +921,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         if (!JS_GetProperty(cx, opts, "sourceMapURL", &v))
             return false;
         if (!v.isUndefined()) {
-            sourceMapURL = JS_ValueToString(cx, v);
+            sourceMapURL = ToString(cx, v);
             if (!sourceMapURL)
                 return false;
         }
@@ -1000,7 +963,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         if (!JS_GetProperty(cx, opts, "sourcePolicy", &v))
             return false;
         if (!v.isUndefined()) {
-            JSString *s = JS_ValueToString(cx, v);
+            JSString *s = ToString(cx, v);
             if (!s)
                 return false;
             char *policy = JS_EncodeStringToUTF8(cx, s);
@@ -1185,7 +1148,7 @@ Run(JSContext *cx, unsigned argc, jsval *vp)
     if (!thisobj)
         return false;
 
-    JSString *str = JS_ValueToString(cx, args[0]);
+    JSString *str = JS::ToString(cx, args[0]);
     if (!str)
         return false;
     args[0].setString(str);
@@ -1308,7 +1271,7 @@ PutStr(JSContext *cx, unsigned argc, jsval *vp)
     CallArgs args = CallArgsFromVp(argc, vp);
 
     if (args.length() != 0) {
-        JSString *str = JS_ValueToString(cx, args[0]);
+        JSString *str = JS::ToString(cx, args[0]);
         if (!str)
             return false;
         char *bytes = JSStringToUTF8(cx, str);
@@ -1336,7 +1299,7 @@ static bool
 PrintInternal(JSContext *cx, const CallArgs &args, FILE *file)
 {
     for (unsigned i = 0; i < args.length(); i++) {
-        JSString *str = JS_ValueToString(cx, args[i]);
+        JSString *str = JS::ToString(cx, args[i]);
         if (!str)
             return false;
         char *bytes = JSStringToUTF8(cx, str);
@@ -1565,7 +1528,7 @@ Trap(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
     argc = args.length() - 1;
-    RootedString str(cx, JS_ValueToString(cx, args[argc]));
+    RootedString str(cx, JS::ToString(cx, args[argc]));
     if (!str)
         return false;
     args[argc].setString(str);
@@ -1610,7 +1573,7 @@ SetDebuggerHandler(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    JSString *str = JS_ValueToString(cx, args[0]);
+    JSString *str = JS::ToString(cx, args[0]);
     if (!str)
         return false;
 
@@ -1630,7 +1593,7 @@ SetThrowHook(JSContext *cx, unsigned argc, jsval *vp)
         return false;
     }
 
-    str = JS_ValueToString(cx, args[0]);
+    str = JS::ToString(cx, args[0]);
     if (!str)
         return false;
 
@@ -1746,8 +1709,6 @@ SrcNotes(JSContext *cx, HandleScript script, Sprinter *sp)
           case SRC_BREAK2LABEL:
           case SRC_SWITCHBREAK:
           case SRC_ASSIGNOP:
-          case SRC_HIDDEN:
-          case SRC_CATCH:
           case SRC_XDELTA:
             break;
 
@@ -2033,7 +1994,8 @@ DisassFile(JSContext *cx, unsigned argc, jsval *vp)
     if (!thisobj)
         return false;
 
-    JSString *str = JS_ValueToString(cx, p.argv[0]);
+    // We should change DisassembleOptionParser to store CallArgs.
+    JSString *str = JS::ToString(cx, HandleValue::fromMarkedLocation(&p.argv[0]));
     if (!str)
         return false;
     JSAutoByteString filename(cx, str);
@@ -2170,7 +2132,7 @@ DumpHeap(JSContext *cx, unsigned argc, jsval *vp)
 
     JSAutoByteString fileName;
     if (args.hasDefined(0)) {
-        RootedString str(cx, JS_ValueToString(cx, args[0]));
+        RootedString str(cx, JS::ToString(cx, args[0]));
         if (!str)
             return false;
 
@@ -2269,7 +2231,7 @@ static bool
 Intern(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    JSString *str = JS_ValueToString(cx, args.length() == 0 ? UndefinedValue() : args[0]);
+    JSString *str = JS::ToString(cx, args.get(0));
     if (!str)
         return false;
 
@@ -3413,7 +3375,7 @@ ReadFile(JSContext *cx, unsigned argc, jsval *vp, bool scriptRelative)
         return false;
 
     if (args.length() > 1) {
-        JSString *opt = JS_ValueToString(cx, args[1]);
+        JSString *opt = JS::ToString(cx, args[1]);
         if (!opt)
             return false;
         bool match;
@@ -3495,24 +3457,24 @@ RedirectOutput(JSContext *cx, unsigned argc, jsval *vp)
 static bool
 System(JSContext *cx, unsigned argc, jsval *vp)
 {
-    JSString *str;
+    CallArgs args = CallArgsFromVp(argc, vp);
 
-    if (argc != 1) {
+    if (args.length() == 0) {
         JS_ReportErrorNumber(cx, my_GetErrorMessage, nullptr, JSSMSG_INVALID_ARGS,
                              "system");
         return false;
     }
 
-    str = JS_ValueToString(cx, JS_ARGV(cx, vp)[0]);
+    JSString *str = JS::ToString(cx, args[0]);
     if (!str)
         return false;
+
     JSAutoByteString command(cx, str);
     if (!command)
         return false;
 
     int result = system(command.ptr());
-
-    JS_SET_RVAL(cx, vp, Int32Value(result));
+    args.rval().setInt32(result);
     return true;
 }
 
@@ -3598,6 +3560,14 @@ EscapeForShell(AutoCStringVector &argv)
 }
 #endif
 
+Vector<const char*, 4, js::SystemAllocPolicy> sPropagatedFlags;
+
+static bool
+PropagateFlagToNestedShells(const char *flag)
+{
+    return sPropagatedFlags.append(flag);
+}
+
 static bool
 NestedShell(JSContext *cx, unsigned argc, jsval *vp)
 {
@@ -3614,10 +3584,17 @@ NestedShell(JSContext *cx, unsigned argc, jsval *vp)
     if (!argv.append(strdup(sArgv[0])))
         return false;
 
+    // Propagate selected flags from the current shell
+    for (unsigned i = 0; i < sPropagatedFlags.length(); i++) {
+        char *cstr = strdup(sPropagatedFlags[i]);
+        if (!cstr || !argv.append(cstr))
+            return false;
+    }
+
     // The arguments to nestedShell are stringified and append to argv.
     RootedString str(cx);
     for (unsigned i = 0; i < args.length(); i++) {
-        str = JS_ValueToString(cx, args[i]);
+        str = ToString(cx, args[i]);
         if (!str || !argv.append(JS_EncodeString(cx, str)))
             return false;
 
@@ -3914,7 +3891,7 @@ class ShellSourceHook: public SourceHook {
                   1, filenameValue.address(), &result))
             return false;
 
-        str = JS_ValueToString(cx, result);
+        str = JS::ToString(cx, result);
         if (!str)
             return false;
 
@@ -4485,6 +4462,8 @@ my_ErrorReporter(JSContext *cx, const char *message, JSErrorReport *report)
 static bool
 Exec(JSContext *cx, unsigned argc, jsval *vp)
 {
+    CallArgs args = CallArgsFromVp(argc, vp);
+
     JSFunction *fun;
     const char *name, **nargv;
     unsigned i, nargc;
@@ -4512,7 +4491,7 @@ Exec(JSContext *cx, unsigned argc, jsval *vp)
     nargv[0] = name;
     jsval *argv = JS_ARGV(cx, vp);
     for (i = 0; i < nargc; i++) {
-        str = (i == 0) ? fun->atom : JS_ValueToString(cx, argv[i-1]);
+        str = (i == 0) ? fun->atom : JS::ToString(cx, args[i-1]);
         if (!str) {
             ok = false;
             goto done;
@@ -4639,15 +4618,21 @@ env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
 #if !defined XP_OS2 && !defined SOLARIS
     int rv;
 
-    ToStringHelper idstr(cx, id, true);
-    if (idstr.threw())
+    RootedValue idvalue(cx, IdToValue(id));
+    JSAutoByteString idstr;
+    if (!idstr.encodeLatin1(cx, idvalue.toString()))
         return false;
-    ToStringHelper valstr(cx, vp, true);
-    if (valstr.threw())
+
+    RootedString value(cx, ToString(cx, vp));
+    if (!value)
         return false;
+    JSAutoByteString valstr;
+    if (!valstr.encodeLatin1(cx, value))
+        return false;
+
 #if defined XP_WIN || defined HPUX || defined OSF1
     {
-        char *waste = JS_smprintf("%s=%s", idstr.getBytes(), valstr.getBytes());
+        char *waste = JS_smprintf("%s=%s", idstr.ptr(), valstr.ptr());
         if (!waste) {
             JS_ReportOutOfMemory(cx);
             return false;
@@ -4665,13 +4650,13 @@ env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
 #endif
     }
 #else
-    rv = setenv(idstr.getBytes(), valstr.getBytes(), 1);
+    rv = setenv(idstr.ptr(), valstr.ptr(), 1);
 #endif
     if (rv < 0) {
-        JS_ReportError(cx, "can't set env variable %s to %s", idstr.getBytes(), valstr.getBytes());
+        JS_ReportError(cx, "can't set env variable %s to %s", idstr.ptr(), valstr.ptr());
         return false;
     }
-    vp.set(valstr.getJSVal());
+    vp.set(StringValue(value));
 #endif /* !defined XP_OS2 && !defined SOLARIS */
     return true;
 }
@@ -4708,17 +4693,15 @@ static bool
 env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
             MutableHandleObject objp)
 {
-    JSString *valstr;
-    const char *name, *value;
-
-    ToStringHelper idstr(cx, id, true);
-    if (idstr.threw())
+    RootedValue idvalue(cx, IdToValue(id));
+    JSAutoByteString idstr;
+    if (!idstr.encodeLatin1(cx, idvalue.toString()))
         return false;
 
-    name = idstr.getBytes();
-    value = getenv(name);
+    const char *name = idstr.ptr();
+    const char *value = getenv(name);
     if (value) {
-        valstr = JS_NewStringCopyZ(cx, value);
+        RootedString valstr(cx, JS_NewStringCopyZ(cx, value));
         if (!valstr)
             return false;
         if (!JS_DefineProperty(cx, obj, name, STRING_TO_JSVAL(valstr),
@@ -5781,6 +5764,10 @@ main(int argc, char **argv, char **envp)
                             "(default: 10)", -1)
         || !op.addBoolOption('\0', "no-fpu", "Pretend CPU does not support floating-point operations "
                              "to test JIT codegen (no-op on platforms other than x86).")
+        || !op.addBoolOption('\0', "no-sse3", "Pretend CPU does not support SSE3 instructions and above "
+                             "to test JIT codegen (no-op on platforms other than x86 and x64).")
+        || !op.addBoolOption('\0', "no-sse4", "Pretend CPU does not support SSE4 instructions"
+                             "to test JIT codegen (no-op on platforms other than x86 and x64).")
         || !op.addBoolOption('\0', "fuzzing-safe", "Don't expose functions that aren't safe for "
                              "fuzzers to call")
 #ifdef DEBUG
@@ -5824,6 +5811,17 @@ main(int argc, char **argv, char **envp)
 #if defined(JS_CPU_X86) && defined(JS_ION)
     if (op.getBoolOption("no-fpu"))
         JSC::MacroAssembler::SetFloatingPointDisabled();
+#endif
+
+#if (defined(JS_CPU_X86) || defined(JS_CPU_X64)) && defined(JS_ION)
+    if (op.getBoolOption("no-sse3")) {
+        JSC::MacroAssembler::SetSSE3Disabled();
+        PropagateFlagToNestedShells("--no-sse3");
+    }
+    if (op.getBoolOption("no-sse4")) {
+        JSC::MacroAssembler::SetSSE4Disabled();
+        PropagateFlagToNestedShells("--no-sse4");
+    }
 #endif
 #endif
 

@@ -105,6 +105,10 @@ class LMoveGroup : public LInstructionHelper<0, 0, 0>
   public:
     LIR_HEADER(MoveGroup)
 
+    LMoveGroup(TempAllocator &alloc)
+      : moves_(alloc)
+    { }
+
     void printOperands(FILE *fp);
 
     // Add a move which takes place simultaneously with all others in the group.
@@ -5106,6 +5110,20 @@ class LPostWriteBarrierAllSlots : public LInstructionHelper<0, 1, 0>
     }
     const LAllocation *object() {
         return getOperand(0);
+    }
+};
+
+// Guard against an object's identity.
+class LGuardObjectIdentity : public LInstructionHelper<0, 1, 0>
+{
+  public:
+    LIR_HEADER(GuardObjectIdentity)
+
+    LGuardObjectIdentity(const LAllocation &in) {
+        setOperand(0, in);
+    }
+    const MGuardObjectIdentity *mir() const {
+        return mir_->toGuardObjectIdentity();
     }
 };
 

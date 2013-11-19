@@ -51,7 +51,9 @@ class Requirement
     Requirement(LAllocation fixed)
       : kind_(FIXED),
         allocation_(fixed)
-    { }
+    {
+        JS_ASSERT(fixed == LAllocation() || !fixed.isUse());
+    }
 
     // Only useful as a hint, encodes where the fixed requirement is used to
     // avoid allocating a fixed register too early.
@@ -59,7 +61,9 @@ class Requirement
       : kind_(FIXED),
         allocation_(fixed),
         position_(at)
-    { }
+    {
+        JS_ASSERT(fixed == LAllocation() || !fixed.isUse());
+    }
 
     Requirement(uint32_t vreg, CodePosition at)
       : kind_(SAME_AS_OTHER),
@@ -78,6 +82,7 @@ class Requirement
 
     uint32_t virtualRegister() const {
         JS_ASSERT(allocation_.isUse());
+        JS_ASSERT(kind() == SAME_AS_OTHER);
         return allocation_.toUse()->virtualRegister();
     }
 
@@ -227,21 +232,29 @@ class LiveInterval
     InlineForwardList<UsePosition> uses_;
     size_t lastProcessedRange_;
 
-  public:
-
-    LiveInterval(uint32_t vreg, uint32_t index)
-      : spillInterval_(nullptr),
+    LiveInterval(TempAllocator &alloc, uint32_t vreg, uint32_t index)
+      : ranges_(alloc),
+        spillInterval_(nullptr),
         vreg_(vreg),
         index_(index),
         lastProcessedRange_(size_t(-1))
     { }
 
-    LiveInterval(uint32_t index)
-      : spillInterval_(nullptr),
+    LiveInterval(TempAllocator &alloc, uint32_t index)
+      : ranges_(alloc),
+        spillInterval_(nullptr),
         vreg_(UINT32_MAX),
         index_(index),
         lastProcessedRange_(size_t(-1))
     { }
+
+  public:
+    static LiveInterval *New(TempAllocator &alloc, uint32_t vreg, uint32_t index) {
+        return new(alloc) LiveInterval(alloc, vreg, index);
+    }
+    static LiveInterval *New(TempAllocator &alloc, uint32_t index) {
+        return new(alloc) LiveInterval(alloc, index);
+    }
 
     bool addRange(CodePosition from, CodePosition to);
     bool addRangeAtHead(CodePosition from, CodePosition to);
@@ -382,14 +395,21 @@ class VirtualRegister
     void operator=(const VirtualRegister &) MOZ_DELETE;
     VirtualRegister(const VirtualRegister &) MOZ_DELETE;
 
+  protected:
+    VirtualRegister(TempAllocator &alloc)
+      : intervals_(alloc)
+    {}
+
   public:
-    bool init(LBlock *block, LInstruction *ins, LDefinition *def, bool isTemp) {
+    bool init(TempAllocator &alloc, LBlock *block, LInstruction *ins, LDefinition *def,
+              bool isTemp)
+    {
         JS_ASSERT(block && !block_);
         block_ = block;
         ins_ = ins;
         def_ = def;
         isTemp_ = isTemp;
-        LiveInterval *initial = new LiveInterval(def->virtualRegister(), 0);
+        LiveInterval *initial = LiveInterval::New(alloc, def->virtualRegister(), 0);
         if (!initial)
             return false;
         return intervals_.append(initial);
@@ -473,6 +493,9 @@ class VirtualRegisterMap
         if (!vregs_)
             return false;
         memset(vregs_, 0, sizeof(VREG) * numVregs);
+        TempAllocator &alloc = gen->alloc();
+        for (uint32_t i = 0; i < numVregs; i++)
+            new(&vregs_[i]) VREG(alloc);
         return true;
     }
     VREG &operator[](unsigned int index) {
@@ -618,6 +641,17 @@ class LiveRangeAllocator : public RegisterAllocator
         return addMove(moves, from, to);
     }
 
+    size_t findFirstNonCallSafepoint(CodePosition from) const
+    {
+        size_t i = 0;
+        for (; i < graph.numNonCallSafepoints(); i++) {
+            const LInstruction *ins = graph.getNonCallSafepoint(i);
+            if (from <= (forLSRA ? inputOf(ins) : outputOf(ins)))
+                break;
+        }
+        return i;
+    }
+
     void addLiveRegistersForInterval(VirtualRegister *reg, LiveInterval *interval)
     {
         // Fill in the live register sets for all non-call safepoints.
@@ -633,7 +667,7 @@ class LiveRangeAllocator : public RegisterAllocator
         size_t i = findFirstNonCallSafepoint(start);
         for (; i < graph.numNonCallSafepoints(); i++) {
             LInstruction *ins = graph.getNonCallSafepoint(i);
-            CodePosition pos = inputOf(ins);
+            CodePosition pos = forLSRA ? inputOf(ins) : outputOf(ins);
 
             // Safepoints are sorted, so we can shortcut out of this loop
             // if we go out of range.
