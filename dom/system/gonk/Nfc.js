@@ -353,7 +353,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
     notifyPeerLost: function notifyPeerLost() {
       let targets = this.peerTargetsQueue;
-      for(let index = 0; i < targets.length; index++) {
+      for(let index = 0; index < targets.length; index++) {
         // Check for 'active' target that was notified of 'peerFound' event
         if (targets[index].active === true) {
           // If YES, update the 'active' flag and notify the
@@ -364,7 +364,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           return;
         }
       }
-      debug("Application ID : " + appId + " is not a registered target for PeerLost notification");
+      debug("No active registered target for PeerLost notification");
     },
   };
 });
