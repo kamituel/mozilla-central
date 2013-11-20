@@ -18,7 +18,11 @@ using namespace js;
 using namespace js::jit;
 
 LIRGraph::LIRGraph(MIRGraph *mir)
-  : numVirtualRegisters_(0),
+  : blocks_(mir->alloc()),
+    constantPool_(mir->alloc()),
+    safepoints_(mir->alloc()),
+    nonCallSafepoints_(mir->alloc()),
+    numVirtualRegisters_(0),
     numInstructions_(1), // First id is 1.
     localSlotCount_(0),
     argumentSlotCount_(0),
@@ -81,22 +85,22 @@ LBlock::lastId()
 }
 
 LMoveGroup *
-LBlock::getEntryMoveGroup()
+LBlock::getEntryMoveGroup(TempAllocator &alloc)
 {
     if (entryMoveGroup_)
         return entryMoveGroup_;
-    entryMoveGroup_ = new LMoveGroup;
+    entryMoveGroup_ = new LMoveGroup(alloc);
     JS_ASSERT(begin()->isLabel());
     insertAfter(*begin(), entryMoveGroup_);
     return entryMoveGroup_;
 }
 
 LMoveGroup *
-LBlock::getExitMoveGroup()
+LBlock::getExitMoveGroup(TempAllocator &alloc)
 {
     if (exitMoveGroup_)
         return exitMoveGroup_;
-    exitMoveGroup_ = new LMoveGroup;
+    exitMoveGroup_ = new LMoveGroup(alloc);
     insertBefore(*rbegin(), exitMoveGroup_);
     return exitMoveGroup_;
 }
@@ -236,8 +240,17 @@ PrintUse(char *buf, size_t size, const LUse *use)
         JS_snprintf(buf, size, "v%d:%s", use->virtualRegister(),
                     Registers::GetName(Registers::Code(use->registerCode())));
         break;
-      default:
+      case LUse::ANY:
+        JS_snprintf(buf, size, "v%d:r?", use->virtualRegister());
+        break;
+      case LUse::KEEPALIVE:
         JS_snprintf(buf, size, "v%d:*", use->virtualRegister());
+        break;
+      case LUse::RECOVERED_INPUT:
+        JS_snprintf(buf, size, "v%d:**", use->virtualRegister());
+        break;
+      default:
+        MOZ_ASSUME_UNREACHABLE("invalid use policy");
     }
 }
 
@@ -333,10 +346,10 @@ LInstruction::print(FILE *fp)
 }
 
 void
-LInstruction::initSafepoint()
+LInstruction::initSafepoint(TempAllocator &alloc)
 {
     JS_ASSERT(!safepoint_);
-    safepoint_ = new LSafepoint();
+    safepoint_ = new LSafepoint(alloc);
     JS_ASSERT(safepoint_);
 }
 

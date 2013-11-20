@@ -212,7 +212,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
 
       // Target not found! Add to the target queue
 
-      /*
+      /**
        * Registered PeerInfo target consists of 4 fields
        * target : Target to notify the right content for peer notifications
        * appId  : The Application that registered for the peerfound / peerlost events
@@ -238,7 +238,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
       for(; index < targets.length; index++) {
         if (targets[index].appId === appInfo.appId) {
           if (targets[index].event === appInfo.event) {
-             // Both the application Id and the event exactly macthes.
+             // Both the application Id and the event exactly match.
              // Mark this 'index' and remove it from the list of registered targets
              matchFound = true;
              break
@@ -307,7 +307,11 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
                   " from a content process with no 'nfc-manager' privileges.");
             return null;
           }
-          // Pass the foreground App Id
+          /**
+           * Pass the foreground App Id as received from the content process so
+           * that right target associated with this application id can be
+           * notified of 'PeerFound'.
+           */
           this.notifyPeerFound(msg.json.appId);
         break;
       }
@@ -344,12 +348,13 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           return;
         }
       }
+      debug("Application ID : " + appId + " is not a registered target for PeerFound notification");
     },
 
     notifyPeerLost: function notifyPeerLost() {
       let targets = this.peerTargetsQueue;
       for(let index = 0; i < targets.length; index++) {
-        // Check the current 'active' target that was notified of 'peerFound' event
+        // Check for 'active' target that was notified of 'peerFound' event
         if (targets[index].active === true) {
           // If YES, update the 'active' flag and notify the
           // target of 'PEER_LOST' with the current session
@@ -359,6 +364,7 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           return;
         }
       }
+      debug("Application ID : " + appId + " is not a registered target for PeerLost notification");
     },
   };
 });
@@ -469,7 +475,7 @@ Nfc.prototype = {
         delete message.sessionId;
 
         gSystemMessenger.broadcastMessage("nfc-manager-tech-lost", message);
-
+        // Notify 'PeerLost' to appropriate registered target, if any
         gMessageManager.notifyPeerLost();
         delete this.sessionTokenMap[this._currentSessionId];
         this._currentSessionId = null;

@@ -327,9 +327,18 @@ class IonBuilder : public MIRGenerator
     bool initArgumentsObject();
     bool pushConstant(const Value &v);
 
+    MConstant *constant(const Value &v);
+    MConstant *constantInt(int32_t i);
+
     // Add a guard which ensure that the set of type which goes through this
     // generated code correspond to the observed types for the bytecode.
-    bool pushTypeBarrier(MInstruction *ins, types::TemporaryTypeSet *observed, bool needBarrier);
+    bool pushTypeBarrier(MDefinition *def, types::TemporaryTypeSet *observed, bool needBarrier);
+
+    // If definiteType is not known or def already has the right type, just
+    // returns def.  Otherwise, returns an MInstruction that has that definite
+    // type, infallibly unboxing ins as needed.  The new instruction will be
+    // added to |current| in this case.
+    MDefinition *ensureDefiniteType(MDefinition* def, JSValueType definiteType);
 
     JSObject *getSingletonPrototype(JSFunction *target);
 
@@ -400,6 +409,11 @@ class IonBuilder : public MIRGenerator
                                 types::TemporaryTypeSet *objTypes);
     bool setPropTryTypedObject(bool *emitted, MDefinition *obj,
                                PropertyName *name, MDefinition *value);
+    bool setPropTryScalarPropOfTypedObject(bool *emitted,
+                                           MDefinition *obj,
+                                           int32_t fieldOffset,
+                                           MDefinition *value,
+                                           TypeRepresentationSet fieldTypeReprs);
     bool setPropTryCache(bool *emitted, MDefinition *obj,
                          PropertyName *name, MDefinition *value,
                          bool barrier, types::TemporaryTypeSet *objTypes);
@@ -413,12 +427,22 @@ class IonBuilder : public MIRGenerator
                                 TypeRepresentationSet *fieldTypeReprs,
                                 size_t *fieldIndex);
     MDefinition *loadTypedObjectType(MDefinition *value);
-    void loadTypedObjectData(MDefinition *inOwner,
-                             int32_t inOffset,
-                             MDefinition **outOwner,
-                             MDefinition **outOffset);
+    void loadTypedObjectData(MDefinition *typedObj,
+                             MDefinition *offset,
+                             MDefinition **owner,
+                             MDefinition **ownerOffset);
+    void loadTypedObjectElements(MDefinition *typedObj,
+                                 MDefinition *offset,
+                                 int32_t unit,
+                                 MDefinition **ownerElements,
+                                 MDefinition **ownerScaledOffset);
+    MDefinition *typeObjectForElementFromArrayStructType(MDefinition *typedObj);
     MDefinition *typeObjectForFieldFromStructType(MDefinition *type,
                                                   size_t fieldIndex);
+    bool storeScalarTypedObjectValue(MDefinition *typedObj,
+                                     MDefinition *offset,
+                                     ScalarTypeRepresentation *typeRepr,
+                                     MDefinition *value);
 
     // jsop_setelem() helpers.
     bool setElemTryTyped(bool *emitted, MDefinition *object,
@@ -798,9 +822,10 @@ class CallInfo
     bool setter_;
 
   public:
-    CallInfo(bool constructing)
+    CallInfo(TempAllocator &alloc, bool constructing)
       : fun_(nullptr),
         thisArg_(nullptr),
+        args_(alloc),
         constructing_(constructing),
         setter_(false)
     { }
@@ -896,10 +921,10 @@ class CallInfo
         setter_ = true;
     }
 
-    void wrapArgs(MBasicBlock *current) {
-        thisArg_ = wrap(current, thisArg_);
+    void wrapArgs(TempAllocator &alloc, MBasicBlock *current) {
+        thisArg_ = wrap(alloc, current, thisArg_);
         for (uint32_t i = 0; i < argc(); i++)
-            args_[i] = wrap(current, args_[i]);
+            args_[i] = wrap(alloc, current, args_[i]);
     }
 
     void unwrapArgs() {
@@ -940,9 +965,9 @@ class CallInfo
         block->discard(passArg);
         return wrapped;
     }
-    static MDefinition *wrap(MBasicBlock *current, MDefinition *arg) {
+    static MDefinition *wrap(TempAllocator &alloc, MBasicBlock *current, MDefinition *arg) {
         JS_ASSERT(!arg->isPassArg());
-        MPassArg *passArg = MPassArg::New(arg);
+        MPassArg *passArg = MPassArg::New(alloc, arg);
         current->add(passArg);
         return passArg;
     }

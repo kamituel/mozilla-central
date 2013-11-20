@@ -1084,9 +1084,9 @@ CanvasRenderingContext2D::GetInputStream(const char *aMimeType,
                                          const PRUnichar *aEncoderOptions,
                                          nsIInputStream **aStream)
 {
-  uint8_t* imageBuffer = nullptr;
+  nsAutoArrayPtr<uint8_t> imageBuffer;
   int32_t format = 0;
-  GetImageBuffer(&imageBuffer, &format);
+  GetImageBuffer(getter_Transfers(imageBuffer), &format);
   if (!imageBuffer) {
     return NS_ERROR_FAILURE;
   }
@@ -2003,6 +2003,7 @@ CanvasRenderingContext2D::EnsureUserSpacePath(const CanvasWindingRule& winding)
   if (mPath && mPath->GetFillRule() != fillRule) {
     mPathBuilder = mPath->CopyToBuilder(fillRule);
     mPath = mPathBuilder->Finish();
+    mPathBuilder = nullptr;
   }
 
   NS_ASSERTION(mPath, "mPath should exist");
@@ -3105,6 +3106,15 @@ CanvasRenderingContext2D::DrawImage(const HTMLImageOrCanvasOrVideoElement& image
     }
 
     imgSize = res.mSize;
+
+    // Scale sw/sh based on aspect ratio
+    if (image.IsHTMLVideoElement()) {
+      HTMLVideoElement* video = &image.GetAsHTMLVideoElement();
+      int32_t displayWidth = video->VideoWidth();
+      int32_t displayHeight = video->VideoHeight();
+      sw *= (double)imgSize.width / (double)displayWidth;
+      sh *= (double)imgSize.height / (double)displayHeight;
+    }
 
     if (mCanvasElement) {
       CanvasUtils::DoDrawImageSecurityCheck(mCanvasElement,

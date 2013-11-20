@@ -11,10 +11,8 @@
 #include "mozilla/HoldDropJSObjects.h"
 #include "nsContentUtils.h"
 
-
 namespace mozilla {
 namespace dom {
-
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(MozNdefRecord)
 
