@@ -48,7 +48,8 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:GetDetailsNDEF",
   "NFC:MakeReadOnlyNDEF",
   "NFC:Connect",
-  "NFC:Close"
+  "NFC:Close",
+  "NFC:HardwareStateChange"
 ];
 
 const NFC_IPC_PEER_MSG_NAMES = [
@@ -372,12 +373,10 @@ function Nfc() {
     ppmm.addMessageListener(msgname, this);
   }
 
-  Services.obs.addObserver(this, NFC.TOPIC_MOZSETTINGS_CHANGED, false);
   Services.obs.addObserver(this, NFC.TOPIC_XPCOM_SHUTDOWN, false);
 
   gMessageManager.init(this);
   let lock = gSettingsService.createLock();
-  lock.get(NFC.SETTING_NFC_POWER_LEVEL, this);
   lock.get(NFC.SETTING_NFC_ENABLED, this);
   // Maps sessionId (that are generated from nfcd) with a unique guid : 'SessionToken'
   this.sessionTokenMap = {};
@@ -497,7 +496,7 @@ Nfc.prototype = {
   // nsINfcWorker
   worker: null,
 
-  powerLevel: NFC.NFC_POWER_LEVEL_DISABLED,
+  nfcHwState: NFC.NFC_HW_STATE_UNKNOWN,
 
   sessionTokenMap: null,
 
@@ -506,6 +505,29 @@ Nfc.prototype = {
    */
   receiveMessage: function receiveMessage(message) {
     debug("Received '" + JSON.stringify(message) + "' message from content process");
+
+    switch (message.name) {
+      case "NFC:HardwareStateChange":
+        if (!message.target.assertPermission("nfc-manager")) {
+          debug("NFC message " + message.name +
+                " from a content process with no 'nfc-manager' privileges.");
+          return null;
+        }
+        let nfcHwState = message.json.state;
+        if (nfcHwState === NFC.NFC_HW_STATE_ENABLED) {
+          this._enabled = true;
+        } else if (nfcHwState === NFC.NFC_HW_STATE_ENABLED) {
+          this._enabled = false;
+        }
+
+        // Only if the value changes, set the power config and persist
+        if (nfcHwState !== this.nfcHwState && this._enabled) {
+          debug("New NFC Hardware State " + nfcHwState);
+          this.setConfig({nfcHwState: nfcHwState});
+          this.nfcHwState = nfcHwState;
+        }
+        return;
+    }
 
     if (!this._enabled) {
       debug("NFC is not enabled.");
@@ -585,14 +607,14 @@ Nfc.prototype = {
       case NFC.SETTING_NFC_ENABLED:
         debug("'nfc.enabled' is now " + aResult);
         this._enabled = aResult;
-        // General power setting
-        let powerLevel = this._enabled ? NFC.NFC_POWER_LEVEL_ENABLED :
-                                         NFC.NFC_POWER_LEVEL_DISABLED;
-        // Only if the value changes, set the power config and persist
-        if (powerLevel !== this.powerLevel) {
-          debug("New Power Level " + powerLevel);
-          this.setConfig({powerLevel: powerLevel});
-          this.powerLevel = powerLevel;
+        // General h/w setting
+        let nfcHwState = this._enabled ? NFC.NFC_HW_STATE_ENABLED :
+                                         NFC.NFC_HW_STATE_DISABLED;
+        // Only if the value changes, set the new H/W state
+        if (nfcHwState !== this.nfcHwState && this._enabled) {
+          debug("New Hardware state: " + nfcHwState);
+          this.setConfig({nfcHwState: nfcHwState});
+          this.nfcHwState = nfcHwState;
         }
         break;
     }
@@ -610,13 +632,6 @@ Nfc.prototype = {
         }
         ppmm = null;
         Services.obs.removeObserver(this, NFC.TOPIC_XPCOM_SHUTDOWN);
-        break;
-      case NFC.TOPIC_MOZSETTINGS_CHANGED:
-        let setting = JSON.parse(data);
-        if (setting) {
-          let setting = JSON.parse(data);
-          this.handle(setting.key, setting.value);
-        }
         break;
     }
   },

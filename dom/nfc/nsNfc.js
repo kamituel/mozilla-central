@@ -37,6 +37,7 @@ function MozNFCTag() {
   this._nfcContentHelper = Cc["@mozilla.org/nfc/content-helper;1"]
                              .getService(Ci.nsINfcContentHelper);
   this.session = null;
+
   // Map WebIDL declared enum map names to integer
   this._techTypesMap = [];
   this._techTypesMap['NFC_A'] = 0;
@@ -159,6 +160,13 @@ mozNfc.prototype = {
   init: function init(aWindow) {
     debug("mozNfc init called");
     this._window = aWindow;
+    var self = this;
+    this._cpmm = Cc["@mozilla.org/childprocessmessagemanager;1"]
+                   .getService(Ci.nsISyncMessageSender);
+    this._window.addEventListener("nfc-hardware-state-change", function (event) {
+      self._cpmm.sendAsyncMessage("NFC:HardwareStateChange",
+                                  { state: event.detail.nfcHardwareState });
+    });
   },
 
   setPeerWindow: function setPeerWindow(manifestUrl) {

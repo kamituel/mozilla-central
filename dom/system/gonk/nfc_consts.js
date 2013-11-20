@@ -55,16 +55,16 @@ this.NFC_TECHS = {
 this.GECKO_NFC_ERROR_SUCCESS             = 0;
 this.GECKO_NFC_ERROR_GENERIC_FAILURE     = 1;
 
-// NFC powerlevels must match config PDUs.
-this.NFC_POWER_LEVEL_UNKNOWN        = -1;
-this.NFC_POWER_LEVEL_DISABLED       = 0;
-this.NFC_POWER_LEVEL_LOW            = 1;
-this.NFC_POWER_LEVEL_ENABLED        = 2;
+// NFC hardware states must match config PDUs.
+this.NFC_HW_STATE_UNKNOWN            = -1;
+this.NFC_HW_STATE_DISABLED           = 0;
+this.NFC_HW_STATE_ENABLED            = 1;
+this.NFC_HW_STATE_ENABLE_DISCOVERY   = 2;
+this.NFC_HW_STATE_DISABLE_DISCOVERY  = 3;
 
 this.TOPIC_MOZSETTINGS_CHANGED      = "mozsettings-changed";
 this.TOPIC_XPCOM_SHUTDOWN           = "xpcom-shutdown";
 this.SETTING_NFC_ENABLED            = "nfc.enabled";
-this.SETTING_NFC_POWER_LEVEL        = "nfc.powerlevel";
 
 this.NFC_PEER_EVENT_FOUND = 1;
 this.NFC_PEER_EVENT_LOST  = 2;
