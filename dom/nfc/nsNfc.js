@@ -160,9 +160,13 @@ mozNfc.prototype = {
     var self = this;
     this._cpmm = Cc["@mozilla.org/childprocessmessagemanager;1"]
                    .getService(Ci.nsISyncMessageSender);
-    this._window.addEventListener("nfc-hardware-state-change", function (event) {
-      self._cpmm.sendAsyncMessage("NFC:HardwareStateChange",
-                                  { state: event.detail.nfcHardwareState });
+    this._window.addEventListener("mozContentEvent", function (event) {
+      switch (event.details.type) {
+        case 'nfc-hardware-state-change':
+          self._cpmm.sendAsyncMessage("NFC:HardwareStateChange",
+                                      { state: event.details.nfcHardwareState });
+          break;
+      }
     });
 
     this._window.addEventListener("nfc-p2p-user-response", function (event) {
