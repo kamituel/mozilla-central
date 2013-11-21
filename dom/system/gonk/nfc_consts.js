@@ -66,8 +66,8 @@ this.TOPIC_MOZSETTINGS_CHANGED      = "mozsettings-changed";
 this.TOPIC_XPCOM_SHUTDOWN           = "xpcom-shutdown";
 this.SETTING_NFC_ENABLED            = "nfc.enabled";
 
-this.NFC_PEER_EVENT_FOUND = 1;
-this.NFC_PEER_EVENT_LOST  = 2;
+this.NFC_PEER_EVENT_READY = 0x01;
+this.NFC_PEER_EVENT_LOST  = 0x02;
 
 // Allow this file to be imported via Components.utils.import().
 this.EXPORTED_SYMBOLS = Object.keys(this);
