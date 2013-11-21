@@ -11,13 +11,15 @@ interface MozNfc : EventTarget {
    MozNFCPeer getNFCPeer(DOMString sessionId);
 
    /**
-    * API to update chrome about the top-most (visible)
-    * application's manifest URL that is capable of
-    * handling peer notifications.
+    * API to validate if the top-most (visible) application's manifest
+    * URL is registered with the Chrome Process or not.
+    *
+    * Returns success if given maifestUrl is registered for 'onpeerready',
+    * otherwise error
     *
     * Users of this API should have valid permission 'nfc-manager'.
     */
-   void setPeerWindow(DOMString manifestUrl);
-   attribute EventHandler onpeerfound;
+   DOMRequest validateAppManifestUrl(DOMString manifestUrl);
+   attribute EventHandler onpeerready;
    attribute EventHandler onpeerlost;
 };

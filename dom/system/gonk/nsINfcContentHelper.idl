@@ -7,28 +7,28 @@
 
 interface nsIVariant;
 
-[scriptable, function,uuid(271f48b0-c884-4f0b-a348-e29824c95168)]
+[scriptable, function, uuid(271f48b0-c884-4f0b-a348-e29824c95168)]
 interface nsINfcPeerCallback : nsISupports
 {
   /**
    * Callback function used to notify NFC peer events.
    *
    * @param event
-   *        An event indicating 'PeerFound' or 'PeerLost'
+   *        An event indicating 'PeerReady' or 'PeerLost'
    *        One of NFC_EVENT_PEER_XXXX
    *
    * @param sessionToken
-   *        SessionToken received from Chrome
+   *        SessionToken received from Chrome process
    */
    void peerNotification(in unsigned long event,
                          [optional] in DOMString sessionToken);
 };
 
-[scriptable, uuid(28c8f240-da8c-11e1-9b23-0800200c9a66)]
+[scriptable, uuid(91c2760a-f41c-4174-ad68-614840d4e201)]
 interface nsINfcContentHelper : nsISupports
 {
-  const long NFC_EVENT_PEER_FOUND = 1;
-  const long NFC_EVENT_PEER_LOST  = 2;
+  const long NFC_EVENT_PEER_READY = 0x01;
+  const long NFC_EVENT_PEER_LOST  = 0x02;
 
   void setSessionToken(in DOMString sessionToken);
 
@@ -39,8 +39,9 @@ interface nsINfcContentHelper : nsISupports
 
   nsIDOMDOMRequest connect(in nsIDOMWindow window, in unsigned long techType, in DOMString sessionToken);
   nsIDOMDOMRequest close(in nsIDOMWindow window, in DOMString sessionToken);
+
  /**
-  * Register the given application id with Chrome
+  * Register the given application id with Chrome process
   *
   * @param window
   *        Current window
@@ -49,17 +50,17 @@ interface nsINfcContentHelper : nsISupports
   *        Application ID to be registered
   *
   * @param event
-  *       Event to be registered. Either NFC_EVENT_PEER_FOUND or NFC_EVENT_PEER_LOST
+  *       Event to be registered. Either NFC_EVENT_PEER_READY or NFC_EVENT_PEER_LOST
   *
   * @param callback
   *       Callback that is used to notify upper layers whenever PeerEvents happen.
   */
   void registerTargetForPeerEvent(in nsIDOMWindow window,
                                   in unsigned long appId,
-                                  in unsigned long event,
+                                  in octet event,
                                   in nsINfcPeerCallback callback);
  /**
-  * Unregister the given application id with Chrome
+  * Unregister the given application id with Chrome process
   *
   * @param window
   *        Current window
@@ -68,19 +69,21 @@ interface nsINfcContentHelper : nsISupports
   *        Application ID to be registered
   *
   * @param event
-  *       Event to be unregistered. Either NFC_EVENT_PEER_FOUND or NFC_EVENT_PEER_LOST
+  *       Event to be unregistered. Either NFC_EVENT_PEER_READY or NFC_EVENT_PEER_LOST
   */
-  void unRegisterTargetForPeerEvent(in nsIDOMWindow window,
+  void unregisterTargetForPeerEvent(in nsIDOMWindow window,
                                     in unsigned long appId,
-                                    in unsigned long event);
+                                    in octet event);
  /**
-  * Updates the top most window's application id with the Chrome
+  * Validates if the given application's id is a registered peer target (with the Chrome process)
   *
   * @param window
   *        Current window
   *
   * @param appId
-  *        Application ID to be updated with chrome
+  *        Application ID to be updated with Chrome process
+  *
+  * Returns SUCCESS if registered, else ERROR
   */
-  void setPeerWindow(in nsIDOMWindow window, in unsigned long appId);
+  nsIDOMDOMRequest validateAppManifestUrl(in nsIDOMWindow window, in unsigned long appId);
 };

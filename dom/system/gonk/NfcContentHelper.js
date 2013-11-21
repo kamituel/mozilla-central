@@ -48,6 +48,7 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:MakeReadOnlyNDEFResponse",
   "NFC:ConnectResponse",
   "NFC:CloseResponse",
+  "NFC:ValidateAppIDResponse",
   "NFC:PeerEvent"
 ];
 
@@ -62,7 +63,7 @@ function NfcContentHelper() {
   this._requestMap = [];
   /**
    * Maintains an array of PeerEvent related callbacks, mainly
-   * one for 'peerFound' and another for 'peerLost'.
+   * one for 'peerReady' and another for 'peerLost'.
    */
   this.peerEventsCallbackMap = [];
 }
@@ -221,13 +222,11 @@ NfcContentHelper.prototype = {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
-
     this.peerEventsCallbackMap[event] = callback;
     cpmm.sendAsyncMessage("NFC:RegisterPeerEvent", {
       appId: appId,
       event: event
     });
-    return;
   },
 
   unRegisterTargetForPeerEvent: function unRegisterTargetForPeerEvent(window,
@@ -241,20 +240,24 @@ NfcContentHelper.prototype = {
       this.peerEventsCallbackMap.splice(index, 1);
     }
 
-    cpmm.sendAsyncMessage("NFC:UnRegisterPeerEvent", {
+    cpmm.sendAsyncMessage("NFC:UnregisterPeerEvent", {
       appId: appId,
       event: event
     });
-    return;
   },
 
-  setPeerWindow: function setPeerWindow(window, appId) {
+  validateAppManifestUrl: function validateAppManifestUrl(window, appId) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
-    cpmm.sendAsyncMessage("NFC:PeerWindow", {appId: appId});
-    return;
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = btoa(this.getRequestId(request));
+    this._requestMap[requestId] = window;
+
+    cpmm.sendAsyncMessage("NFC:ValidateAppID", {appId: appId,
+                                                requestId: requestId});
+    return request;
   },
 
   // nsIObserver
@@ -306,8 +309,7 @@ NfcContentHelper.prototype = {
       case "NFC:WriteNDEFResponse":
       case "NFC:MakeReadOnlyNDEFResponse":
       case "NFC:GetDetailsNDEFResponse":
-      case "NFC:NotifyPeerFound":
-      case "NFC:NotifyPeerLost":
+      case "NFC:ValidateAppIDResponse":
         this.handleResponse(message.json);
         break;
       case "NFC:PeerEvent":
