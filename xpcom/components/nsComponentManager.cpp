@@ -65,9 +65,12 @@
 #include "nsManifestLineReader.h"
 #include "mozilla/GenericFactory.h"
 #include "nsSupportsPrimitives.h"
+#include "nsArray.h"
+#include "nsIMutableArray.h"
 #include "nsArrayEnumerator.h"
 #include "nsStringEnumerator.h"
 #include "mozilla/FileUtils.h"
+#include "nsNetUtil.h"
 
 #include <new>     // for placement new
 
@@ -78,10 +81,6 @@
 using namespace mozilla;
 
 PRLogModuleInfo* nsComponentManagerLog = nullptr;
-
-// defined in nsStaticXULComponents.cpp to contain all the components in
-// libxul.
-extern mozilla::Module const *const *const kPStaticModules[];
 
 #if 0 || defined (DEBUG_timeless)
  #define SHOW_DENIED_ON_SHUTDOWN
@@ -322,6 +321,15 @@ nsComponentManagerImpl::nsComponentManagerImpl()
 
 nsTArray<const mozilla::Module*>* nsComponentManagerImpl::sStaticModules;
 
+NSMODULE_DEFN(start_kPStaticModules);
+NSMODULE_DEFN(end_kPStaticModules);
+
+/* The content between start_kPStaticModules and end_kPStaticModules is gathered
+ * by the linker from various objects containing symbols in a specific section.
+ * ASAN considers (rightfully) the use of this content as a global buffer
+ * overflow. But this is a deliberate and well-considered choice, with no proper
+ * way to make ASAN happy. */
+MOZ_ASAN_BLACKLIST
 /* static */ void
 nsComponentManagerImpl::InitializeStaticModules()
 {
@@ -329,9 +337,10 @@ nsComponentManagerImpl::InitializeStaticModules()
         return;
 
     sStaticModules = new nsTArray<const mozilla::Module*>;
-    for (const mozilla::Module *const *const *staticModules = kPStaticModules;
-         *staticModules; ++staticModules)
-        sStaticModules->AppendElement(**staticModules);
+    for (const mozilla::Module *const *staticModules = &NSMODULE_NAME(start_kPStaticModules) + 1;
+         staticModules < &NSMODULE_NAME(end_kPStaticModules); ++staticModules)
+        if (*staticModules) // ASAN adds padding
+            sStaticModules->AppendElement(*staticModules);
 }
 
 nsTArray<nsComponentManagerImpl::ComponentLocation>*
@@ -929,8 +938,9 @@ nsComponentManagerImpl::GetClassObjectByContractID(const char *contractID,
                                                    const nsIID &aIID,
                                                    void **aResult)
 {
-    NS_ENSURE_ARG_POINTER(aResult);
-    NS_ENSURE_ARG_POINTER(contractID);
+    if (NS_WARN_IF(!aResult) ||
+        NS_WARN_IF(!contractID))
+        return NS_ERROR_INVALID_ARG;
 
     nsresult rv;
 
@@ -1049,7 +1059,8 @@ nsComponentManagerImpl::CreateInstanceByContractID(const char *aContractID,
                                                    const nsIID &aIID,
                                                    void **aResult)
 {
-    NS_ENSURE_ARG_POINTER(aContractID);
+    if (NS_WARN_IF(!aContractID))
+        return NS_ERROR_INVALID_ARG;
 
     // test this first, since there's no point in creating a component during
     // shutdown -- whether it's available or not would depend on the order it
@@ -1604,7 +1615,9 @@ NS_IMETHODIMP
 nsComponentManagerImpl::IsContractIDRegistered(const char *aClass,
                                                bool *_retval)
 {
-    NS_ENSURE_ARG_POINTER(aClass);
+    if (NS_WARN_IF(!aClass))
+        return NS_ERROR_INVALID_ARG;
+
     nsFactoryEntry *entry = GetFactoryEntry(aClass, strlen(aClass));
 
     if (entry)
@@ -1912,6 +1925,32 @@ nsComponentManagerImpl::RemoveBootstrappedManifestLocation(nsIFile* aLocation)
 
   rv = cr->CheckForNewChrome();
   return rv;
+}
+
+NS_IMETHODIMP
+nsComponentManagerImpl::GetManifestLocations(nsIArray **aLocations)
+{
+  NS_ENSURE_ARG_POINTER(aLocations);
+  *aLocations = nullptr;
+
+  if (!sModuleLocations)
+    return NS_ERROR_NOT_INITIALIZED;
+
+  nsCOMPtr<nsIMutableArray> locations = nsArray::Create();
+  nsresult rv;
+  for (uint32_t i = 0; i < sModuleLocations->Length(); ++i) {
+    ComponentLocation& l = sModuleLocations->ElementAt(i);
+    FileLocation loc = l.location;
+    nsCString uriString;
+    loc.GetURIString(uriString);
+    nsCOMPtr<nsIURI> uri;
+    rv = NS_NewURI(getter_AddRefs(uri), uriString);
+    if (NS_SUCCEEDED(rv))
+      locations->AppendElement(uri, false);
+  }
+
+  locations.forget(aLocations);
+  return NS_OK;
 }
 
 EXPORT_XPCOM_API(nsresult)

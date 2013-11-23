@@ -10,14 +10,12 @@
 #include "WMFUtils.h"
 #include "MediaDecoderStateMachine.h"
 #include "mozilla/Preferences.h"
-#include "WinUtils.h"
+#include "mozilla/WindowsVersion.h"
 #include "nsCharSeparatedTokenizer.h"
 
 #ifdef MOZ_DIRECTSHOW
 #include "DirectShowDecoder.h"
 #endif
-
-using namespace mozilla::widget;
 
 namespace mozilla {
 
@@ -38,21 +36,59 @@ WMFDecoder::IsMP3Supported()
     return false;
   }
 #endif
- if (!MediaDecoder::IsWMFEnabled()) {
+  if (!MediaDecoder::IsWMFEnabled()) {
     return false;
   }
-  if (WinUtils::GetWindowsVersion() != WinUtils::WIN7_VERSION) {
+  if (!IsWin7OrLater()) {
     return true;
   }
-  // We're on Windows 7. MP3 support is disabled if no service pack
+  // MP3 support is disabled if we're on Windows 7 and no service pack
   // is installed, as it's crashy on Win7 SP0.
-  UINT spMajorVer = 0, spMinorVer = 0;
-  if (!WinUtils::GetWindowsServicePackVersion(spMajorVer, spMinorVer)) {
-    // Um... We can't determine the service pack version... Just block
-    // MP3 as a precaution...
+  return IsWin7SP1OrLater();
+}
+
+static bool
+IsSupportedH264Codec(const nsAString& aCodec)
+{
+  // According to the WMF documentation:
+  // http://msdn.microsoft.com/en-us/library/windows/desktop/dd797815%28v=vs.85%29.aspx
+  // "The Media Foundation H.264 video decoder is a Media Foundation Transform
+  // that supports decoding of Baseline, Main, and High profiles, up to level
+  // 5.1.". We also report that we can play Extended profile, as there are
+  // bitstreams that are Extended compliant that are also Baseline compliant.
+
+  // H.264 codecs parameters have a type defined as avc1.PPCCLL, where
+  // PP = profile_idc, CC = constraint_set flags, LL = level_idc.
+  // We ignore the constraint_set flags, as it's not clear from the WMF
+  // documentation what constraints the WMF H.264 decoder supports.
+  // See http://blog.pearce.org.nz/2013/11/what-does-h264avc1-codecs-parameters.html
+  // for more details.
+  if (aCodec.Length() != strlen("avc1.PPCCLL")) {
     return false;
   }
-  return spMajorVer != 0;
+
+  // Verify the codec starts with "avc1.".
+  const nsAString& sample = Substring(aCodec, 0, 5);
+  if (!sample.EqualsASCII("avc1.")) {
+    return false;
+  }
+
+  // Extract the profile_idc and level_idc. Note: the constraint_set flags
+  // are ignored, it's not clear from the WMF documentation if they make a
+  // difference.
+  nsresult rv = NS_OK;
+  const int32_t profile = PromiseFlatString(Substring(aCodec, 5, 2)).ToInteger(&rv, 16);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  const int32_t level = PromiseFlatString(Substring(aCodec, 9, 2)).ToInteger(&rv, 16);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  return level >= eAVEncH264VLevel1 &&
+         level <= eAVEncH264VLevel5_1 &&
+         (profile == eAVEncH264VProfile_Base ||
+          profile == eAVEncH264VProfile_Main ||
+          profile == eAVEncH264VProfile_Extended ||
+          profile == eAVEncH264VProfile_High);
 }
 
 static bool
@@ -163,7 +199,7 @@ bool
 WMFDecoder::IsEnabled()
 {
   // We only use WMF on Windows Vista and up
-  return WinUtils::GetWindowsVersion() >= WinUtils::VISTA_VERSION &&
+  return IsVistaOrLater() &&
          Preferences::GetBool("media.windows-media-foundation.enabled");
 }
 

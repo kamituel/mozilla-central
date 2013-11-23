@@ -1,4 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
+/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -26,6 +26,8 @@
 #include "BasicLayers.h"
 #include "FrameMetrics.h"
 #include "Windows.Graphics.Display.h"
+#include "DisplayInfo_sdk81.h"
+#include "nsNativeDragTarget.h"
 #ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
 #endif
@@ -278,6 +280,7 @@ MetroWidget::Destroy()
     nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1", &rv);
     if (NS_SUCCEEDED(rv)) {
       observerService->RemoveObserver(this, "apzc-scroll-offset-changed");
+      observerService->RemoveObserver(this, "Metro:ZoomToRect");
     }
   }
 
@@ -330,6 +333,28 @@ MetroWidget::IsVisible() const
   if (!mView)
     return false;
   return mView->IsVisible();
+}
+
+NS_IMETHODIMP
+MetroWidget::EnableDragDrop(bool aEnable) {
+  if (aEnable) {
+    if (nullptr == mNativeDragTarget) {
+      mNativeDragTarget = new nsNativeDragTarget(this);
+      if (!mNativeDragTarget) {
+        return NS_ERROR_FAILURE;
+      }
+    }
+
+    HRESULT hr = ::RegisterDragDrop(mWnd, static_cast<LPDROPTARGET>(mNativeDragTarget));
+    return SUCCEEDED(hr) ? NS_OK : NS_ERROR_FAILURE;
+  } else {
+    if (nullptr == mNativeDragTarget) {
+      return NS_OK;
+    }
+
+    HRESULT hr = ::RevokeDragDrop(mWnd);
+    return SUCCEEDED(hr) ? NS_OK : NS_ERROR_FAILURE;
+  }
 }
 
 NS_IMETHODIMP
@@ -966,6 +991,7 @@ CompositorParent* MetroWidget::NewCompositorParent(int aSurfaceWidth, int aSurfa
     nsCOMPtr<nsIObserverService> observerService = do_GetService("@mozilla.org/observer-service;1", &rv);
     if (NS_SUCCEEDED(rv)) {
       observerService->AddObserver(this, "apzc-scroll-offset-changed", false);
+      observerService->AddObserver(this, "Metro:ZoomToRect", false);
     }
   }
 
@@ -1290,6 +1316,19 @@ double MetroWidget::GetDefaultScaleInternal()
 {
   // Return the resolution scale factor reported by the metro environment.
   // XXX TODO: also consider the desktop resolution setting, as IE appears to do?
+
+  ComPtr<IDisplayInformationStatics> dispInfoStatics;
+  if (SUCCEEDED(GetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayInformation).Get(),
+                                      dispInfoStatics.GetAddressOf()))) {
+    ComPtr<IDisplayInformation> dispInfo;
+    if (SUCCEEDED(dispInfoStatics->GetForCurrentView(&dispInfo))) {
+      ResolutionScale scale;
+      if (SUCCEEDED(dispInfo->get_ResolutionScale(&scale))) {
+        return (double)scale / 100.0;
+      }
+    }
+  }
+
   ComPtr<IDisplayPropertiesStatics> dispProps;
   if (SUCCEEDED(GetActivationFactory(HStringReference(RuntimeClass_Windows_Graphics_Display_DisplayProperties).Get(),
                                      dispProps.GetAddressOf()))) {
@@ -1298,6 +1337,7 @@ double MetroWidget::GetDefaultScaleInternal()
       return (double)scale / 100.0;
     }
   }
+
   return 1.0;
 }
 
@@ -1561,5 +1601,22 @@ MetroWidget::Observe(nsISupports *subject, const char *topic, const PRUnichar *d
     mController->UpdateScrollOffset(ScrollableLayerGuid(mRootLayerTreeId, presShellId, scrollId),
                                     scrollOffset);
   }
-  return NS_OK;
+  else if (!strcmp(topic, "Metro:ZoomToRect")) {
+    CSSRect rect = CSSRect();
+    uint64_t viewId = 0;
+    int32_t presShellId = 0;
+
+    int reScan = swscanf(data, L"%f,%f,%f,%f,%d,%llu",
+                 &rect.x, &rect.y, &rect.width, &rect.height,
+                 &presShellId, &viewId);
+    if(reScan != 6) {
+      NS_WARNING("Malformed Metro:ZoomToRect message");
+    }
+
+    ScrollableLayerGuid guid = ScrollableLayerGuid(mRootLayerTreeId, presShellId, viewId);
+    APZController::sAPZC->ZoomToRect(guid, rect);
+  }
+  else {
+    return NS_OK;
+  }
 }

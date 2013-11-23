@@ -8,7 +8,7 @@ package org.mozilla.gecko.gfx;
 import org.mozilla.gecko.GeckoAppShell;
 import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.GeckoThread;
-import org.mozilla.gecko.mozglue.GeneratableAndroidBridgeTarget;
+import org.mozilla.gecko.mozglue.generatorannotations.WrapElementForJNI;
 import org.mozilla.gecko.util.ThreadUtils;
 
 import android.util.Log;
@@ -153,6 +153,10 @@ public class GLController {
         return mServerSurfaceValid;
     }
 
+    public boolean isCompositorCreated() {
+        return mCompositorCreated;
+    }
+
     private void initEGL() {
         if (mEGL != null) {
             return;
@@ -211,7 +215,7 @@ public class GLController {
         throw new GLControllerException("No suitable EGL configuration found");
     }
 
-    @GeneratableAndroidBridgeTarget(allowMultithread = true, stubName = "CreateEGLSurfaceForCompositorWrapper")
+    @WrapElementForJNI(allowMultithread = true, stubName = "CreateEGLSurfaceForCompositorWrapper")
     private EGLSurface createEGLSurfaceForCompositor() {
         initEGL();
         return mEGL.eglCreateWindowSurface(mEGLDisplay, mEGLConfig, mView.getNativeWindow(), null);

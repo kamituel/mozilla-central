@@ -89,7 +89,7 @@ EXPORTS.js += [
     '../public/Vector.h',
 ]
 
-SOURCES += [
+UNIFIED_SOURCES += [
     'assembler/jit/ExecutableAllocator.cpp',
     'builtin/Eval.cpp',
     'builtin/Intl.cpp',
@@ -139,7 +139,6 @@ SOURCES += [
     'jsgc.cpp',
     'jsinfer.cpp',
     'jsiter.cpp',
-    'jsmath.cpp',
     'jsnativestack.cpp',
     'jsnum.cpp',
     'jsobj.cpp',
@@ -152,7 +151,6 @@ SOURCES += [
     'jsreflect.cpp',
     'jsscript.cpp',
     'jsstr.cpp',
-    'jsutil.cpp',
     'jswatchpoint.cpp',
     'jsweakmap.cpp',
     'jsworkers.cpp',
@@ -199,6 +197,15 @@ SOURCES += [
     'yarr/YarrSyntaxChecker.cpp',
 ]
 
+# jsmath.cpp cannot be built in unified mode because it needs to pull rand_s
+# from <stdlib.h> on Windows through a preprocessor define.
+# jsutil.cpp cannot be built in unified mode because it is needed for
+# check-vanilla-allocations.
+SOURCES += [
+    'jsmath.cpp',
+    'jsutil.cpp',
+]
+
 if CONFIG['MOZ_INSTRUMENTS']:
     SOURCES += [
         'devtools/Instruments.cpp',
@@ -210,7 +217,7 @@ if CONFIG['ENABLE_TRACE_LOGGING']:
     ]
 
 if CONFIG['ENABLE_ION']:
-    SOURCES += [
+    UNIFIED_SOURCES += [
         'jit/AliasAnalysis.cpp',
         'jit/AsmJS.cpp',
         'jit/AsmJSLink.cpp',
@@ -229,6 +236,7 @@ if CONFIG['ENABLE_ION']:
         'jit/BytecodeAnalysis.cpp',
         'jit/C1Spewer.cpp',
         'jit/CodeGenerator.cpp',
+        'jit/CompileWrappers.cpp',
         'jit/EdgeCaseAnalysis.cpp',
         'jit/EffectiveAddressAnalysis.cpp',
         'jit/Ion.cpp',
@@ -266,7 +274,7 @@ if CONFIG['ENABLE_ION']:
         'jit/VMFunctions.cpp',
     ]
     if CONFIG['TARGET_CPU'].find('86') != -1:
-        SOURCES += [
+        UNIFIED_SOURCES += [
             'jit/shared/Assembler-x86-shared.cpp',
             'jit/shared/BaselineCompiler-x86-shared.cpp',
             'jit/shared/BaselineIC-x86-shared.cpp',
@@ -276,7 +284,7 @@ if CONFIG['ENABLE_ION']:
             'jit/shared/MoveEmitter-x86-shared.cpp',
         ]
         if CONFIG['TARGET_CPU'] == 'x86_64':
-            SOURCES += [
+            UNIFIED_SOURCES += [
                 'jit/x64/Assembler-x64.cpp',
                 'jit/x64/Bailouts-x64.cpp',
                 'jit/x64/BaselineCompiler-x64.cpp',
@@ -287,7 +295,7 @@ if CONFIG['ENABLE_ION']:
                 'jit/x64/Trampoline-x64.cpp',
             ]
         else:
-            SOURCES += [
+            UNIFIED_SOURCES += [
                 'jit/x86/Assembler-x86.cpp',
                 'jit/x86/Bailouts-x86.cpp',
                 'jit/x86/BaselineCompiler-x86.cpp',
@@ -298,7 +306,7 @@ if CONFIG['ENABLE_ION']:
                 'jit/x86/Trampoline-x86.cpp',
             ]
     elif CONFIG['TARGET_CPU'].find('arm') != -1:
-        SOURCES += [
+        UNIFIED_SOURCES += [
             'jit/arm/Architecture-arm.cpp',
             'jit/arm/Assembler-arm.cpp',
             'jit/arm/Bailouts-arm.cpp',
@@ -383,3 +391,8 @@ if CONFIG['JS_SHARED_LIBRARY']:
     FORCE_SHARED_LIB = True
 
 FORCE_STATIC_LIB = True
+
+if CONFIG['MOZ_ETW']:
+    GENERATED_FILES = [
+        'ETWProvider.h',
+    ]
