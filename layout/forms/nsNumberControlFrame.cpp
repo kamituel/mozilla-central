@@ -14,6 +14,7 @@
 #include "nsGkAtoms.h"
 #include "nsINodeInfo.h"
 #include "nsINameSpaceManager.h"
+#include "mozilla/BasicEvents.h"
 #include "nsContentUtils.h"
 #include "nsContentCreatorFunctions.h"
 #include "nsContentList.h"
@@ -155,7 +156,8 @@ nsNumberControlFrame::AttributeChanged(int32_t  aNameSpaceID,
 {
   if (aNameSpaceID == kNameSpaceID_None) {
     if (aAttribute == nsGkAtoms::placeholder ||
-        aAttribute == nsGkAtoms::readonly) {
+        aAttribute == nsGkAtoms::readonly ||
+        aAttribute == nsGkAtoms::tabindex) {
       if (aModType == nsIDOMMutationEvent::REMOVAL) {
         mTextField->UnsetAttr(aNameSpaceID, aAttribute, true);
       } else {
@@ -198,12 +200,14 @@ nsNumberControlFrame::MakeAnonymousElement(nsIContent** aResult,
   NS_ASSERTION(aPseudoType != nsCSSPseudoElements::ePseudo_NotPseudoElement,
                "Expecting anonymous children to all be pseudo-elements");
   // Associate the pseudo-element with the anonymous child
+  Element* resultElement = (*aResult)->AsElement();
   nsRefPtr<nsStyleContext> newStyleContext =
     PresContext()->StyleSet()->ResolvePseudoElementStyle(mContent->AsElement(),
                                                          aPseudoType,
-                                                         aParentContext);
+                                                         aParentContext,
+                                                         resultElement);
 
-  if (!aElements.AppendElement(ContentInfo(*aResult, newStyleContext))) {
+  if (!aElements.AppendElement(ContentInfo(resultElement, newStyleContext))) {
     return NS_ERROR_OUT_OF_MEMORY;
   }
   return NS_OK;
@@ -249,9 +253,12 @@ nsNumberControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   mTextField->SetAttr(kNameSpaceID_None, nsGkAtoms::type,
                       NS_LITERAL_STRING("text"), PR_FALSE);
 
+  HTMLInputElement* content = HTMLInputElement::FromContent(mContent);
+  HTMLInputElement* textField = HTMLInputElement::FromContent(mTextField);
+
   // Initialize the text field value:
   nsAutoString value;
-  HTMLInputElement::FromContent(mContent)->GetValue(value);
+  content->GetValue(value);
   mTextField->SetAttr(kNameSpaceID_None, nsGkAtoms::value, value, false);
 
   // If we're readonly, make sure our anonymous text control is too:
@@ -259,6 +266,11 @@ nsNumberControlFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   if (mContent->GetAttr(kNameSpaceID_None, nsGkAtoms::readonly, readonly)) {
     mTextField->SetAttr(kNameSpaceID_None, nsGkAtoms::readonly, readonly, false);
   }
+
+  // Propogate our tabindex:
+  int32_t tabIndex;
+  content->GetTabIndex(&tabIndex);
+  textField->SetTabIndex(tabIndex);
 
   // Initialize the text field's placeholder, if ours is set:
   nsAutoString placeholder;
@@ -313,6 +325,30 @@ nsNumberControlFrame::GetAnonTextControl()
   return mTextField ? HTMLInputElement::FromContent(mTextField) : nullptr;
 }
 
+int32_t
+nsNumberControlFrame::GetSpinButtonForPointerEvent(WidgetGUIEvent* aEvent) const
+{
+  MOZ_ASSERT(aEvent->eventStructType == NS_MOUSE_EVENT,
+             "Unexpected event type");
+
+  if (aEvent->originalTarget == mSpinUp) {
+    return eSpinButtonUp;
+  }
+  if (aEvent->originalTarget == mSpinDown) {
+    return eSpinButtonDown;
+  }
+  return eSpinButtonNone;
+}
+
+void
+nsNumberControlFrame::HandleFocusEvent(WidgetEvent* aEvent)
+{
+  if (aEvent->originalTarget != mTextField) {
+    // Move focus to our text field
+    HTMLInputElement::FromContent(mTextField)->Focus();
+  }
+}
+
 void
 nsNumberControlFrame::AppendAnonymousContentTo(nsBaseContentList& aElements,
                                                uint32_t aFilter)
@@ -341,4 +377,30 @@ nsNumberControlFrame::UpdateForValueChange(const nsAString& aValue)
   // since the default value is ignored once a user types into the text
   // control.
   HTMLInputElement::FromContent(mTextField)->SetValue(aValue);
+}
+
+nsIContent*
+nsNumberControlFrame::GetPseudoElementContent(nsCSSPseudoElements::Type aType)
+{
+  if (aType == nsCSSPseudoElements::ePseudo_mozNumberWrapper) {
+    return mOuterWrapper;
+  }
+
+  if (aType == nsCSSPseudoElements::ePseudo_mozNumberText) {
+    return mTextField;
+  }
+
+  if (aType == nsCSSPseudoElements::ePseudo_mozNumberSpinBox) {
+    return mSpinBox;
+  }
+
+  if (aType == nsCSSPseudoElements::ePseudo_mozNumberSpinUp) {
+    return mSpinUp;
+  }
+
+  if (aType == nsCSSPseudoElements::ePseudo_mozNumberSpinDown) {
+    return mSpinDown;
+  }
+
+  return nsContainerFrame::GetPseudoElementContent(aType);
 }

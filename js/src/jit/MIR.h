@@ -1913,7 +1913,9 @@ class MCall
             const JSJitInfo* jitInfo = getSingleTarget()->jitInfo();
             JS_ASSERT(jitInfo);
 
-            if (jitInfo->isPure && jitInfo->argTypes) {
+            JS_ASSERT(jitInfo->aliasSet != JSJitInfo::AliasNone);
+            if (jitInfo->aliasSet == JSJitInfo::AliasDOMSets &&
+                jitInfo->argTypes) {
                 uint32_t argIndex = 0;
                 for (const JSJitInfo::ArgType* argType = jitInfo->argTypes;
                      *argType != JSJitInfo::ArgTypeListEnd;
@@ -4050,6 +4052,20 @@ class MMul : public MBinaryArithInstruction
         return 1;
     }
 
+    bool congruentTo(MDefinition *ins) const {
+        if (!ins->isMul())
+            return false;
+
+        MMul *mul = ins->toMul();
+        if (canBeNegativeZero_ != mul->canBeNegativeZero())
+            return false;
+
+        if (mode_ != mul->mode())
+            return false;
+
+        return MBinaryInstruction::congruentTo(ins);
+    }
+
     bool canOverflow() const;
 
     bool canBeNegativeZero() const {
@@ -5183,7 +5199,7 @@ class MMaybeToDoubleElement
     }
 };
 
-// Load a dense array's initialized length from an elements vector.
+// Load the initialized length from an elements header.
 class MInitializedLength
   : public MUnaryInstruction
 {
@@ -5214,12 +5230,12 @@ class MInitializedLength
     void computeRange();
 };
 
-// Set a dense array's initialized length to an elements vector.
+// Store to the initialized length in an elements header. Note the input is an
+// *index*, one less than the desired length.
 class MSetInitializedLength
   : public MAryInstruction<2>
 {
-    MSetInitializedLength(MDefinition *elements, MDefinition *index)
-    {
+    MSetInitializedLength(MDefinition *elements, MDefinition *index) {
         setOperand(0, elements);
         setOperand(1, index);
     }
@@ -5242,7 +5258,7 @@ class MSetInitializedLength
     }
 };
 
-// Load a dense array's initialized length from an elements vector.
+// Load the array length from an elements header.
 class MArrayLength
   : public MUnaryInstruction
 {
@@ -5267,6 +5283,34 @@ class MArrayLength
     }
 
     void computeRange();
+};
+
+// Store to the length in an elements header. Note the input is an *index*, one
+// less than the desired length.
+class MSetArrayLength
+  : public MAryInstruction<2>
+{
+    MSetArrayLength(MDefinition *elements, MDefinition *index) {
+        setOperand(0, elements);
+        setOperand(1, index);
+    }
+
+  public:
+    INSTRUCTION_HEADER(SetArrayLength)
+
+    static MSetArrayLength *New(TempAllocator &alloc, MDefinition *elements, MDefinition *index) {
+        return new(alloc) MSetArrayLength(elements, index);
+    }
+
+    MDefinition *elements() const {
+        return getOperand(0);
+    }
+    MDefinition *index() const {
+        return getOperand(1);
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::Store(AliasSet::ObjectFields);
+    }
 };
 
 // Read the length of a typed array.
@@ -7833,8 +7877,10 @@ class MGetDOMProperty
         setOperand(1, guard);
 
         // We are movable iff the jitinfo says we can be.
-        if (jitinfo->isPure)
+        if (isDomMovable()) {
+            JS_ASSERT(jitinfo->aliasSet != JSJitInfo::AliasEverything);
             setMovable();
+        }
 
         setResultType(MIRType_Value);
     }
@@ -7858,11 +7904,11 @@ class MGetDOMProperty
     bool isInfallible() const {
         return info_->isInfallible;
     }
-    bool isDomConstant() const {
-        return info_->isConstant;
+    bool isDomMovable() const {
+        return info_->isMovable;
     }
-    bool isDomPure() const {
-        return info_->isPure;
+    JSJitInfo::AliasSet domAliasSet() const {
+        return info_->aliasSet;
     }
     size_t domMemberSlotIndex() const {
         MOZ_ASSERT(info_->isInSlot);
@@ -7877,7 +7923,7 @@ class MGetDOMProperty
     }
 
     bool congruentTo(MDefinition *ins) const {
-        if (!isDomPure())
+        if (!isDomMovable())
             return false;
 
         if (!ins->isGetDOMProperty())
@@ -7891,14 +7937,12 @@ class MGetDOMProperty
     }
 
     AliasSet getAliasSet() const {
-        // The whole point of constancy is that it's non-effectful and doesn't
-        // conflict with anything
-        if (isDomConstant())
+        JSJitInfo::AliasSet aliasSet = domAliasSet();
+        if (aliasSet == JSJitInfo::AliasNone)
             return AliasSet::None();
-        // Pure DOM attributes can only alias things that alias the world or
-        // explicitly alias DOM properties.
-        if (isDomPure())
+        if (aliasSet == JSJitInfo::AliasDOMSets)
             return AliasSet::Load(AliasSet::DOMProperty);
+        JS_ASSERT(aliasSet == JSJitInfo::AliasEverything);
         return AliasSet::Store(AliasSet::Any);
     }
 

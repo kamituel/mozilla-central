@@ -1391,7 +1391,8 @@ GenerateLIR(MIRGenerator *mir)
     switch (js_IonOptions.registerAllocator) {
       case RegisterAllocator_LSRA: {
 #ifdef DEBUG
-        integrity.record();
+        if (!integrity.record())
+            return nullptr;
 #endif
 
         LinearScanAllocator regalloc(mir, &lirgen, *lir);
@@ -1399,7 +1400,8 @@ GenerateLIR(MIRGenerator *mir)
             return nullptr;
 
 #ifdef DEBUG
-        integrity.check(false);
+        if (!integrity.check(false))
+            return nullptr;
 #endif
 
         IonSpewPass("Allocate Registers [LSRA]", &regalloc);
@@ -1408,7 +1410,8 @@ GenerateLIR(MIRGenerator *mir)
 
       case RegisterAllocator_Backtracking: {
 #ifdef DEBUG
-        integrity.record();
+        if (!integrity.record())
+            return nullptr;
 #endif
 
         BacktrackingAllocator regalloc(mir, &lirgen, *lir);
@@ -1416,7 +1419,8 @@ GenerateLIR(MIRGenerator *mir)
             return nullptr;
 
 #ifdef DEBUG
-        integrity.check(false);
+        if (!integrity.check(false))
+            return nullptr;
 #endif
 
         IonSpewPass("Allocate Registers [Backtracking]");
@@ -1426,7 +1430,8 @@ GenerateLIR(MIRGenerator *mir)
       case RegisterAllocator_Stupid: {
         // Use the integrity checker to populate safepoint information, so
         // run it in all builds.
-        integrity.record();
+        if (!integrity.record())
+            return nullptr;
 
         StupidAllocator regalloc(mir, &lirgen, *lir);
         if (!regalloc.go())
@@ -1555,7 +1560,7 @@ OffThreadCompilationAvailable(JSContext *cx)
     // Also skip off thread compilation if the SPS profiler is enabled, as it
     // stores strings in the spsProfiler data structure, which is not protected
     // by a lock.
-    return OffThreadIonCompilationEnabled(cx->runtime())
+    return cx->runtime()->canUseParallelIonCompilation()
         && cx->runtime()->gcIncrementalState == gc::NO_INCREMENTAL
         && !cx->runtime()->profilingScripts
         && !cx->runtime()->spsProfiler.enabled();
@@ -1664,6 +1669,15 @@ IonCompile(JSContext *cx, JSScript *script,
     RootedScript builderScript(cx, builder->script());
     IonSpewNewFunction(graph, builderScript);
 
+    mozilla::Maybe<AutoProtectHeapForCompilation> protect;
+    if (js_IonOptions.checkThreadSafety &&
+        cx->runtime()->gcIncrementalState == gc::NO_INCREMENTAL &&
+        !cx->runtime()->profilingScripts &&
+        !cx->runtime()->spsProfiler.enabled())
+    {
+        protect.construct(cx->runtime());
+    }
+
     bool succeeded = builder->build();
     builder->clearForBackEnd();
 
@@ -1698,6 +1712,9 @@ IonCompile(JSContext *cx, JSScript *script,
         IonSpew(IonSpew_Abort, "Failed during back-end compilation.");
         return AbortReason_Disable;
     }
+
+    if (!protect.empty())
+        protect.destroy();
 
     bool success = codegen->link(cx, builder->constraints());
 
@@ -1773,7 +1790,7 @@ CheckScriptSize(JSContext *cx, JSScript* script)
         // DOM Workers don't have off thread compilation enabled. Since workers
         // don't block the browser's event loop, allow them to compile larger
         // scripts.
-        JS_ASSERT(!OffThreadIonCompilationEnabled(cx->runtime()));
+        JS_ASSERT(!cx->runtime()->canUseParallelIonCompilation());
 
         if (script->length > MAX_DOM_WORKER_SCRIPT_SIZE ||
             numLocalsAndArgs > MAX_DOM_WORKER_LOCALS_AND_ARGS)
@@ -1787,7 +1804,7 @@ CheckScriptSize(JSContext *cx, JSScript* script)
     if (script->length > MAX_MAIN_THREAD_SCRIPT_SIZE ||
         numLocalsAndArgs > MAX_MAIN_THREAD_LOCALS_AND_ARGS)
     {
-        if (OffThreadIonCompilationEnabled(cx->runtime())) {
+        if (cx->runtime()->canUseParallelIonCompilation()) {
             // Even if off thread compilation is enabled, there are cases where
             // compilation must still occur on the main thread. Don't compile
             // in these cases (except when profiling scripts, as compilations

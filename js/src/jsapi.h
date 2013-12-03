@@ -9,6 +9,7 @@
 #ifndef jsapi_h
 #define jsapi_h
 
+#include "mozilla/Atomics.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/RangedPtr.h"
@@ -1987,13 +1988,6 @@ extern JS_PUBLIC_API(void)
 JS_RemoveScriptRootRT(JSRuntime *rt, JSScript **rp);
 
 /*
- * C-compatible version of the Anchor class. It should be called after the last
- * use of the variable it protects.
- */
-extern JS_NEVER_INLINE JS_PUBLIC_API(void)
-JS_AnchorPtr(void *p);
-
-/*
  * Register externally maintained GC roots.
  *
  * traceOp: the trace operation. For each root the implementation should call
@@ -3155,7 +3149,11 @@ JS_SetReservedSlot(JSObject *obj, uint32_t index, jsval v);
  */
 struct JSPrincipals {
     /* Don't call "destroy"; use reference counting macros below. */
-    int refcount;
+#ifdef JS_THREADSAFE
+    mozilla::Atomic<int32_t> refcount;
+#else
+    int32_t refcount;
+#endif
 
 #ifdef DEBUG
     /* A helper to facilitate principals debugging. */

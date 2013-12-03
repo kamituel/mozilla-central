@@ -76,7 +76,7 @@ nsMeterFrame::CreateAnonymousContent(nsTArray<ContentInfo>& aElements)
   nsCSSPseudoElements::Type pseudoType = nsCSSPseudoElements::ePseudo_mozMeterBar;
   nsRefPtr<nsStyleContext> newStyleContext = PresContext()->StyleSet()->
     ResolvePseudoElementStyle(mContent->AsElement(), pseudoType,
-                              StyleContext());
+                              StyleContext(), mBarDiv->AsElement());
 
   if (!aElements.AppendElement(ContentInfo(mBarDiv, newStyleContext))) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -278,3 +278,12 @@ nsMeterFrame::ShouldUseNativeStyle() const
                                                  NS_AUTHOR_SPECIFIED_BORDER | NS_AUTHOR_SPECIFIED_BACKGROUND);
 }
 
+nsIContent*
+nsMeterFrame::GetPseudoElementContent(nsCSSPseudoElements::Type aType)
+{
+  if (aType == nsCSSPseudoElements::ePseudo_mozMeterBar) {
+    return mBarDiv;
+  }
+
+  return nsContainerFrame::GetPseudoElementContent(aType);
+}

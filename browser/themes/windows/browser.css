@@ -940,7 +940,6 @@ html|*.urlbar-input:-moz-lwtheme::-moz-placeholder,
   background: transparent;
 }
 
-#urlbar-search-splitter + #urlbar-container > #urlbar-wrapper > #urlbar,
 #urlbar-search-splitter + #search-container > #searchbar > .searchbar-textbox {
   -moz-margin-start: 0;
 }
@@ -955,6 +954,10 @@ html|*.urlbar-input:-moz-lwtheme::-moz-placeholder,
   margin-bottom: 0;
   -moz-margin-start: 0;
   color: GrayText;
+}
+
+#search-container {
+  min-width: calc(54px + 11ch);
 }
 
 /* identity box */

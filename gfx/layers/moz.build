@@ -28,6 +28,7 @@ EXPORTS += [
     'ipc/CompositorParent.h',
     'ipc/ShadowLayersManager.h',
     'Layers.h',
+    'LayerScope.h',
     'LayersLogging.h',
     'LayerSorter.h',
     'LayerTreeInvalidation.h',
@@ -37,6 +38,7 @@ EXPORTS += [
     'opengl/TexturePoolOGL.h',
     'ReadbackLayer.h',
     'SharedTextureImage.h',
+    'TiledLayerBuffer.h',
 ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
@@ -250,6 +252,7 @@ UNIFIED_SOURCES += [
     'ipc/SharedRGBImage.cpp',
     'ipc/TaskThrottler.cpp',
     'Layers.cpp',
+    'LayerScope.cpp',
     'LayersLogging.cpp',
     'LayerSorter.cpp',
     'LayerTreeInvalidation.cpp',
@@ -292,3 +295,13 @@ MSVC_ENABLE_PGO = True
 include('/ipc/chromium/chromium-config.mozbuild')
 
 FINAL_LIBRARY = 'thebes'
+
+LOCAL_INCLUDES += [
+    '/content/events/src',
+]
+
+if CONFIG['MOZ_DEBUG']:
+    DEFINES['D3D_DEBUG_INFO'] = True
+
+if CONFIG['MOZ_ENABLE_D3D10_LAYER']:
+    DEFINES['MOZ_ENABLE_D3D10_LAYER'] = True

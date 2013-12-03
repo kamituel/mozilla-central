@@ -117,7 +117,8 @@ nsRangeFrame::MakeAnonymousDiv(nsIContent** aResult,
   nsRefPtr<nsStyleContext> newStyleContext =
     PresContext()->StyleSet()->ResolvePseudoElementStyle(mContent->AsElement(),
                                                          aPseudoType,
-                                                         StyleContext());
+                                                         StyleContext(),
+                                                         (*aResult)->AsElement());
 
   if (!aElements.AppendElement(ContentInfo(*aResult, newStyleContext))) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -830,4 +831,22 @@ nsRangeFrame::ShouldUseNativeStyle() const
                                                  STYLES_DISABLING_NATIVE_THEMING) &&
          !PresContext()->HasAuthorSpecifiedRules(mThumbDiv->GetPrimaryFrame(),
                                                  STYLES_DISABLING_NATIVE_THEMING);
+}
+
+nsIContent*
+nsRangeFrame::GetPseudoElementContent(nsCSSPseudoElements::Type aType)
+{
+  if (aType == nsCSSPseudoElements::ePseudo_mozRangeTrack) {
+    return mTrackDiv;
+  }
+
+  if (aType == nsCSSPseudoElements::ePseudo_mozRangeThumb) {
+    return mThumbDiv;
+  }
+
+  if (aType == nsCSSPseudoElements::ePseudo_mozRangeProgress) {
+    return mProgressDiv;
+  }
+
+  return nsContainerFrame::GetPseudoElementContent(aType);
 }

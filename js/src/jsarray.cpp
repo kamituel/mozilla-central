@@ -1095,10 +1095,13 @@ ArrayJoin(JSContext *cx, CallArgs &args)
             return false;
         seplen = sepstr->length();
     } else {
-        static const jschar comma = ',';
-        sepchars = &comma;
-        seplen = 1;
+        HandlePropertyName comma = cx->names().comma;
+        sepstr = comma;
+        sepchars = comma->chars();
+        seplen = comma->length();
     }
+
+    JS::Anchor<JSString*> anchor(sepstr);
 
     // Step 6 is implicit in the loops below
 
@@ -1123,9 +1126,6 @@ ArrayJoin(JSContext *cx, CallArgs &args)
         if (!ArrayJoinKernel<Locale>(cx, op, obj, length, sb))
             return false;
     }
-
-    // Ensure that sepstr stays alive longer than sepchars.
-    JS_AnchorPtr(sepstr);
 
     // Step 11
     JSString *str = sb.finishString();
@@ -2725,22 +2725,21 @@ array_slice(JSContext *cx, unsigned argc, Value *vp)
         begin = end;
 
     Rooted<ArrayObject*> narr(cx);
-
-    if (obj->is<ArrayObject>() && end <= obj->getDenseInitializedLength() &&
-        !ObjectMayHaveExtraIndexedProperties(obj))
-    {
-        narr = NewDenseCopiedArray(cx, end - begin, obj, begin);
-        if (!narr)
-            return false;
-        TryReuseArrayType(obj, narr);
-        args.rval().setObject(*narr);
-        return true;
-    }
-
     narr = NewDenseAllocatedArray(cx, end - begin);
     if (!narr)
         return false;
     TryReuseArrayType(obj, narr);
+
+    if (obj->is<ArrayObject>() && !ObjectMayHaveExtraIndexedProperties(obj)) {
+        if (obj->getDenseInitializedLength() > begin) {
+            uint32_t numSourceElements = obj->getDenseInitializedLength() - begin;
+            uint32_t initLength = Min(numSourceElements, end - begin);
+            narr->setDenseInitializedLength(initLength);
+            narr->initDenseElements(0, &obj->getDenseElement(begin), initLength);
+        }
+        args.rval().setObject(*narr);
+        return true;
+    }
 
     RootedValue value(cx);
     for (slot = begin; slot < end; slot++) {

@@ -1351,6 +1351,12 @@ Help(JSContext *cx, unsigned argc, jsval *vp);
 static bool
 Quit(JSContext *cx, unsigned argc, jsval *vp)
 {
+#ifdef JS_MORE_DETERMINISTIC
+    // Print a message to stderr in more-deterministic builds to help jsfunfuzz
+    // find uncatchable-exception bugs.
+    fprintf(stderr, "quit called\n");
+#endif
+
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ConvertArguments(cx, args.length(), args.array(), "/ i", &gExitCode);
 
@@ -4792,8 +4798,8 @@ static const JSJitInfo dom_x_getterinfo = {
     0,        /* depth */
     JSJitInfo::Getter,
     true,     /* isInfallible. False in setters. */
-    true,     /* isConstant. Only relevant for getters. */
-    true,     /* isPure */
+    true,     /* isMovable */
+    JSJitInfo::AliasNone, /* aliasSet */
     false,    /* isInSlot */
     0,        /* slotIndex */
     JSVAL_TYPE_UNKNOWN, /* returnType */
@@ -4807,8 +4813,8 @@ static const JSJitInfo dom_x_setterinfo = {
     0,        /* depth */
     JSJitInfo::Setter,
     false,    /* isInfallible. False in setters. */
-    false,    /* isConstant. Only relevant for getters. */
-    false,    /* isPure */
+    false,    /* isMovable. */
+    JSJitInfo::AliasEverything, /* aliasSet */
     false,    /* isInSlot */
     0,        /* slotIndex */
     JSVAL_TYPE_UNKNOWN, /* returnType */
@@ -4822,8 +4828,8 @@ static const JSJitInfo doFoo_methodinfo = {
     0,        /* depth */
     JSJitInfo::Method,
     false,    /* isInfallible. False in setters. */
-    false,    /* isConstant. Only relevant for getters. */
-    false,    /* isPure */
+    false,    /* isMovable */
+    JSJitInfo::AliasEverything, /* aliasSet */
     false,    /* isInSlot */
     0,        /* slotIndex */
     JSVAL_TYPE_UNKNOWN, /* returnType */
@@ -5402,7 +5408,7 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
 #ifdef JS_THREADSAFE
     int32_t threadCount = op->getIntOption("thread-count");
     if (threadCount >= 0)
-        cx->runtime()->requestHelperThreadCount(threadCount);
+        cx->runtime()->setFakeCPUCount(threadCount);
 #endif /* JS_THREADSAFE */
 
 #if defined(JS_ION)
@@ -5460,6 +5466,9 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
 
     if (op->getBoolOption("ion-check-range-analysis"))
         jit::js_IonOptions.checkRangeAnalysis = true;
+
+    if (op->getBoolOption("ion-check-thread-safety"))
+        jit::js_IonOptions.checkThreadSafety = true;
 
     if (const char *str = op->getStringOption("ion-inlining")) {
         if (strcmp(str, "on") == 0)
@@ -5520,7 +5529,7 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     bool parallelCompilation = false;
     if (const char *str = op->getStringOption("ion-parallel-compile")) {
         if (strcmp(str, "on") == 0) {
-            if (cx->runtime()->helperThreadCount() == 0) {
+            if (cx->runtime()->workerThreadCount() == 0) {
                 fprintf(stderr, "Parallel compilation not available without helper threads");
                 return EXIT_FAILURE;
             }
@@ -5533,7 +5542,7 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
      * Note: In shell builds, parallel compilation is only enabled with an
      * explicit option.
      */
-    cx->runtime()->setCanUseHelperThreadsForIonCompilation(parallelCompilation);
+    cx->runtime()->setParallelIonCompilationEnabled(parallelCompilation);
 #endif /* JS_THREADSAFE */
 
 #endif /* JS_ION */
@@ -5645,9 +5654,6 @@ MaybeOverrideOutFileFromEnv(const char* const envVar,
         *outFile = defaultOut;
     }
 }
-
-/* Set the initial counter to 1 so the principal will never be destroyed. */
-static const JSPrincipals shellTrustedPrincipals = { 1 };
 
 static bool
 CheckObjectAccess(JSContext *cx, HandleObject obj, HandleId id, JSAccessMode mode,
@@ -5772,6 +5778,8 @@ main(int argc, char **argv, char **envp)
                                "Range analysis (default: on, off to disable)")
         || !op.addBoolOption('\0', "ion-check-range-analysis",
                                "Range analysis checking")
+        || !op.addBoolOption('\0', "ion-check-thread-safety",
+                             "IonBuilder thread safety checking")
         || !op.addStringOption('\0', "ion-inlining", "on/off",
                                "Inline methods where possible (default: on, off to disable)")
         || !op.addStringOption('\0', "ion-osr", "on/off",
@@ -5865,8 +5873,15 @@ main(int argc, char **argv, char **envp)
     if (!JS_Init())
         return 1;
 
+    // When doing thread safety checks for VM accesses made during Ion compilation,
+    // we rely on protected memory and only the main thread should be active.
+    JSUseHelperThreads useHelperThreads =
+        op.getBoolOption("ion-check-thread-safety")
+        ? JS_NO_HELPER_THREADS
+        : JS_USE_HELPER_THREADS;
+
     /* Use the same parameters as the browser in xpcjsruntime.cpp. */
-    rt = JS_NewRuntime(32L * 1024L * 1024L, JS_USE_HELPER_THREADS);
+    rt = JS_NewRuntime(32L * 1024L * 1024L, useHelperThreads);
     if (!rt)
         return 1;
     gTimeoutFunc = NullValue();
@@ -5878,6 +5893,10 @@ main(int argc, char **argv, char **envp)
     if (op.getBoolOption("no-ggc"))
         JS::DisableGenerationalGC(rt);
 #endif
+
+    /* Set the initial counter to 1 so the principal will never be destroyed. */
+    JSPrincipals shellTrustedPrincipals;
+    shellTrustedPrincipals.refcount = 1;
 
     JS_SetTrustedPrincipals(rt, &shellTrustedPrincipals);
     JS_SetSecurityCallbacks(rt, &securityCallbacks);

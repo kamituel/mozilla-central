@@ -1320,7 +1320,7 @@ case "$host" in
 *mingw*)
     if test -n "$_WIN32_MSVC"; then
         HOST_AR=lib
-        HOST_AR_FLAGS='-NOLOGO -OUT:"$@"'
+        HOST_AR_FLAGS='-NOLOGO -OUT:$@'
         HOST_CFLAGS="$HOST_CFLAGS -TC -nologo -Fd\$(HOST_PDBFILE)"
         HOST_RANLIB='echo ranlib'
     else
@@ -1619,7 +1619,7 @@ ia64*-hpux*)
             AS="$(basename "$AS_BIN")"
         fi
         AR='lib'
-        AR_FLAGS='-NOLOGO -OUT:"$@"'
+        AR_FLAGS='-NOLOGO -OUT:$@'
         AR_EXTRACT=
         RANLIB='echo not_ranlib'
         STRIP='echo not_strip'
@@ -2884,6 +2884,21 @@ AC_SUBST(NIGHTLY_BUILD)
 AC_SUBST(RELEASE_BUILD)
 
 dnl ========================================================
+dnl Disable compiling sources in unified mode.
+dnl ========================================================
+
+if test -z "$NIGHTLY_BUILD"; then
+    MOZ_DISABLE_UNIFIED_COMPILATION=1
+fi
+
+MOZ_ARG_DISABLE_BOOL(unified-compilation,
+[  --disable-unified-compilation
+                          Disable unified compilation of some C/C++ sources],
+    MOZ_DISABLE_UNIFIED_COMPILATION=1,
+    MOZ_DISABLE_UNIFIED_COMPILATION=)
+AC_SUBST(MOZ_DISABLE_UNIFIED_COMPILATION)
+
+dnl ========================================================
 dnl =
 dnl = Check for external package dependencies
 dnl =
@@ -2993,6 +3008,10 @@ dnl Standalone js defaults to system zlib
 ZLIB_DIR=yes
 
 MOZ_ZLIB_CHECK([1.2.3])
+
+if test -n "$ZLIB_IN_MOZGLUE"; then
+    AC_DEFINE(ZLIB_IN_MOZGLUE)
+fi
 
 dnl ========================================================
 dnl system libffi Support
@@ -4296,6 +4315,11 @@ if test -n "$ENABLE_INTL_API" -a -z "$MOZ_NATIVE_ICU"; then
         # --with-cross-build requires absolute path
         ICU_HOST_PATH=`cd $_objdir/intl/icu/host && pwd`
         ICU_CROSS_BUILD_OPT="--with-cross-build=$ICU_HOST_PATH"
+        ICU_TARGET_OPT="--build=$build --host=$target"
+    else
+        # CROSS_COMPILE isn't set build and target are i386 and x86-64.
+        # So we must set target for --build and --host.
+        ICU_TARGET_OPT="--build=$target --host=$target"
     fi
 
     # To reduce library size, use static linking
@@ -4337,6 +4361,21 @@ if test -n "$ENABLE_INTL_API" -a -z "$MOZ_NATIVE_ICU"; then
         if test "$_MSC_VER"; then
             ICU_CXXFLAGS=`echo $ICU_CXXFLAGS | sed 's|-GR-|-GR|g'`
         fi
+
+        # Add RTL flags for MSVCRT.DLL
+        if test -n "$MOZ_DEBUG"; then
+            ICU_CFLAGS="$ICU_CFLAGS -MDd"
+            ICU_CXXFLAGS="$ICU_CXXFLAGS -MDd"
+        else
+            ICU_CFLAGS="$ICU_CFLAGS -MD"
+            ICU_CXXFLAGS="$ICU_CXXFLAGS -MD"
+        fi
+
+        # add disable optimize flag for workaround for bug 899948
+        if test -z "$MOZ_OPTIMIZE"; then
+            ICU_CFLAGS="$ICU_CFLAGS -Od"
+            ICU_CXXFLAGS="$ICU_CXXFLAGS -Od"
+        fi
     fi
 
     # We cannot use AC_OUTPUT_SUBDIRS since ICU tree is out of spidermonkey.
@@ -4358,7 +4397,7 @@ if test -n "$ENABLE_INTL_API" -a -z "$MOZ_NATIVE_ICU"; then
                 $ICU_CROSS_BUILD_OPT \
                 $ICU_LINK_OPTS \
                 ${ICU_SRCDIR+"$ICU_SRCDIR"} \
-                --build=$build --host=$target \
+                $ICU_TARGET_OPT \
                 --disable-extras --disable-icuio --disable-layout \
                 --disable-tests --disable-samples || exit 1
        ])

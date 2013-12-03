@@ -3660,14 +3660,13 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
     nsCSSPseudoElements::GetPseudoType(pseudo);
   nsCSSPseudoClasses::Type pseudoClassType =
     nsCSSPseudoClasses::GetPseudoType(pseudo);
+  bool pseudoClassIsUserAction =
+    nsCSSPseudoClasses::IsUserActionPseudoClass(pseudoClassType);
 
   if (!mUnsafeRulesEnabled &&
-      (pseudoElementType == nsCSSPseudoElements::ePseudo_mozNumberWrapper ||
-       pseudoElementType == nsCSSPseudoElements::ePseudo_mozNumberText ||
-       pseudoElementType == nsCSSPseudoElements::ePseudo_mozNumberSpinBox ||
-       pseudoElementType == nsCSSPseudoElements::ePseudo_mozNumberSpinUp ||
-       pseudoElementType == nsCSSPseudoElements::ePseudo_mozNumberSpinDown)) {
-    // Hide these pseudo-elements from content until we standardize them.
+      pseudoElementType < nsCSSPseudoElements::ePseudo_PseudoElementCount &&
+      nsCSSPseudoElements::PseudoElementIsChromeOnly(pseudoElementType)) {
+    // This pseudo-element is not exposed to content.
     REPORT_UNEXPECTED_TOKEN(PEPseudoSelUnknown);
     UngetToken();
     return eSelectorParsingStatus_Error;
@@ -3759,6 +3758,22 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
     }
   }
   else if (!parsingPseudoElement && isPseudoClass) {
+    if (aSelector.IsPseudoElement()) {
+      nsCSSPseudoElements::Type type = aSelector.PseudoType();
+      if (!nsCSSPseudoElements::PseudoElementSupportsUserActionState(type)) {
+        // We only allow user action pseudo-classes on certain pseudo-elements.
+        REPORT_UNEXPECTED_TOKEN(PEPseudoSelNoUserActionPC);
+        UngetToken();
+        return eSelectorParsingStatus_Error;
+      }
+      if (!pseudoClassIsUserAction) {
+        // CSS 4 Selectors says that pseudo-elements can only be followed by
+        // a user action pseudo-class.
+        REPORT_UNEXPECTED_TOKEN(PEPseudoClassNotUserAction);
+        UngetToken();
+        return eSelectorParsingStatus_Error;
+      }
+    }
     aDataMask |= SEL_MASK_PCLASS;
     if (eCSSToken_Function == mToken.mType) {
       nsSelectorParsingStatus parsingStatus;
@@ -3827,15 +3842,21 @@ CSSParserImpl::ParsePseudoSelector(int32_t&       aDataMask,
       }
 #endif
 
-      // the next *non*whitespace token must be '{' or ',' or EOF
+      // Pseudo-elements can only be followed by user action pseudo-classes
+      // or be the end of the selector.  So the next non-whitespace token must
+      // be ':', '{' or ',' or EOF.
       if (!GetToken(true)) { // premature eof is ok (here!)
         return eSelectorParsingStatus_Done;
+      }
+      if (parsingPseudoElement && mToken.IsSymbol(':')) {
+        UngetToken();
+        return eSelectorParsingStatus_Continue;
       }
       if ((mToken.IsSymbol('{') || mToken.IsSymbol(','))) {
         UngetToken();
         return eSelectorParsingStatus_Done;
       }
-      REPORT_UNEXPECTED_TOKEN(PEPseudoSelTrailing);
+      REPORT_UNEXPECTED_TOKEN(PEPseudoSelEndOrUserActionPC);
       UngetToken();
       return eSelectorParsingStatus_Error;
     }
@@ -4201,6 +4222,19 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
                                           getter_AddRefs(pseudoElement),
                                           getter_Transfers(pseudoElementArgs),
                                           &pseudoElementType);
+      if (pseudoElement &&
+          pseudoElementType != nsCSSPseudoElements::ePseudo_AnonBox) {
+        // Pseudo-elements other than anonymous boxes are represented with
+        // a special ':' combinator.
+
+        aList->mWeight += selector->CalcWeight();
+
+        selector = aList->AddSelector(':');
+
+        selector->mLowercaseTag.swap(pseudoElement);
+        selector->mClassList = pseudoElementArgs.forget();
+        selector->SetPseudoType(pseudoElementType);
+      }
     }
     else if (mToken.IsSymbol('[')) {    // [attribute
       parsingStatus = ParseAttributeSelector(dataMask, *selector);
@@ -4254,16 +4288,6 @@ CSSParserImpl::ParseSelector(nsCSSSelectorList* aList,
   }
 
   aList->mWeight += selector->CalcWeight();
-
-  // Pseudo-elements other than anonymous boxes are represented as
-  // direct children ('>' combinator) of the rest of the selector.
-  if (pseudoElement) {
-    selector = aList->AddSelector('>');
-
-    selector->mLowercaseTag.swap(pseudoElement);
-    selector->mClassList = pseudoElementArgs.forget();
-    selector->SetPseudoType(pseudoElementType);
-  }
 
   return true;
 }
