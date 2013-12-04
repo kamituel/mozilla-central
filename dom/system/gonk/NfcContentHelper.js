@@ -48,7 +48,7 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:MakeReadOnlyNDEFResponse",
   "NFC:ConnectResponse",
   "NFC:CloseResponse",
-  "NFC:ValidateAppIDResponse",
+  "NFC:CheckP2PRegistrationResponse",
   "NFC:PeerEvent"
 ];
 
@@ -61,11 +61,10 @@ function NfcContentHelper() {
   Services.obs.addObserver(this, "xpcom-shutdown", false);
 
   this._requestMap = [];
-  /**
-   * Maintains an array of PeerEvent related callbacks, mainly
-   * one for 'peerReady' and another for 'peerLost'.
-   */
-  this.peerEventsCallbackMap = [];
+
+  // Maintains an array of PeerEvent related callbacks, mainly
+  // one for 'peerReady' and another for 'peerLost'.
+  this.peerEventsCallbackMap = {};
 }
 
 NfcContentHelper.prototype = {
@@ -223,30 +222,30 @@ NfcContentHelper.prototype = {
                                   Cr.NS_ERROR_UNEXPECTED);
     }
     this.peerEventsCallbackMap[event] = callback;
-    cpmm.sendAsyncMessage("NFC:RegisterPeerEvent", {
+    cpmm.sendAsyncMessage("NFC:RegisterPeerTarget", {
       appId: appId,
       event: event
     });
   },
 
-  unRegisterTargetForPeerEvent: function unRegisterTargetForPeerEvent(window,
+  unregisterTargetForPeerEvent: function unregisterTargetForPeerEvent(window,
                                                                 appId, event) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
-    let index = this.peerEventsCallbackMap.indexOf(event);
-    if (index != -1) {
-      this.peerEventsCallbackMap.splice(index, 1);
+    let callback = this.peerEventsCallbackMap[event];
+    if (callback != null) {
+      delete this.peerEventsCallbackMap[event];
     }
 
-    cpmm.sendAsyncMessage("NFC:UnregisterPeerEvent", {
+    cpmm.sendAsyncMessage("NFC:UnregisterPeerTarget", {
       appId: appId,
       event: event
     });
   },
 
-  validateAppManifestUrl: function validateAppManifestUrl(window, appId) {
+  checkP2PRegistration: function checkP2PRegistration(window, appId) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
@@ -255,9 +254,22 @@ NfcContentHelper.prototype = {
     let requestId = btoa(this.getRequestId(request));
     this._requestMap[requestId] = window;
 
-    cpmm.sendAsyncMessage("NFC:ValidateAppID", {appId: appId,
-                                                requestId: requestId});
+    cpmm.sendAsyncMessage("NFC:CheckP2PRegistration", {
+      appId: appId,
+      requestId: requestId
+    });
     return request;
+  },
+
+  notifyUserAcceptedP2P: function notifyUserAcceptedP2P(window, appId) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    cpmm.sendAsyncMessage("NFC:NotifyUserAcceptedP2P", {
+      appId: appId
+    });
   },
 
   // nsIObserver
@@ -309,17 +321,17 @@ NfcContentHelper.prototype = {
       case "NFC:WriteNDEFResponse":
       case "NFC:MakeReadOnlyNDEFResponse":
       case "NFC:GetDetailsNDEFResponse":
-      case "NFC:ValidateAppIDResponse":
+      case "NFC:CheckP2PRegistrationResponse":
         this.handleResponse(message.json);
         break;
       case "NFC:PeerEvent":
         let callback = this.peerEventsCallbackMap[message.json.event];
         if (callback) {
-           callback.peerNotification(message.json.event,
-                             message.json.sessionToken);
+          callback.peerNotification(message.json.event,
+                                    message.json.sessionToken);
         } else {
           debug("PeerEvent: No valid callback registered for the event " +
-            message.json.event);
+                message.json.event);
         }
         break;
     }

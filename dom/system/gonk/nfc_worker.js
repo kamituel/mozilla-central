@@ -305,7 +305,7 @@ let NfcWorker = {
     };
 
     Buf.newParcel(NFC_REQUEST_CONFIG , cb);
-    Buf.writeInt32(message.nfcHwState);
+    Buf.writeInt32(message.powerLevel);
     Buf.sendParcel();
   },
 

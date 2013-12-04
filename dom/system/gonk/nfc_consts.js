@@ -48,23 +48,24 @@ this.NFC_TECHS = {
   0:'NDEF',
   1:'NDEF_WRITEABLE',
   2:'NDEF_FORMATABLE',
-  3:'P2P'
+  3:'P2P',
+  4:'NFC_A'
 };
 
 // TODO: Bug 933595. Fill-in all error codes for Gonk/nfcd protocol
 this.GECKO_NFC_ERROR_SUCCESS             = 0;
 this.GECKO_NFC_ERROR_GENERIC_FAILURE     = 1;
 
-// NFC hardware states must match config PDUs.
-this.NFC_HW_STATE_UNKNOWN            = -1;
-this.NFC_HW_STATE_DISABLED           = 0;
-this.NFC_HW_STATE_ENABLED            = 1;
-this.NFC_HW_STATE_ENABLE_DISCOVERY   = 2;
-this.NFC_HW_STATE_DISABLE_DISCOVERY  = 3;
+// NFC powerlevels must match config PDUs.
+this.NFC_POWER_LEVEL_UNKNOWN        = -1;
+this.NFC_POWER_LEVEL_DISABLED       = 0;
+this.NFC_POWER_LEVEL_LOW            = 1;
+this.NFC_POWER_LEVEL_ENABLED        = 2;
 
 this.TOPIC_MOZSETTINGS_CHANGED      = "mozsettings-changed";
 this.TOPIC_XPCOM_SHUTDOWN           = "xpcom-shutdown";
 this.SETTING_NFC_ENABLED            = "nfc.enabled";
+this.SETTING_NFC_POWER_LEVEL        = "nfc.powerlevel";
 
 this.NFC_PEER_EVENT_READY = 0x01;
 this.NFC_PEER_EVENT_LOST  = 0x02;

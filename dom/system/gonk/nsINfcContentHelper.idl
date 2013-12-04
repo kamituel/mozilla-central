@@ -21,7 +21,7 @@ interface nsINfcPeerCallback : nsISupports
    *        SessionToken received from Chrome process
    */
    void peerNotification(in unsigned long event,
-                         [optional] in DOMString sessionToken);
+                         in DOMString sessionToken);
 };
 
 [scriptable, uuid(91c2760a-f41c-4174-ad68-614840d4e201)]
@@ -75,7 +75,7 @@ interface nsINfcContentHelper : nsISupports
                                     in unsigned long appId,
                                     in octet event);
  /**
-  * Validates if the given application's id is a registered peer target (with the Chrome process)
+  * Checks if the given application's id is a registered peer target (with the Chrome process)
   *
   * @param window
   *        Current window
@@ -83,7 +83,18 @@ interface nsINfcContentHelper : nsISupports
   * @param appId
   *        Application ID to be updated with Chrome process
   *
-  * Returns SUCCESS if registered, else ERROR
+  * Returns DOMRequest, if appId is registered then 'onsuccess' is called else 'onerror'
   */
-  nsIDOMDOMRequest validateAppManifestUrl(in nsIDOMWindow window, in unsigned long appId);
+  nsIDOMDOMRequest checkP2PRegistration(in nsIDOMWindow window, in unsigned long appId);
+
+ /**
+  * Notify the Chrome process that user has accepted to share nfc message on P2P UI
+  *
+  * @param window
+  *        Current window
+  *
+  * @param appId
+  *        Application ID that is capable of handling NFC_EVENT_PEER_READY event
+  */
+  void notifyUserAcceptedP2P(in nsIDOMWindow window, in unsigned long appId);
 };

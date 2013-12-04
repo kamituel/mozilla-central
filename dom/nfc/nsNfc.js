@@ -23,7 +23,6 @@ XPCOMUtils.defineLazyServiceGetter(this,
                                    "appsService",
                                    "@mozilla.org/AppsService;1",
                                    "nsIAppsService");
-
 const NFC_PEER_EVENT_READY = 0x01;
 const NFC_PEER_EVENT_LOST  = 0x02;
 
@@ -157,30 +156,23 @@ mozNfc.prototype = {
   init: function init(aWindow) {
     debug("mozNfc init called");
     this._window = aWindow;
-    var self = this;
-    this._cpmm = Cc["@mozilla.org/childprocessmessagemanager;1"]
-                   .getService(Ci.nsISyncMessageSender);
-    this._window.addEventListener("mozContentEvent", function (event) {
-      switch (event.detail.type) {
-        case 'nfc-hardware-state-change':
-          self._cpmm.sendAsyncMessage("NFC:HardwareStateChange",
-                                      { state: event.detail.nfcHardwareState });
-          break;
-      }
-    });
-
-    this._window.addEventListener("nfc-p2p-user-response", function (event) {
+    let origin = this._window.document.nodePrincipal.origin;
+    // Only System Process should listen on 'nfc-p2p-user-accept' event
+    if (origin !== 'app://system.gaiamobile.org') {
+      return;
+    }
+    let self = this;
+    this._window.addEventListener("nfc-p2p-user-accept", function (event) {
       let appID = appsService.getAppLocalIdByManifestURL(event.detail.manifestUrl);
-      self._cpmm.sendAsyncMessage("NFC:NotifyP2PUserResponse",
-                                  { appID : appID,
-                                    userResponse: event.detail.userResponse });
+      // Notify Chrome process of User's acknowledgement
+      self._nfcContentHelper.notifyUserAcceptedP2P(self._window, appID);
     });
   },
 
-  validateAppManifestUrl: function validateAppManifestUrl(manifestUrl) {
+  checkP2PRegistration: function checkP2PRegistration(manifestUrl) {
     // Get the AppID and pass it to ContentHelper
     let appID = appsService.getAppLocalIdByManifestURL(manifestUrl);
-    return this._nfcContentHelper.validateAppManifestUrl(this._window, appID);
+    return this._nfcContentHelper.checkP2PRegistration(this._window, appID);
   },
 
   getNFCTag: function getNFCTag(sessionToken) {
@@ -214,19 +206,6 @@ mozNfc.prototype = {
 
   set onpeerready(handler) {
     this.__DOM_IMPL__.setEventHandler("onpeerready", handler);
-    let appId = this._window.document.nodePrincipal.appId;
-
-    if (handler === null) {
-      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window, appId,
-                                                        NFC_PEER_EVENT_READY);
-    } else {
-      var self = this;
-      this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
-        NFC_PEER_EVENT_READY, function(evt, sessionToken) {
-          self.session = sessionToken;
-          self.firePeerEvent(evt, sessionToken, handler);
-      });
-    }
   },
 
   // get/set onpeerlost
@@ -236,22 +215,54 @@ mozNfc.prototype = {
 
   set onpeerlost(handler) {
     this.__DOM_IMPL__.setEventHandler("onpeerlost", handler);
-    let appId = this._window.document.nodePrincipal.appId;
-
-    if (handler === null) {
-      this._nfcContentHelper.unRegisterTargetForPeerEvent(this._window, appId,
-                                                         NFC_PEER_EVENT_LOST);
-    } else {
-      var self = this;
-      this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
-        NFC_PEER_EVENT_LOST, function(evt, sessionToken) {
-          self.session = sessionToken;
-          self.firePeerEvent(evt, sessionToken, handler);
-      });
-    }
   },
 
-  firePeerEvent: function firePeerEvent(evt, sessionToken, handler) {
+  eventListenerWasAdded: function(evt) {
+    let eventType = this.getEventType(evt);
+    if (eventType == -1)
+      return;
+    this.registerTarget(eventType);
+  },
+
+  eventListenerWasRemoved: function(evt) {
+    let eventType = this.getEventType(evt);
+    if (eventType == -1)
+      return;
+    this.unregisterTarget(eventType);
+  },
+
+  registerTarget: function registerTarget(event) {
+    let self = this;
+    let appId = this._window.document.nodePrincipal.appId;
+    this._nfcContentHelper.registerTargetForPeerEvent(this._window, appId,
+      event, function(evt, sessionToken) {
+        self.session = sessionToken;
+        self.firePeerEvent(evt, sessionToken);
+    });
+  },
+
+  unregisterTarget: function unregisterTarget(event) {
+    let appId = this._window.document.nodePrincipal.appId;
+    this._nfcContentHelper.unregisterTargetForPeerEvent(this._window,
+                                                        appId, event);
+  },
+
+  getEventType: function getEventType(evt) {
+    let eventType = -1;
+    switch (evt) {
+      case 'peerready':
+        eventType = NFC_PEER_EVENT_READY;
+        break;
+      case 'peerlost':
+        eventType = NFC_PEER_EVENT_LOST;
+        break;
+      default:
+        break;
+    }
+    return eventType;
+  },
+
+  firePeerEvent: function firePeerEvent(evt, sessionToken) {
     let peerEvent = (NFC_PEER_EVENT_READY === evt) ? "peerready" : "peerlost";
     let detail = {
       "detail":sessionToken

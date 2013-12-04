@@ -5,22 +5,27 @@
  /* Copyright © 2013 Deutsche Telekom, Inc. */
 
 [JSImplementation="@mozilla.org/navigatorNfc;1",
- NavigatorProperty="mozNfc",
- Func="Navigator::HasNfcSupport"]
+ NavigatorProperty="mozNfc"]
 interface MozNfc : EventTarget {
    MozNFCTag getNFCTag(DOMString sessionId);
    MozNFCPeer getNFCPeer(DOMString sessionId);
 
    /**
-    * API to validate if the top-most (visible) application's manifest
+    * API to check if the given application's manifest
     * URL is registered with the Chrome Process or not.
     *
-    * Returns success if given maifestUrl is registered for 'onpeerready',
+    * Returns success if given manifestUrl is registered for 'onpeerready',
     * otherwise error
     *
-    * Users of this API should have valid permission 'nfc-manager'.
+    * Users of this API should have valid permissions 'nfc-manager'
+    * and 'nfc-write'
     */
-   DOMRequest validateAppManifestUrl(DOMString manifestUrl);
+   DOMRequest checkP2PRegistration(DOMString manifestUrl);
+
    attribute EventHandler onpeerready;
    attribute EventHandler onpeerlost;
+   [ChromeOnly]
+   void eventListenerWasAdded(DOMString aType);
+   [ChromeOnly]
+   void eventListenerWasRemoved(DOMString aType);
 };
