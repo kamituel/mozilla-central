@@ -110,7 +110,7 @@ MozNFCPeer.prototype = {
 
   initialize: function(aWindow, aSessionToken) {
     this._window = aWindow;
-    this.session = aSessionToken;
+    this.setSessionToken(aSessionToken);
   },
 
   // ChromeOnly interface
