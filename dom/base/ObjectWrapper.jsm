@@ -55,6 +55,9 @@ this.ObjectWrapper = {
       }, this);
       return res;
     } else if (TypedArrayThings.indexOf(kind) !== -1) {
+      // This is slow, because from the perspective of the constructor in aCtxt
+      // aObject is a CCW, and it gets the indexed properties one by one rather
+      // instead of realizing that this is already a typed array thing.
       return new aCtxt[kind](aObject);
     } else if (kind == "file") {
       return new aCtxt.File(aObject,

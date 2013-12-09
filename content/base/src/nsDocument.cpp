@@ -4653,6 +4653,15 @@ nsDocument::DispatchContentLoadedEvents()
     mTiming->NotifyDOMContentLoadedStart(nsIDocument::GetDocumentURI());
   }
 
+  // Dispatch observer notification to notify observers document is interactive.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsIPrincipal *principal = GetPrincipal();
+  os->NotifyObservers(static_cast<nsIDocument*>(this),
+                      nsContentUtils::IsSystemPrincipal(principal) ?
+                        "chrome-document-interactive" :
+                        "content-document-interactive",
+                      nullptr);
+
   // Fire a DOM event notifying listeners that this document has been
   // loaded (excluding images and other loads initiated by this
   // document).
@@ -6831,6 +6840,8 @@ nsDocument::GetViewportInfo(const ScreenIntSize& aDisplaySize)
   switch (mViewportType) {
   case DisplayWidthHeight:
     return nsViewportInfo(aDisplaySize);
+  case DisplayWidthHeightNoZoom:
+    return nsViewportInfo(aDisplaySize, /* allowZoom */ false);
   case Unknown:
   {
     nsAutoString viewport;
@@ -6860,6 +6871,21 @@ nsDocument::GetViewportInfo(const ScreenIntSize& aDisplaySize)
       if (handheldFriendly.EqualsLiteral("true")) {
         mViewportType = DisplayWidthHeight;
         return nsViewportInfo(aDisplaySize);
+      }
+
+      // Bug 940036. This is bad. When FirefoxOS was built, apps installed
+      // where not using the AsyncPanZoom code. As a result a lot of apps
+      // in the marketplace does not use it yet and instead are built to
+      // render correctly in FirefoxOS only. For a smooth transition the above
+      // code force installed apps to render as if they have a viewport with
+      // content="width=device-width, height=device-height, user-scalable=no".
+      // This could be safely remove once it is known that most apps in the
+      // marketplace use it and that users does not use an old version of the
+      // app that does not use it.
+      nsCOMPtr<nsIDocShell> docShell(mDocumentContainer);
+      if (docShell && docShell->GetIsApp()) {
+        mViewportType = DisplayWidthHeightNoZoom;
+        return nsViewportInfo(aDisplaySize, /* allowZoom */ false);
       }
     }
 
@@ -8110,6 +8136,17 @@ nsDocument::OnPageShow(bool aPersisted,
   if (!target) {
     target = do_QueryInterface(GetWindow());
   }
+
+  // Dispatch observer notification to notify observers page is shown.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsIPrincipal *principal = GetPrincipal();
+  os->NotifyObservers(static_cast<nsIDocument*>(this),
+                      nsContentUtils::IsSystemPrincipal(principal) ?
+                        "chrome-page-shown" :
+                        "content-page-shown",
+                      nullptr);
+
+
   DispatchPageTransition(target, NS_LITERAL_STRING("pageshow"), aPersisted);
 }
 
@@ -8172,6 +8209,16 @@ nsDocument::OnPageHide(bool aPersisted,
   if (!target) {
     target = do_QueryInterface(GetWindow());
   }
+
+  // Dispatch observer notification to notify observers page is hidden.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsIPrincipal *principal = GetPrincipal();
+  os->NotifyObservers(static_cast<nsIDocument*>(this),
+                      nsContentUtils::IsSystemPrincipal(principal) ?
+                        "chrome-page-hidden" :
+                        "content-page-hidden",
+                      nullptr);
+
   DispatchPageTransition(target, NS_LITERAL_STRING("pagehide"), aPersisted);
 
   mVisible = false;
@@ -8494,11 +8541,17 @@ FireOrClearDelayedEvents(nsTArray<nsCOMPtr<nsIDocument> >& aDocuments,
     return;
 
   for (uint32_t i = 0; i < aDocuments.Length(); ++i) {
+    // NB: Don't bother trying to fire delayed events on documents that were
+    // closed before this event ran.
     if (!aDocuments[i]->EventHandlingSuppressed()) {
       fm->FireDelayedEvents(aDocuments[i]);
       nsCOMPtr<nsIPresShell> shell = aDocuments[i]->GetShell();
       if (shell) {
-        shell->FireOrClearDelayedEvents(aFireEvents);
+        // Only fire events for active documents.
+        bool fire = aFireEvents &&
+                    aDocuments[i]->GetInnerWindow() &&
+                    aDocuments[i]->GetInnerWindow()->IsCurrentInnerWindow();
+        shell->FireOrClearDelayedEvents(fire);
       }
     }
   }
