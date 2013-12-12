@@ -30,6 +30,7 @@ class GestureEventListener;
 class ContainerLayer;
 class ViewTransform;
 class APZCTreeManager;
+class AsyncPanZoomAnimation;
 
 /**
  * Controller for all panning and zooming logic. Any time a user input is
@@ -133,8 +134,16 @@ public:
    * minimum-scale, maximum-scale, and user-scalable.
    */
   void UpdateZoomConstraints(bool aAllowZoom,
-                             const mozilla::CSSToScreenScale& aMinScale,
-                             const mozilla::CSSToScreenScale& aMaxScale);
+                             const CSSToScreenScale& aMinScale,
+                             const CSSToScreenScale& aMaxScale);
+
+  /**
+   * Return the zoom constraints last set for this APZC (in the constructor
+   * or in UpdateZoomConstraints()).
+   */
+  void GetZoomConstraints(bool* aAllowZoom,
+                          CSSToScreenScale* aMinScale,
+                          CSSToScreenScale* aMaxScale);
 
   /**
    * Schedules a runnable to run on the controller/UI thread at some time
@@ -145,6 +154,8 @@ public:
   // --------------------------------------------------------------------------
   // These methods must only be called on the compositor thread.
   //
+
+  bool UpdateAnimation(const TimeStamp& aSampleTime);
 
   /**
    * The compositor calls this when it's about to draw pannable/zoomable content
@@ -256,6 +267,8 @@ public:
    */
   void UpdateScrollOffset(const CSSPoint& aScrollOffset);
 
+  void StartAnimation(AsyncPanZoomAnimation* aAnimation);
+
   /**
    * Cancels any currently running animation. Note that all this does is set the
    * state of the AsyncPanZoomController back to NOTHING, but it is the
@@ -337,30 +350,23 @@ protected:
   nsEventStatus OnScaleEnd(const PinchGestureInput& aEvent);
 
   /**
-   * Helper method for long press gestures.
-   *
-   * XXX: Implement this.
+   * Helper methods for long press gestures.
    */
   nsEventStatus OnLongPress(const TapGestureInput& aEvent);
+  nsEventStatus OnLongPressUp(const TapGestureInput& aEvent);
 
   /**
    * Helper method for single tap gestures.
-   *
-   * XXX: Implement this.
    */
   nsEventStatus OnSingleTapUp(const TapGestureInput& aEvent);
 
   /**
    * Helper method for a single tap confirmed.
-   *
-   * XXX: Implement this.
    */
   nsEventStatus OnSingleTapConfirmed(const TapGestureInput& aEvent);
 
   /**
    * Helper method for double taps.
-   *
-   * XXX: Implement this.
    */
   nsEventStatus OnDoubleTap(const TapGestureInput& aEvent);
 
@@ -526,6 +532,14 @@ private:
   void SetState(PanZoomState aState);
 
   /**
+   * Convert ScreenPoint relative to this APZC to CSSIntPoint relative
+   * to the parent document. This excludes the transient compositor transform.
+   * NOTE: This must be converted to CSSIntPoint relative to the child
+   * document before sending over IPC.
+   */
+  bool ConvertToGecko(const ScreenPoint& aPoint, CSSIntPoint* aOut);
+
+  /**
    * Internal helpers for checking general state of this apzc.
    */
   bool IsTransformingState(PanZoomState aState);
@@ -578,16 +592,6 @@ private:
   // If we don't do this check, we don't get a ShadowLayersUpdated back.
   FrameMetrics mLastPaintRequestMetrics;
 
-  // Old metrics from before we started a zoom animation. This is only valid
-  // when we are in the "ANIMATED_ZOOM" state. This is used so that we can
-  // interpolate between the start and end frames. We only use the
-  // |mViewportScrollOffset| and |mResolution| fields on this.
-  FrameMetrics mStartZoomToMetrics;
-  // Target metrics for a zoom to animation. This is only valid when we are in
-  // the "ANIMATED_ZOOM" state. We only use the |mViewportScrollOffset| and
-  // |mResolution| fields on this.
-  FrameMetrics mEndZoomToMetrics;
-
   nsTArray<MultiTouchInput> mTouchQueue;
 
   CancelableTask* mTouchListenerTimeoutTask;
@@ -599,18 +603,14 @@ private:
   // values; for example, allowing a min zoom of 0.0 can cause very bad things
   // to happen.
   bool mAllowZoom;
-  mozilla::CSSToScreenScale mMinZoom;
-  mozilla::CSSToScreenScale mMaxZoom;
+  CSSToScreenScale mMinZoom;
+  CSSToScreenScale mMaxZoom;
 
   // The last time the compositor has sampled the content transform for this
   // frame.
   TimeStamp mLastSampleTime;
   // The last time a touch event came through on the UI thread.
   uint32_t mLastEventTime;
-
-  // Start time of an animation. This is used for a zoom to animation to mark
-  // the beginning.
-  TimeStamp mAnimationStartTime;
 
   // Stores the previous focus point if there is a pinch gesture happening. Used
   // to allow panning by moving multiple fingers (thus moving the focus point).
@@ -638,6 +638,8 @@ private:
   // queued up event block. If set, this means that we are handling this queue
   // and we don't want to queue the events back up again.
   bool mHandlingTouchQueue;
+
+  RefPtr<AsyncPanZoomAnimation> mAnimation;
 
   friend class Axis;
 
@@ -722,6 +724,29 @@ private:
   gfx3DMatrix mAncestorTransform;
   /* This is the CSS transform for this APZC's layer. */
   gfx3DMatrix mCSSTransform;
+};
+
+class AsyncPanZoomAnimation {
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(AsyncPanZoomAnimation)
+
+public:
+  AsyncPanZoomAnimation(const TimeDuration& aRepaintInterval =
+                        TimeDuration::Forever())
+    : mRepaintInterval(aRepaintInterval)
+  { }
+
+  virtual ~AsyncPanZoomAnimation()
+  { }
+
+  virtual bool Sample(FrameMetrics& aFrameMetrics,
+                      const TimeDuration& aDelta) = 0;
+
+  /**
+   * Specifies how frequently (at most) we want to do repaints during the
+   * animation sequence. TimeDuration::Forever() will cause it to only repaint
+   * at the end of the animation.
+   */
+  TimeDuration mRepaintInterval;
 };
 
 }

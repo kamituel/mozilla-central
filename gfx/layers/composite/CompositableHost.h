@@ -108,12 +108,6 @@ public:
     mBackendData = aBackendData;
   }
 
-  /**
-   * Our IPDL actor is being destroyed, get rid of any shmem resources now and
-   * don't worry about compositing anymore.
-   */
-  virtual void OnActorDestroy() = 0;
-
   // If base class overrides, it should still call the parent implementation
   virtual void SetCompositor(Compositor* aCompositor);
 
@@ -211,7 +205,7 @@ public:
   /**
    * Returns the front buffer.
    */
-  virtual TextureHost* GetTextureHost() { return nullptr; }
+  virtual TextureHost* GetAsTextureHost() { return nullptr; }
 
   virtual LayerRenderState GetRenderState() = 0;
 
@@ -294,17 +288,13 @@ public:
 
   virtual void PrintInfo(nsACString& aTo, const char* aPrefix) { }
 
-  void AddTextureHost(TextureHost* aTexture);
-  virtual void UseTextureHost(TextureHost* aTexture) {}
-  virtual void RemoveTextureHost(uint64_t aTextureID);
-  TextureHost* GetTextureHost(uint64_t aTextureID);
+  virtual void UseTextureHost(TextureHost* aTexture);
 
 protected:
   TextureInfo mTextureInfo;
   Compositor* mCompositor;
   Layer* mLayer;
   RefPtr<CompositableBackendSpecificData> mBackendData;
-  RefPtr<TextureHost> mFirstTexture;
   bool mAttached;
   bool mKeepAttached;
 };

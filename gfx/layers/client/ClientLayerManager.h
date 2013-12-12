@@ -66,13 +66,14 @@ public:
   virtual void Mutated(Layer* aLayer);
 
   virtual already_AddRefed<ThebesLayer> CreateThebesLayer();
+  virtual already_AddRefed<ThebesLayer> CreateThebesLayerWithHint(ThebesLayerCreationHint aHint);
   virtual already_AddRefed<ContainerLayer> CreateContainerLayer();
   virtual already_AddRefed<ImageLayer> CreateImageLayer();
   virtual already_AddRefed<CanvasLayer> CreateCanvasLayer();
   virtual already_AddRefed<ColorLayer> CreateColorLayer();
   virtual already_AddRefed<RefLayer> CreateRefLayer();
 
-  virtual TextureFactoryIdentifier GetTextureFactoryIdentifier() MOZ_OVERRIDE
+  TextureFactoryIdentifier GetTextureFactoryIdentifier()
   {
     return mForwarder->GetTextureFactoryIdentifier();
   }

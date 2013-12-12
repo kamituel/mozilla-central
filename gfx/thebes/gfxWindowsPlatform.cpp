@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "gfxWindowsPlatform.h"
 
@@ -209,7 +209,7 @@ typedef HRESULT (WINAPI*D3D11CreateDeviceFunc)(
   ID3D11DeviceContext *ppImmediateContext
 );
 
-class GPUAdapterReporter : public MemoryMultiReporter
+class GPUAdapterReporter : public nsIMemoryReporter
 {
     // Callers must Release the DXGIAdapter after use or risk mem-leak
     static bool GetDXGIAdapter(IDXGIAdapter **DXGIAdapter)
@@ -229,9 +229,7 @@ class GPUAdapterReporter : public MemoryMultiReporter
     }
 
 public:
-    GPUAdapterReporter()
-      : MemoryMultiReporter("gpu-adapter")
-    {}
+    NS_DECL_ISUPPORTS
 
     NS_IMETHOD
     CollectReports(nsIMemoryReporterCallback* aCb,
@@ -340,6 +338,8 @@ public:
         return NS_OK;
     }
 };
+
+NS_IMPL_ISUPPORTS1(GPUAdapterReporter, nsIMemoryReporter)
 
 static __inline void
 BuildKeyNameFromFontName(nsAString &aName)
@@ -1118,7 +1118,7 @@ gfxWindowsPlatform::UseClearTypeAlways()
 }
 
 void 
-gfxWindowsPlatform::GetDLLVersion(const PRUnichar *aDLLPath, nsAString& aVersion)
+gfxWindowsPlatform::GetDLLVersion(char16ptr_t aDLLPath, nsAString& aVersion)
 {
     DWORD versInfoSize, vers[4] = {0};
     // version info not available case

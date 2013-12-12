@@ -12,7 +12,6 @@ Cu.import('resource://gre/modules/ActivitiesService.jsm');
 Cu.import('resource://gre/modules/PermissionPromptHelper.jsm');
 Cu.import('resource://gre/modules/ObjectWrapper.jsm');
 Cu.import('resource://gre/modules/NotificationDB.jsm');
-Cu.import('resource://gre/modules/accessibility/AccessFu.jsm');
 Cu.import('resource://gre/modules/Payment.jsm');
 Cu.import("resource://gre/modules/AppsUtils.jsm");
 Cu.import('resource://gre/modules/UserAgentOverrides.jsm');
@@ -310,7 +309,6 @@ var shell = {
 
     CustomEventManager.init();
     WebappsHelper.init();
-    AccessFu.attach(window);
     UserAgentOverrides.init();
     IndexedDBPromptHelper.init();
     CaptivePortalLoginHelper.init();
@@ -1346,7 +1344,7 @@ window.addEventListener('ContentStart', function update_onContentStart() {
         break;
       case 'content-shutdown':
         // iterate through all the existing active processes
-        Object.keys(gRecordingActiveProcesses[processId]).foreach(function(requestURL) {
+        Object.keys(gRecordingActiveProcesses[processId]).forEach(function(requestURL) {
           commandHandler(requestURL, { type: aData,
                                        isAudio: true,
                                        isVideo: true});

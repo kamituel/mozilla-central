@@ -174,7 +174,7 @@ jit::EnterBaselineAtBranch(JSContext *cx, StackFrame *fp, jsbytecode *pc)
         data.jitcode += MacroAssembler::ToggledCallSize();
 
     data.osrFrame = fp;
-    data.osrNumStackValues = fp->script()->nfixed + cx->interpreterRegs().stackDepth();
+    data.osrNumStackValues = fp->script()->nfixed() + cx->interpreterRegs().stackDepth();
 
     RootedValue thisv(cx);
 
@@ -247,7 +247,7 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
 {
     // Limit the locals on a given script so that stack check on baseline frames        
     // doesn't overflow a uint32_t value.
-    static_assert(sizeof(script->nslots) == sizeof(uint16_t), "script->nslots may get too large!");
+    JS_ASSERT(script->nslots() <= UINT16_MAX);
 
     JS_ASSERT(jit::IsBaselineEnabled(cx));
 
@@ -280,7 +280,7 @@ CanEnterBaselineJIT(JSContext *cx, HandleScript script, bool osr)
         return Method_Skipped;
     }
 
-    if (script->isCallsiteClone) {
+    if (script->isCallsiteClone()) {
         // Ensure the original function is compiled too, so that bailouts from
         // Ion code have a BaselineScript to resume into.
         RootedScript original(cx, script->originalFunction()->nonLazyScript());
@@ -356,15 +356,14 @@ jit::CanEnterBaselineMethod(JSContext *cx, RunState &state)
     return CanEnterBaselineJIT(cx, script, /* osr = */false);
 };
 
-// Be safe, align IC entry list to 8 in all cases.
-static const unsigned DataAlignment = sizeof(uintptr_t);
-
 BaselineScript *
 BaselineScript::New(JSContext *cx, uint32_t prologueOffset,
                     uint32_t spsPushToggleOffset, size_t icEntries,
                     size_t pcMappingIndexEntries, size_t pcMappingSize,
                     size_t bytecodeTypeMapEntries)
 {
+    static const unsigned DataAlignment = sizeof(uintptr_t);
+
     size_t paddedBaselineScriptSize = AlignBytes(sizeof(BaselineScript), DataAlignment);
 
     size_t icEntriesSize = icEntries * sizeof(ICEntry);
@@ -748,7 +747,7 @@ BaselineScript::toggleDebugTraps(JSScript *script, jsbytecode *pc)
     if (!debugMode())
         return;
 
-    SrcNoteLineScanner scanner(script->notes(), script->lineno);
+    SrcNoteLineScanner scanner(script->notes(), script->lineno());
 
     JSRuntime *rt = script->runtimeFromMainThread();
     IonContext ictx(CompileRuntime::get(rt),

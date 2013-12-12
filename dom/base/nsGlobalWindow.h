@@ -342,7 +342,7 @@ public:
 
   // nsIScriptGlobalObject
   virtual nsIScriptContext *GetContext();
-  JSObject *FastGetGlobalJSObject()
+  JSObject *FastGetGlobalJSObject() const
   {
     return mJSObject;
   }
@@ -944,6 +944,10 @@ public:
                                             const mozilla::dom::Sequence<JS::Value>& aExtraArgument,
                                             mozilla::ErrorResult& aError);
   JSObject* GetContent(JSContext* aCx, mozilla::ErrorResult& aError);
+  JSObject* Get_content(JSContext* aCx, mozilla::ErrorResult& aError)
+  {
+    return GetContent(aCx, aError);
+  }
 
 protected:
   // Array of idle observers that are notified of idle events.
@@ -978,6 +982,7 @@ protected:
 
   // Object Management
   virtual ~nsGlobalWindow();
+  void ClearDelayedEventsAndDropDocument();
   void CleanUp();
   void ClearControllers();
   nsresult FinalClose();

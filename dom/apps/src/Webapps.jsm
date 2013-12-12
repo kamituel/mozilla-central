@@ -313,10 +313,9 @@ this.DOMApplicationRegistry = {
 
     // Create or Update the DataStore for this app
     this._readManifests([{ id: aId }], (function(aResult) {
-      this.updateDataStore(this.webapps[aId].localId,
-                           this.webapps[aId].origin,
-                           this.webapps[aId].manifestURL,
-                           aResult[0].manifest);
+      let app = this.webapps[aId];
+      this.updateDataStore(app.localId, app.origin, app.manifestURL,
+                           aResult[0].manifest, app.appStatus);
     }).bind(this));
   },
 
@@ -452,6 +451,31 @@ this.DOMApplicationRegistry = {
 #endif
   },
 
+  // For hosted apps, uninstall an app served from http:// if we have
+  // one installed from the same url with an https:// scheme.
+  removeIfHttpsDuplicate: function(aId) {
+#ifdef MOZ_WIDGET_GONK
+    let app = this.webapps[aId];
+    if (!app || !app.origin.startsWith("http://")) {
+      return;
+    }
+
+    let httpsManifestURL =
+      "https://" + app.manifestURL.substring("http://".length);
+
+    // This will uninstall the http apps and remove any data hold by this
+    // app. Bug 948105 tracks data migration from http to https apps.
+    for (let id in this.webapps) {
+       if (this.webapps[id].manifestURL === httpsManifestURL) {
+         debug("Found a http/https match: " + app.manifestURL + " / " +
+               this.webapps[id].manifestURL);
+         this.uninstall(app.manifestURL, function() {}, function() {});
+         return;
+       }
+    }
+#endif
+  },
+
   // Implements the core of bug 787439
   // if at first run, go through these steps:
   //   a. load the core apps registry.
@@ -556,6 +580,7 @@ this.DOMApplicationRegistry = {
         // At first run, install preloaded apps and set up their permissions.
         for (let id in this.webapps) {
           this.installPreinstalledApp(id);
+          this.removeIfHttpsDuplicate(id);
           if (!this.webapps[id]) {
             continue;
           }
@@ -588,7 +613,15 @@ this.DOMApplicationRegistry = {
     }).bind(this));
   },
 
-  updateDataStore: function(aId, aOrigin, aManifestURL, aManifest) {
+  updateDataStore: function(aId, aOrigin, aManifestURL, aManifest, aAppStatus) {
+    // Just Certified Apps can use DataStores
+    let prefName = "dom.testing.datastore_enabled_for_hosted_apps";
+    if (aAppStatus != Ci.nsIPrincipal.APP_STATUS_CERTIFIED &&
+        (Services.prefs.getPrefType(prefName) == Services.prefs.PREF_INVALID ||
+         !Services.prefs.getBoolPref(prefName))) {
+      return;
+    }
+
     if ('datastores-owned' in aManifest) {
       for (let name in aManifest['datastores-owned']) {
         let readonly = "access" in aManifest['datastores-owned'][name]
@@ -1477,7 +1510,7 @@ this.DOMApplicationRegistry = {
               true);
           }
           this.updateDataStore(this.webapps[id].localId, app.origin,
-                               app.manifestURL, aData);
+                               app.manifestURL, aData, app.appStatus);
           this.broadcastMessage("Webapps:UpdateState", {
             app: app,
             manifest: aData,
@@ -1651,7 +1684,7 @@ this.DOMApplicationRegistry = {
         }
 
         this.updateDataStore(this.webapps[id].localId, app.origin,
-                             app.manifestURL, app.manifest);
+                             app.manifestURL, app.manifest, app.appStatus);
 
         app.name = manifest.name;
         app.csp = manifest.csp || "";
@@ -2287,7 +2320,8 @@ onInstallSuccessAck: function onInstallSuccessAck(aManifestURL,
       }
 
       this.updateDataStore(this.webapps[id].localId,  this.webapps[id].origin,
-                           this.webapps[id].manifestURL, jsonManifest);
+                           this.webapps[id].manifestURL, jsonManifest,
+                           this.webapps[id].appStatus);
     }
 
     for each (let prop in ["installState", "downloadAvailable", "downloading",
@@ -2398,7 +2432,7 @@ onInstallSuccessAck: function onInstallSuccessAck(aManifestURL,
       }
 
       this.updateDataStore(this.webapps[aId].localId, aNewApp.origin,
-                           aNewApp.manifestURL, aManifest);
+                           aNewApp.manifestURL, aManifest, aNewApp.appStatus);
 
       this.broadcastMessage("Webapps:UpdateState", {
         app: app,

@@ -77,7 +77,7 @@ LIRGeneratorShared::defineFixed(LInstructionHelper<1, X, Y> *lir, MDefinition *m
         return false;
 
     if (js_IonOptions.registerAllocator == RegisterAllocator_LSRA) {
-        if (!add(new LNop))
+        if (!add(new(alloc()) LNop))
             return false;
     }
 
@@ -164,7 +164,7 @@ LIRGeneratorShared::defineReturn(LInstruction *lir, MDefinition *mir)
         return false;
 
     if (js_IonOptions.registerAllocator == RegisterAllocator_LSRA) {
-        if (!add(new LNop))
+        if (!add(new(alloc()) LNop))
             return false;
     }
 
@@ -446,8 +446,10 @@ LIRGeneratorShared::add(T *ins, MInstruction *mir)
 {
     JS_ASSERT(!ins->isPhi());
     current->add(ins);
-    if (mir)
+    if (mir) {
+        JS_ASSERT(current == mir->block()->lir());
         ins->setMir(mir);
+    }
     annotate(ins);
     return true;
 }

@@ -187,15 +187,6 @@ abstract public class BrowserApp extends GeckoApp
     // race by determining if the web content should be hidden at the animation's end.
     private boolean mHideWebContentOnAnimationEnd = false;
 
-    private SiteIdentityPopup mSiteIdentityPopup;
-
-    public SiteIdentityPopup getSiteIdentityPopup() {
-        if (mSiteIdentityPopup == null)
-            mSiteIdentityPopup = new SiteIdentityPopup(this);
-
-        return mSiteIdentityPopup;
-    }
-
     @Override
     public void onTabChanged(Tab tab, Tabs.TabEvents msg, Object data) {
         if (tab == null) {
@@ -217,9 +208,6 @@ abstract public class BrowserApp extends GeckoApp
             case SELECTED:
                 if (Tabs.getInstance().isSelectedTab(tab)) {
                     updateHomePagerForTab(tab);
-
-                    if (mSiteIdentityPopup != null)
-                        mSiteIdentityPopup.dismiss();
 
                     final TabsPanel.Panel panel = tab.isPrivate()
                                                 ? TabsPanel.Panel.PRIVATE_TABS
@@ -429,7 +417,7 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        mAboutHomeStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_ABOUTHOME");
+        mAboutHomeStartupTimer = new Telemetry.UptimeTimer("FENNEC_STARTUP_TIME_ABOUTHOME");
 
         final Intent intent = getIntent();
 
@@ -617,8 +605,7 @@ abstract public class BrowserApp extends GeckoApp
             return;
         }
 
-        if (mSiteIdentityPopup != null && mSiteIdentityPopup.isShowing()) {
-            mSiteIdentityPopup.dismiss();
+        if (mBrowserToolbar.onBackPressed()) {
             return;
         }
 
@@ -878,9 +865,6 @@ abstract public class BrowserApp extends GeckoApp
     protected void initializeChrome() {
         super.initializeChrome();
 
-        mBrowserToolbar.updateBackButton(false);
-        mBrowserToolbar.updateForwardButton(false);
-
         mDoorHangerPopup.setAnchor(mBrowserToolbar.getDoorHangerAnchor());
 
         // Listen to margin changes to position the toolbar correctly
@@ -1050,9 +1034,7 @@ abstract public class BrowserApp extends GeckoApp
         invalidateOptionsMenu();
         updateSideBarState();
         mTabsPanel.refresh();
-        if (mSiteIdentityPopup != null) {
-            mSiteIdentityPopup.dismiss();
-        }
+        mBrowserToolbar.refresh();
     }
 
     @Override
@@ -2539,9 +2521,17 @@ abstract public class BrowserApp extends GeckoApp
         if (mActionMode == null) {
             mViewFlipper.showNext();
             LayerMarginsAnimator margins = mLayerView.getLayerMarginsAnimator();
-            margins.setMaxMargins(0, mViewFlipper.getHeight(), 0, 0);
+
+            // If the toolbar is dynamic and not currently showing, just slide it in
+            if (isDynamicToolbarEnabled() && !margins.areMarginsShown()) {
+                margins.setMaxMargins(0, mViewFlipper.getHeight(), 0, 0);
+                margins.showMargins(false);
+            } else {
+                // Otherwise, we animate the actionbar itself
+                mActionBar.animateIn();
+            }
+
             margins.setMarginsPinned(true);
-            margins.showMargins(false);
         } else {
             // Otherwise, we're already showing an action mode. Just finish it and show the new one
             mActionMode.finish();

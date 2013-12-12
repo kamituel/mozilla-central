@@ -42,7 +42,7 @@ double AudioStream::sVolumeScale;
 uint32_t AudioStream::sCubebLatency;
 bool AudioStream::sCubebLatencyPrefSet;
 
-/*static*/ int AudioStream::PrefChanged(const char* aPref, void* aClosure)
+/*static*/ void AudioStream::PrefChanged(const char* aPref, void* aClosure)
 {
   if (strcmp(aPref, PREF_VOLUME_SCALE) == 0) {
     nsAdoptingString value = Preferences::GetString(aPref);
@@ -62,7 +62,6 @@ bool AudioStream::sCubebLatencyPrefSet;
     StaticMutexAutoLock lock(sMutex);
     sCubebLatency = std::min<uint32_t>(std::max<uint32_t>(value, 1), 1000);
   }
-  return 0;
 }
 
 /*static*/ double AudioStream::GetVolumeScale()
@@ -161,8 +160,6 @@ AudioStream::~AudioStream()
   Preferences::RegisterCallback(PrefChanged, PREF_VOLUME_SCALE);
   PrefChanged(PREF_CUBEB_LATENCY, nullptr);
   Preferences::RegisterCallback(PrefChanged, PREF_CUBEB_LATENCY);
-
-  InitPreferredSampleRate();
 }
 
 /*static*/ void AudioStream::ShutdownLibrary()
@@ -267,16 +264,28 @@ int64_t AudioStream::GetWritten()
   return 0;
 }
 
-/*static */ void AudioStream::InitPreferredSampleRate()
+/*static*/ int AudioStream::PreferredSampleRate()
 {
+  const int fallbackSampleRate = 44100;
+  StaticMutexAutoLock lock(sMutex);
+  if (sPreferredSampleRate != 0) {
+    return sPreferredSampleRate;
+  }
+
+  cubeb* cubebContext = GetCubebContextUnlocked();
+  if (!cubebContext) {
+    sPreferredSampleRate = fallbackSampleRate;
+  }
   // Get the preferred samplerate for this platform, or fallback to something
   // sensible if we fail. We cache the value, because this might be accessed
   // often, and the complexity of the function call below depends on the
   // backend used.
-  if (cubeb_get_preferred_sample_rate(GetCubebContext(),
+  if (cubeb_get_preferred_sample_rate(cubebContext,
                                       &sPreferredSampleRate) != CUBEB_OK) {
-    sPreferredSampleRate = 44100;
+    sPreferredSampleRate = fallbackSampleRate;
   }
+
+  return sPreferredSampleRate;
 }
 
 static void SetUint16LE(uint8_t* aDest, uint16_t aValue)

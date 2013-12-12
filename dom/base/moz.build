@@ -59,6 +59,7 @@ EXPORTS.mozilla.dom += [
     'MessagePortList.h',
     'Navigator.h',
     'ScreenOrientation.h',
+    'ScriptSettings.h',
     'StructuredCloneTags.h',
     'URL.h',
 ]
@@ -94,6 +95,7 @@ UNIFIED_SOURCES += [
     'nsWindowMemoryReporter.cpp',
     'nsWindowRoot.cpp',
     'nsWrapperCache.cpp',
+    'ScriptSettings.cpp',
     'URL.cpp',
     'WindowNamedPropertiesHandler.cpp',
 ]
@@ -145,7 +147,7 @@ LOCAL_INCLUDES += [
     '/content/xul/document/src',
     '/layout/generic',
     '/layout/style',
-    '/layout/xul/base/src',
+    '/layout/xul',
 ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':

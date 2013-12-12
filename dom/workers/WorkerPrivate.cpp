@@ -44,7 +44,6 @@
 #include "mozilla/dom/MessagePortList.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Util.h"
 #include "nsAlgorithm.h"
 #include "nsContentUtils.h"
 #include "nsCxPusher.h"
@@ -95,7 +94,7 @@ using mozilla::AutoSafeJSContext;
 USING_WORKERS_NAMESPACE
 using namespace mozilla::dom;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(JsWorkerMallocSizeOf)
+MOZ_DEFINE_MALLOC_SIZE_OF(JsWorkerMallocSizeOf)
 
 namespace {
 
@@ -1212,8 +1211,7 @@ public:
         bool preventDefaultCalled;
         nsIScriptGlobalObject* sgo;
 
-        if (aWorkerPrivate ||
-            !(sgo = nsJSUtils::GetStaticScriptGlobal(target))) {
+        if (aWorkerPrivate) {
           WorkerGlobalScope* globalTarget = aWorkerPrivate->GlobalScope();
           MOZ_ASSERT(target == globalTarget->GetWrapperPreserveColor());
 
@@ -1234,7 +1232,7 @@ public:
 
           preventDefaultCalled = status == nsEventStatus_eConsumeNoDefault;
         }
-        else {
+        else if ((sgo = nsJSUtils::GetStaticScriptGlobal(target))) {
           // Icky, we have to fire an InternalScriptErrorEvent...
           InternalScriptErrorEvent event(true, NS_LOAD_ERROR);
           event.lineNr = aLineNumber;
@@ -2008,8 +2006,10 @@ struct WorkerPrivate::TimeoutInfo
   bool mCanceled;
 };
 
-class WorkerPrivate::MemoryReporter MOZ_FINAL : public MemoryMultiReporter
+class WorkerPrivate::MemoryReporter MOZ_FINAL : public nsIMemoryReporter
 {
+  NS_DECL_THREADSAFE_ISUPPORTS
+
   friend class WorkerPrivate;
 
   SharedMutex mMutex;
@@ -2019,8 +2019,7 @@ class WorkerPrivate::MemoryReporter MOZ_FINAL : public MemoryMultiReporter
 
 public:
   MemoryReporter(WorkerPrivate* aWorkerPrivate)
-  : MemoryMultiReporter("workers"),
-    mMutex(aWorkerPrivate->mMutex), mWorkerPrivate(aWorkerPrivate),
+  : mMutex(aWorkerPrivate->mMutex), mWorkerPrivate(aWorkerPrivate),
     mAlreadyMappedToAddon(false)
   {
     aWorkerPrivate->AssertIsOnWorkerThread();
@@ -2121,6 +2120,8 @@ private:
     mRtPath.Insert(addonId, explicitLength);
   }
 };
+
+NS_IMPL_ISUPPORTS1(WorkerPrivate::MemoryReporter, nsIMemoryReporter)
 
 template <class Derived>
 WorkerPrivateParent<Derived>::WorkerPrivateParent(
@@ -2815,16 +2816,17 @@ WorkerPrivateParent<Derived>::GetInnerWindowId()
 
 template <class Derived>
 void
-WorkerPrivateParent<Derived>::UpdateJSContextOptions(JSContext* aCx,
-                                                     const JS::ContextOptions& aContentOptions,
-                                                     const JS::ContextOptions& aChromeOptions)
+WorkerPrivateParent<Derived>::UpdateJSContextOptions(
+                                      JSContext* aCx,
+                                      const JS::ContextOptions& aContentOptions,
+                                      const JS::ContextOptions& aChromeOptions)
 {
   AssertIsOnParentThread();
 
   {
     MutexAutoLock lock(mMutex);
-    mJSSettings.content.options = aContentOptions;
-    mJSSettings.chrome.options = aChromeOptions;
+    mJSSettings.content.contextOptions = aContentOptions;
+    mJSSettings.chrome.contextOptions = aChromeOptions;
   }
 
   nsRefPtr<UpdateJSContextOptionsRunnable> runnable =
@@ -5448,14 +5450,7 @@ WorkerPrivate::CreateGlobalScope(JSContext* aCx)
     globalScope = new DedicatedWorkerGlobalScope(this);
   }
 
-  JS::CompartmentOptions options;
-  if (IsChromeWorker()) {
-    options.setVersion(JSVERSION_LATEST);
-  }
-
-  JS::Rooted<JSObject*> global(aCx,
-                               globalScope->WrapGlobalObject(aCx, options,
-                                                             GetWorkerPrincipal()));
+  JS::Rooted<JSObject*> global(aCx, globalScope->WrapGlobalObject(aCx));
   NS_ENSURE_TRUE(global, nullptr);
 
   JSAutoCompartment ac(aCx, global);

@@ -117,6 +117,9 @@ skip-if(Android||B2G) include css-ui-valid/reftest.list
 # css values and units
 skip-if(B2G) include css-valuesandunits/reftest.list
 
+# css variables
+include css-variables/reftest.list
+
 # Reftests in css-visited are run using
 # layout/style/test/test_visited_reftests instead of using the reftest
 # harness.
@@ -328,7 +331,7 @@ skip-if(B2G) include xul/reftest.list
 include webcomponents/reftest.list
 
 # xul
-skip-if(B2G) include ../xul/base/reftest/reftest.list
+skip-if(B2G) include ../xul/reftest/reftest.list
 
 # xul grid
 skip-if(B2G) include ../xul/grid/reftests/reftest.list

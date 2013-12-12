@@ -10,10 +10,10 @@
 
 #include "nsDocument.h"
 
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/AutoRestore.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Util.h"
 #include "mozilla/Likely.h"
 #include <algorithm>
 
@@ -2643,6 +2643,33 @@ nsDocument::InitCSP(nsIChannel* aChannel)
 #endif
 
   nsresult rv;
+
+  // If Document is an app check to see if we already set CSP and return early
+  // if that is indeed the case.
+  //
+  // In general (see bug 947831), we should not be setting CSP on a principal
+  // that aliases another document. For non-app code this is not a problem
+  // since we only share the underlying principal with nested browsing
+  // contexts for which a header cannot be set (e.g., about:blank and
+  // about:srcodoc iframes) and thus won't try to set the CSP again. This
+  // check ensures that we do not try to set CSP for an app.
+  if (applyAppDefaultCSP || applyAppManifestCSP) {
+    nsCOMPtr<nsIContentSecurityPolicy> csp;
+    rv = principal->GetCsp(getter_AddRefs(csp));
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    if (csp) {
+#ifdef PR_LOGGING
+      PR_LOG(gCspPRLog, PR_LOG_DEBUG, ("%s %s %s",
+           "This document is sharing principal with another document.",
+           "Since the document is an app, CSP was already set.",
+           "Skipping attempt to set CSP."));
+#endif
+      return NS_OK;
+    }
+  }
+
+  // create new CSP object
   csp = do_CreateInstance("@mozilla.org/contentsecuritypolicy;1", &rv);
 
   if (NS_FAILED(rv)) {
@@ -2722,16 +2749,12 @@ nsDocument::InitCSP(nsIChannel* aChannel)
     }
   }
 
-  if (csp) {
-    // Copy into principal
-    nsIPrincipal* principal = GetPrincipal();
-    rv = principal->SetCsp(csp);
-    NS_ENSURE_SUCCESS(rv, rv);
+  rv = principal->SetCsp(csp);
+  NS_ENSURE_SUCCESS(rv, rv);
 #ifdef PR_LOGGING
-    PR_LOG(gCspPRLog, PR_LOG_DEBUG,
-           ("Inserted CSP into principal %p", principal));
+  PR_LOG(gCspPRLog, PR_LOG_DEBUG,
+         ("Inserted CSP into principal %p", principal));
 #endif
-  }
 
   return NS_OK;
 }
@@ -4652,6 +4675,15 @@ nsDocument::DispatchContentLoadedEvents()
   if (mTiming) {
     mTiming->NotifyDOMContentLoadedStart(nsIDocument::GetDocumentURI());
   }
+
+  // Dispatch observer notification to notify observers document is interactive.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsIPrincipal *principal = GetPrincipal();
+  os->NotifyObservers(static_cast<nsIDocument*>(this),
+                      nsContentUtils::IsSystemPrincipal(principal) ?
+                        "chrome-document-interactive" :
+                        "content-document-interactive",
+                      nullptr);
 
   // Fire a DOM event notifying listeners that this document has been
   // loaded (excluding images and other loads initiated by this
@@ -6831,6 +6863,8 @@ nsDocument::GetViewportInfo(const ScreenIntSize& aDisplaySize)
   switch (mViewportType) {
   case DisplayWidthHeight:
     return nsViewportInfo(aDisplaySize);
+  case DisplayWidthHeightNoZoom:
+    return nsViewportInfo(aDisplaySize, /* allowZoom */ false);
   case Unknown:
   {
     nsAutoString viewport;
@@ -6860,6 +6894,21 @@ nsDocument::GetViewportInfo(const ScreenIntSize& aDisplaySize)
       if (handheldFriendly.EqualsLiteral("true")) {
         mViewportType = DisplayWidthHeight;
         return nsViewportInfo(aDisplaySize);
+      }
+
+      // Bug 940036. This is bad. When FirefoxOS was built, apps installed
+      // where not using the AsyncPanZoom code. As a result a lot of apps
+      // in the marketplace does not use it yet and instead are built to
+      // render correctly in FirefoxOS only. For a smooth transition the above
+      // code force installed apps to render as if they have a viewport with
+      // content="width=device-width, height=device-height, user-scalable=no".
+      // This could be safely remove once it is known that most apps in the
+      // marketplace use it and that users does not use an old version of the
+      // app that does not use it.
+      nsCOMPtr<nsIDocShell> docShell(mDocumentContainer);
+      if (docShell && docShell->GetIsApp()) {
+        mViewportType = DisplayWidthHeightNoZoom;
+        return nsViewportInfo(aDisplaySize, /* allowZoom */ false);
       }
     }
 
@@ -8110,6 +8159,17 @@ nsDocument::OnPageShow(bool aPersisted,
   if (!target) {
     target = do_QueryInterface(GetWindow());
   }
+
+  // Dispatch observer notification to notify observers page is shown.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsIPrincipal *principal = GetPrincipal();
+  os->NotifyObservers(static_cast<nsIDocument*>(this),
+                      nsContentUtils::IsSystemPrincipal(principal) ?
+                        "chrome-page-shown" :
+                        "content-page-shown",
+                      nullptr);
+
+
   DispatchPageTransition(target, NS_LITERAL_STRING("pageshow"), aPersisted);
 }
 
@@ -8172,6 +8232,16 @@ nsDocument::OnPageHide(bool aPersisted,
   if (!target) {
     target = do_QueryInterface(GetWindow());
   }
+
+  // Dispatch observer notification to notify observers page is hidden.
+  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsIPrincipal *principal = GetPrincipal();
+  os->NotifyObservers(static_cast<nsIDocument*>(this),
+                      nsContentUtils::IsSystemPrincipal(principal) ?
+                        "chrome-page-hidden" :
+                        "content-page-hidden",
+                      nullptr);
+
   DispatchPageTransition(target, NS_LITERAL_STRING("pagehide"), aPersisted);
 
   mVisible = false;

@@ -63,7 +63,7 @@ InvokeFunction(JSContext *cx, HandleObject obj0, uint32_t argc, Value *argv, Val
                 return false;
 
             // Clone function at call site if needed.
-            if (fun->nonLazyScript()->shouldCloneAtCallsite) {
+            if (fun->nonLazyScript()->shouldCloneAtCallsite()) {
                 jsbytecode *pc;
                 RootedScript script(cx, cx->currentScript(&pc));
                 fun = CloneFunctionAtCallsite(cx, fun, script, pc);
@@ -922,6 +922,28 @@ JSObject *CreateDerivedTypedObj(JSContext *cx, HandleObject type,
     return TypedObject::createDerived(cx, type, owner, offset);
 }
 
+bool
+Recompile(JSContext *cx)
+{
+    JS_ASSERT(cx->currentlyRunningInJit());
+    JitActivationIterator activations(cx->runtime());
+    IonFrameIterator iter(activations);
+
+    JS_ASSERT(iter.type() == IonFrame_Exit);
+    ++iter;
+
+    bool isConstructing = iter.isConstructing();
+    RootedScript script(cx, iter.script());
+    JS_ASSERT(script->hasIonScript());
+
+    MethodStatus status = Recompile(cx, script, nullptr, nullptr, isConstructing);
+    if (status == Method_Error)
+        return false;
+
+    JS_ASSERT(script->hasIonScript());
+
+    return true;
+}
 
 } // namespace jit
 } // namespace js

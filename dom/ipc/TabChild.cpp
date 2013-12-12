@@ -285,6 +285,7 @@ TabChild::TabChild(ContentChild* aManager, const TabContext& aContext, uint32_t 
   , mTriedBrowserInit(false)
   , mOrientation(eScreenOrientation_PortraitPrimary)
   , mUpdateHitRegion(false)
+  , mContextMenuHandled(false)
 {
 }
 
@@ -322,21 +323,25 @@ TabChild::HandleEvent(nsIDOMEvent* aEvent)
 
     CSSIntPoint scrollOffset = scrollFrame->GetScrollPositionCSSPixels();
 
-    if (viewId == mLastMetrics.mScrollId) {
-      // For the root frame, we store the last metrics, including the last
-      // scroll offset, sent by APZC. (This is updated in ProcessUpdateFrame()).
+    if (viewId == mLastRootMetrics.mScrollId) {
+      // We store the last metrics that was sent via the TabParent (This is
+      // updated in ProcessUpdateFrame and RecvUpdateFrame).
       // We use this here to avoid sending APZC back a scroll event that
       // originally came from APZC (besides being unnecessary, the event might
       // be slightly out of date by the time it reaches APZC).
-      // We should probably do this for subframes, too.
-      if (RoundedToInt(mLastMetrics.mScrollOffset) == scrollOffset) {
+      if (RoundedToInt(mLastRootMetrics.mScrollOffset) == scrollOffset) {
         return NS_OK;
       }
 
       // Update the last scroll offset now, otherwise RecvUpdateDimensions()
       // might trigger a scroll to the old offset before RecvUpdateFrame()
       // gets a chance to update it.
-      mLastMetrics.mScrollOffset = scrollOffset;
+      mLastRootMetrics.mScrollOffset = scrollOffset;
+    } else if (viewId == mLastSubFrameMetrics.mScrollId) {
+      if (RoundedToInt(mLastSubFrameMetrics.mScrollOffset) == scrollOffset) {
+        return NS_OK;
+      }
+      mLastSubFrameMetrics.mScrollOffset = scrollOffset;
     }
 
     SendUpdateScrollOffset(presShellId, viewId, scrollOffset);
@@ -384,21 +389,21 @@ TabChild::Observe(nsISupports *aSubject,
         // Calculate a really simple resolution that we probably won't
         // be keeping, as well as putting the scroll offset back to
         // the top-left of the page.
-        mLastMetrics.mViewport = CSSRect(CSSPoint(), kDefaultViewportSize);
-        mLastMetrics.mCompositionBounds = ScreenIntRect(ScreenIntPoint(), mInnerSize);
-        mLastMetrics.mZoom = mLastMetrics.CalculateIntrinsicScale();
-        mLastMetrics.mDevPixelsPerCSSPixel = mWidget->GetDefaultScale();
+        mLastRootMetrics.mViewport = CSSRect(CSSPoint(), kDefaultViewportSize);
+        mLastRootMetrics.mCompositionBounds = ScreenIntRect(ScreenIntPoint(), mInnerSize);
+        mLastRootMetrics.mZoom = mLastRootMetrics.CalculateIntrinsicScale();
+        mLastRootMetrics.mDevPixelsPerCSSPixel = mWidget->GetDefaultScale();
         // We use ScreenToLayerScale(1) below in order to turn the
         // async zoom amount into the gecko zoom amount.
-        mLastMetrics.mCumulativeResolution =
-          mLastMetrics.mZoom / mLastMetrics.mDevPixelsPerCSSPixel * ScreenToLayerScale(1);
+        mLastRootMetrics.mCumulativeResolution =
+          mLastRootMetrics.mZoom / mLastRootMetrics.mDevPixelsPerCSSPixel * ScreenToLayerScale(1);
         // This is the root layer, so the cumulative resolution is the same
         // as the resolution.
-        mLastMetrics.mResolution = mLastMetrics.mCumulativeResolution / LayoutDeviceToParentLayerScale(1);
-        mLastMetrics.mScrollOffset = CSSPoint(0, 0);
+        mLastRootMetrics.mResolution = mLastRootMetrics.mCumulativeResolution / LayoutDeviceToParentLayerScale(1);
+        mLastRootMetrics.mScrollOffset = CSSPoint(0, 0);
 
-        utils->SetResolution(mLastMetrics.mResolution.scale,
-                             mLastMetrics.mResolution.scale);
+        utils->SetResolution(mLastRootMetrics.mResolution.scale,
+                             mLastRootMetrics.mResolution.scale);
 
         HandlePossibleViewportChange();
       }
@@ -529,20 +534,19 @@ TabChild::HandlePossibleViewportChange()
 
   nsCOMPtr<nsIDOMWindowUtils> utils(GetDOMWindowUtils());
 
+  nsViewportInfo viewportInfo = nsContentUtils::GetViewportInfo(document, mInnerSize);
   uint32_t presShellId;
   ViewID viewId;
-  if (!APZCCallbackHelper::GetScrollIdentifiers(document->GetDocumentElement(),
-                                                &presShellId, &viewId)) {
-    return;
+  if (APZCCallbackHelper::GetScrollIdentifiers(document->GetDocumentElement(),
+                                               &presShellId, &viewId)) {
+    SendUpdateZoomConstraints(presShellId,
+                              viewId,
+                              /* isRoot = */ true,
+                              viewportInfo.IsZoomAllowed(),
+                              viewportInfo.GetMinZoom(),
+                              viewportInfo.GetMaxZoom());
   }
 
-  nsViewportInfo viewportInfo = nsContentUtils::GetViewportInfo(document, mInnerSize);
-  SendUpdateZoomConstraints(presShellId,
-                            viewId,
-                            /* isRoot = */ true,
-                            viewportInfo.IsZoomAllowed(),
-                            viewportInfo.GetMinZoom(),
-                            viewportInfo.GetMaxZoom());
 
   float screenW = mInnerSize.width;
   float screenH = mInnerSize.height;
@@ -555,7 +559,7 @@ TabChild::HandlePossibleViewportChange()
   }
 
   float oldBrowserWidth = mOldViewportWidth;
-  mLastMetrics.mViewport.SizeTo(viewport);
+  mLastRootMetrics.mViewport.SizeTo(viewport);
   if (!oldBrowserWidth) {
     oldBrowserWidth = kDefaultViewportSize.width;
   }
@@ -601,12 +605,12 @@ TabChild::HandlePossibleViewportChange()
     return;
   }
 
-  float oldScreenWidth = mLastMetrics.mCompositionBounds.width;
+  float oldScreenWidth = mLastRootMetrics.mCompositionBounds.width;
   if (!oldScreenWidth) {
     oldScreenWidth = mInnerSize.width;
   }
 
-  FrameMetrics metrics(mLastMetrics);
+  FrameMetrics metrics(mLastRootMetrics);
   metrics.mViewport = CSSRect(CSSPoint(), viewport);
   metrics.mScrollableRect = CSSRect(CSSPoint(), pageSize);
   metrics.mCompositionBounds = ScreenIntRect(ScreenIntPoint(), mInnerSize);
@@ -1531,7 +1535,9 @@ TabChild::RecvUpdateFrame(const FrameMetrics& aFrameMetrics)
     nsCOMPtr<nsIContent> content = nsLayoutUtils::FindContentFor(
                                       aFrameMetrics.mScrollId);
     if (content) {
-      APZCCallbackHelper::UpdateSubFrame(content, aFrameMetrics);
+      FrameMetrics newSubFrameMetrics(aFrameMetrics);
+      APZCCallbackHelper::UpdateSubFrame(content, newSubFrameMetrics);
+      mLastSubFrameMetrics = newSubFrameMetrics;
       return true;
     }
   }
@@ -1539,7 +1545,7 @@ TabChild::RecvUpdateFrame(const FrameMetrics& aFrameMetrics)
   // We've recieved a message that is out of date and we want to ignore.
   // However we can't reply without painting so we reply by painting the
   // exact same thing as we did before.
-  return ProcessUpdateFrame(mLastMetrics);
+  return ProcessUpdateFrame(mLastRootMetrics);
 }
 
 bool
@@ -1603,7 +1609,7 @@ TabChild::ProcessUpdateFrame(const FrameMetrics& aFrameMetrics)
 
     DispatchMessageManagerMessage(NS_LITERAL_STRING("Viewport:Change"), data);
 
-    mLastMetrics = newMetrics;
+    mLastRootMetrics = newMetrics;
 
     return true;
 }
@@ -1632,12 +1638,12 @@ TabChild::RecvHandleSingleTap(const CSSIntPoint& aPoint)
     return true;
   }
 
-  DispatchMouseEvent(NS_LITERAL_STRING("mousemove"), aPoint, 0, 1, 0, false,
-                     nsIDOMMouseEvent::MOZ_SOURCE_TOUCH);
-  DispatchMouseEvent(NS_LITERAL_STRING("mousedown"), aPoint, 0, 1, 0, false,
-                     nsIDOMMouseEvent::MOZ_SOURCE_TOUCH);
-  DispatchMouseEvent(NS_LITERAL_STRING("mouseup"), aPoint, 0, 1, 0, false,
-                     nsIDOMMouseEvent::MOZ_SOURCE_TOUCH);
+  LayoutDevicePoint currentPoint = CSSPoint(aPoint) * mWidget->GetDefaultScale();;
+
+  int time = 0;
+  DispatchSynthesizedMouseEvent(NS_MOUSE_MOVE, time, currentPoint);
+  DispatchSynthesizedMouseEvent(NS_MOUSE_BUTTON_DOWN, time, currentPoint);
+  DispatchSynthesizedMouseEvent(NS_MOUSE_BUTTON_UP, time, currentPoint);
 
   return true;
 }
@@ -1652,6 +1658,44 @@ TabChild::RecvHandleLongTap(const CSSIntPoint& aPoint)
   DispatchMouseEvent(NS_LITERAL_STRING("contextmenu"), aPoint, 2, 1, 0, false,
                      nsIDOMMouseEvent::MOZ_SOURCE_TOUCH);
 
+  return true;
+}
+
+bool
+TabChild::RecvHandleLongTapUp(const CSSIntPoint& aPoint)
+{
+  if (mContextMenuHandled) {
+    mContextMenuHandled = false;
+    return true;
+  }
+
+  RecvHandleSingleTap(aPoint);
+  return true;
+}
+
+bool
+TabChild::RecvNotifyTransformBegin(const ViewID& aViewId)
+{
+  nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(aViewId);
+  if (sf) {
+    nsIScrollbarOwner* scrollbarOwner = do_QueryFrame(sf);
+    if (scrollbarOwner) {
+      scrollbarOwner->ScrollbarActivityStarted();
+    }
+  }
+  return true;
+}
+
+bool
+TabChild::RecvNotifyTransformEnd(const ViewID& aViewId)
+{
+  nsIScrollableFrame* sf = nsLayoutUtils::FindScrollableFrameFor(aViewId);
+  if (sf) {
+    nsIScrollbarOwner* scrollbarOwner = do_QueryFrame(sf);
+    if (scrollbarOwner) {
+      scrollbarOwner->ScrollbarActivityStopped();
+    }
+  }
   return true;
 }
 
@@ -2188,7 +2232,7 @@ TabChild::InitTabChildGlobal(FrameScriptLoading aScriptLoading)
     root->SetParentTarget(scope);
 
     chromeHandler->AddEventListener(NS_LITERAL_STRING("DOMMetaAdded"), this, false);
-    chromeHandler->AddEventListener(NS_LITERAL_STRING("scroll"), this, false);
+    chromeHandler->AddEventListener(NS_LITERAL_STRING("scroll"), this, true);
   }
 
   if (aScriptLoading != DONT_LOAD_SCRIPTS && !mTriedBrowserInit) {
@@ -2487,6 +2531,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(TabChildGlobal)
   NS_INTERFACE_MAP_ENTRY(nsISyncMessageSender)
   NS_INTERFACE_MAP_ENTRY(nsIContentFrameMessageManager)
   NS_INTERFACE_MAP_ENTRY(nsIScriptObjectPrincipal)
+  NS_INTERFACE_MAP_ENTRY(nsIGlobalObject)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(ContentFrameMessageManager)
 NS_INTERFACE_MAP_END_INHERITING(nsDOMEventTargetHelper)
 
@@ -2551,10 +2596,20 @@ TabChildGlobal::GetJSContextForEventHandlers()
   return nsContentUtils::GetSafeJSContext();
 }
 
-nsIPrincipal* 
+nsIPrincipal*
 TabChildGlobal::GetPrincipal()
 {
   if (!mTabChild)
     return nullptr;
   return mTabChild->GetPrincipal();
 }
+
+JSObject*
+TabChildGlobal::GetGlobalJSObject()
+{
+  NS_ENSURE_TRUE(mTabChild, nullptr);
+  nsCOMPtr<nsIXPConnectJSObjectHolder> ref = mTabChild->GetGlobal();
+  NS_ENSURE_TRUE(ref, nullptr);
+  return ref->GetJSObject();
+}
+

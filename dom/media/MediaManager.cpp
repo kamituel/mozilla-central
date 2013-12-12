@@ -141,49 +141,34 @@ static nsresult ValidateTrackConstraints(
   return NS_OK;
 }
 
-/**
- * Send an error back to content. The error is the form a string.
- * Do this only on the main thread. The success callback is also passed here
- * so it can be released correctly.
- */
-class ErrorCallbackRunnable : public nsRunnable
-{
-public:
-  ErrorCallbackRunnable(
-    already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
-    already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
-    const nsAString& aErrorMsg, uint64_t aWindowID)
-    : mSuccess(aSuccess)
-    , mError(aError)
-    , mErrorMsg(aErrorMsg)
-    , mWindowID(aWindowID)
-    , mManager(MediaManager::GetInstance()) {}
-
-  NS_IMETHOD
-  Run()
-  {
-    // Only run if the window is still active.
-    NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-
-    nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
-    nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
-
-    if (!(mManager->IsWindowStillActive(mWindowID))) {
-      return NS_OK;
-    }
-    // This is safe since we're on main-thread, and the windowlist can only
-    // be invalidated from the main-thread (see OnNavigation)
-    error->OnError(mErrorMsg);
-    return NS_OK;
+ErrorCallbackRunnable::ErrorCallbackRunnable(
+  already_AddRefed<nsIDOMGetUserMediaSuccessCallback> aSuccess,
+  already_AddRefed<nsIDOMGetUserMediaErrorCallback> aError,
+  const nsAString& aErrorMsg, uint64_t aWindowID)
+  : mSuccess(aSuccess)
+  , mError(aError)
+  , mErrorMsg(aErrorMsg)
+  , mWindowID(aWindowID)
+  , mManager(MediaManager::GetInstance()) {
   }
 
-private:
-  already_AddRefed<nsIDOMGetUserMediaSuccessCallback> mSuccess;
-  already_AddRefed<nsIDOMGetUserMediaErrorCallback> mError;
-  const nsString mErrorMsg;
-  uint64_t mWindowID;
-  nsRefPtr<MediaManager> mManager; // get ref to this when creating the runnable
-};
+NS_IMETHODIMP
+ErrorCallbackRunnable::Run()
+{
+  // Only run if the window is still active.
+  NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
+
+  nsCOMPtr<nsIDOMGetUserMediaSuccessCallback> success(mSuccess);
+  nsCOMPtr<nsIDOMGetUserMediaErrorCallback> error(mError);
+
+  if (!(mManager->IsWindowStillActive(mWindowID))) {
+    return NS_OK;
+  }
+  // This is safe since we're on main-thread, and the windowlist can only
+  // be invalidated from the main-thread (see OnNavigation)
+  error->OnError(mErrorMsg);
+  return NS_OK;
+}
 
 /**
  * Invoke the "onSuccess" callback in content. The callback will take a
@@ -582,6 +567,7 @@ public:
     // when the page is invalidated (on navigation or close).
     mListener->Activate(stream.forget(), mAudioSource, mVideoSource);
 
+    // Note: includes JS callbacks; must be released on MainThread
     TracksAvailableCallback* tracksAvailableCallback =
       new TracksAvailableCallback(mManager, mSuccess, mWindowID, trackunion);
 
@@ -593,7 +579,8 @@ public:
     nsRefPtr<MediaOperationRunnable> runnable(
       new MediaOperationRunnable(MEDIA_START, mListener, trackunion,
                                  tracksAvailableCallback,
-                                 mAudioSource, mVideoSource, false, mWindowID));
+                                 mAudioSource, mVideoSource, false, mWindowID,
+                                 mError.forget()));
     mediaThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
 
 #ifdef MOZ_WEBRTC
@@ -1057,6 +1044,7 @@ MediaManager::MediaManager()
   mPrefs.mHeight = MediaEngine::DEFAULT_VIDEO_HEIGHT;
   mPrefs.mFPS    = MediaEngine::DEFAULT_VIDEO_FPS;
   mPrefs.mMinFPS = MediaEngine::DEFAULT_VIDEO_MIN_FPS;
+  mPrefs.mLoadAdapt = MediaEngine::DEFAULT_LOAD_ADAPT;
 
   nsresult rv;
   nsCOMPtr<nsIPrefService> prefs = do_GetService("@mozilla.org/preferences-service;1", &rv);
@@ -1101,6 +1089,7 @@ MediaManager::Get() {
       prefs->AddObserver("media.navigator.video.default_height", sSingleton, false);
       prefs->AddObserver("media.navigator.video.default_fps", sSingleton, false);
       prefs->AddObserver("media.navigator.video.default_minfps", sSingleton, false);
+      prefs->AddObserver("media.navigator.load_adapt", sSingleton, false);
     }
   }
   return sSingleton;
@@ -1326,6 +1315,9 @@ MediaManager::GetUserMedia(JSContext* aCx, bool aPrivileged,
   if (Preferences::GetBool("media.navigator.permission.disabled", false)) {
     aPrivileged = true;
   }
+  if (!Preferences::GetBool("media.navigator.video.enabled", true)) {
+    c.mVideo = false;
+  }
 
   /**
    * Pass runnables along to GetUserMediaRunnable so it can add the
@@ -1424,7 +1416,7 @@ MediaManager::GetBackend(uint64_t aWindowId)
   if (!mBackend) {
 #if defined(MOZ_WEBRTC)
   #ifndef MOZ_B2G_CAMERA
-    mBackend = new MediaEngineWebRTC();
+    mBackend = new MediaEngineWebRTC(mPrefs);
   #else
     mBackend = new MediaEngineWebRTC(mCameraManager, aWindowId);
   #endif
@@ -1523,12 +1515,25 @@ MediaManager::GetPref(nsIPrefBranch *aBranch, const char *aPref,
 }
 
 void
+MediaManager::GetPrefBool(nsIPrefBranch *aBranch, const char *aPref,
+                          const char *aData, bool *aVal)
+{
+  bool temp;
+  if (aData == nullptr || strcmp(aPref,aData) == 0) {
+    if (NS_SUCCEEDED(aBranch->GetBoolPref(aPref, &temp))) {
+      *aVal = temp;
+    }
+  }
+}
+
+void
 MediaManager::GetPrefs(nsIPrefBranch *aBranch, const char *aData)
 {
   GetPref(aBranch, "media.navigator.video.default_width", aData, &mPrefs.mWidth);
   GetPref(aBranch, "media.navigator.video.default_height", aData, &mPrefs.mHeight);
   GetPref(aBranch, "media.navigator.video.default_fps", aData, &mPrefs.mFPS);
   GetPref(aBranch, "media.navigator.video.default_minfps", aData, &mPrefs.mMinFPS);
+  GetPrefBool(aBranch, "media.navigator.load_adapt", aData, &mPrefs.mLoadAdapt);
 }
 
 nsresult
@@ -1557,6 +1562,7 @@ MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
       prefs->RemoveObserver("media.navigator.video.default_height", this);
       prefs->RemoveObserver("media.navigator.video.default_fps", this);
       prefs->RemoveObserver("media.navigator.video.default_minfps", this);
+      prefs->RemoveObserver("media.navigator.load_adapt", this);
     }
 
     // Close off any remaining active windows.
@@ -1803,7 +1809,7 @@ GetUserMediaCallbackMediaStreamListener::Invalidate()
   runnable = new MediaOperationRunnable(MEDIA_STOP,
                                         this, nullptr, nullptr,
                                         mAudioSource, mVideoSource,
-                                        mFinished, mWindowID);
+                                        mFinished, mWindowID, nullptr);
   mMediaThread->Dispatch(runnable, NS_DISPATCH_NORMAL);
 }
 

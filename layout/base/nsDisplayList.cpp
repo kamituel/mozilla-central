@@ -338,12 +338,12 @@ AddAnimationsForProperty(nsIFrame* aFrame, nsCSSProperty aProperty,
         animSegment->startState() = InfallibleTArray<TransformFunction>();
         animSegment->endState() = InfallibleTArray<TransformFunction>();
 
-        nsCSSValueList* list = segment->mFromValue.GetCSSValueListValue();
-        AddTransformFunctions(list, styleContext, presContext, bounds, scale,
+        nsCSSValueSharedList* list = segment->mFromValue.GetCSSValueSharedListValue();
+        AddTransformFunctions(list->mHead, styleContext, presContext, bounds, scale,
                               animSegment->startState().get_ArrayOfTransformFunction());
 
-        list = segment->mToValue.GetCSSValueListValue();
-        AddTransformFunctions(list, styleContext, presContext, bounds, scale,
+        list = segment->mToValue.GetCSSValueSharedListValue();
+        AddTransformFunctions(list->mHead, styleContext, presContext, bounds, scale,
                               animSegment->endState().get_ArrayOfTransformFunction());
       } else if (aProperty == eCSSProperty_opacity) {
         animSegment->startState() = segment->mFromValue.GetFloatValue();
@@ -2548,10 +2548,30 @@ nsDisplayBorder::Paint(nsDisplayListBuilder* aBuilder,
 nsRect
 nsDisplayBorder::GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap)
 {
-  nsRect borderBounds(ToReferenceFrame(), mFrame->GetSize());
-  borderBounds.Inflate(mFrame->StyleBorder()->GetImageOutset());
   *aSnap = true;
-  return borderBounds;
+  const nsStyleBorder *styleBorder = mFrame->StyleBorder();
+  nsRect borderBounds(ToReferenceFrame(), mFrame->GetSize());
+  if (styleBorder->IsBorderImageLoaded()) {
+    borderBounds.Inflate(mFrame->StyleBorder()->GetImageOutset());
+    return borderBounds;
+  } else {
+    nsMargin border = styleBorder->GetComputedBorder();
+    nsRect result;
+    if (border.top > 0) {
+      result = nsRect(borderBounds.X(), borderBounds.Y(), borderBounds.Width(), border.top);
+    }
+    if (border.right > 0) {
+      result.UnionRect(result, nsRect(borderBounds.XMost() - border.right, borderBounds.Y(), border.right, borderBounds.Height()));
+    }
+    if (border.bottom > 0) {
+      result.UnionRect(result, nsRect(borderBounds.X(), borderBounds.YMost() - border.bottom, borderBounds.Width(), border.bottom));
+    }
+    if (border.left > 0) {
+      result.UnionRect(result, nsRect(borderBounds.X(), borderBounds.Y(), border.left, borderBounds.Height()));
+    }
+
+    return result;
+  }
 }
 
 // Given a region, compute a conservative approximation to it as a list
@@ -3239,9 +3259,10 @@ bool nsDisplayBlendContainer::TryMerge(nsDisplayListBuilder* aBuilder, nsDisplay
 
 nsDisplayOwnLayer::nsDisplayOwnLayer(nsDisplayListBuilder* aBuilder,
                                      nsIFrame* aFrame, nsDisplayList* aList,
-                                     uint32_t aFlags)
+                                     uint32_t aFlags, ViewID aScrollTarget)
     : nsDisplayWrapList(aBuilder, aFrame, aList)
-    , mFlags(aFlags) {
+    , mFlags(aFlags)
+    , mScrollTarget(aScrollTarget) {
   MOZ_COUNT_CTOR(nsDisplayOwnLayer);
 }
 
@@ -3259,6 +3280,12 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
   nsRefPtr<ContainerLayer> layer = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mList,
                            aContainerParameters, nullptr);
+  if (mFlags & VERTICAL_SCROLLBAR) {
+    layer->SetScrollbarData(mScrollTarget, Layer::ScrollDirection::VERTICAL);
+  }
+  if (mFlags & HORIZONTAL_SCROLLBAR) {
+    layer->SetScrollbarData(mScrollTarget, Layer::ScrollDirection::HORIZONTAL);
+  }
 
   if (mFlags & GENERATE_SUBDOC_INVALIDATIONS) {
     mFrame->PresContext()->SetNotifySubDocInvalidationData(layer);
@@ -3546,10 +3573,33 @@ nsDisplayScrollLayer::TryMerge(nsDisplayListBuilder* aBuilder,
   return true;
 }
 
+void
+PropagateClip(nsDisplayListBuilder* aBuilder, const DisplayItemClip& aClip,
+              nsDisplayList* aList)
+{
+  for (nsDisplayItem* i = aList->GetBottom(); i != nullptr; i = i->GetAbove()) {
+    DisplayItemClip clip(i->GetClip());
+    clip.IntersectWith(aClip);
+    i->SetClip(aBuilder, clip);
+    nsDisplayList* list = i->GetSameCoordinateSystemChildren();
+    if (list) {
+      PropagateClip(aBuilder, aClip, list);
+    }
+  }
+}
+
 bool
 nsDisplayScrollLayer::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
 {
-  return GetScrollLayerCount() > 1;
+  if (GetScrollLayerCount() > 1) {
+    // Propagate our clip to our children. The clip for the scroll frame is
+    // on this item, but not our child items so that they can draw non-visible
+    // parts of the display port. But if we are flattening we failed and can't
+    // draw the extra content, so it needs to be clipped.
+    PropagateClip(aBuilder, GetClip(), &mList);
+    return true;
+  }
+  return false;
 }
 
 intptr_t
@@ -4009,7 +4059,7 @@ nsDisplayTransform::GetResultingTransformMatrixInternal(const FrameTransformProp
     frame && frame->IsSVGTransformed(&svgTransform, &transformFromSVGParent);
   /* Transformed frames always have a transform, or are preserving 3d (and might still have perspective!) */
   if (aProperties.mTransformList) {
-    result = nsStyleTransformMatrix::ReadTransforms(aProperties.mTransformList,
+    result = nsStyleTransformMatrix::ReadTransforms(aProperties.mTransformList->mHead,
                                                     frame ? frame->StyleContext() : nullptr,
                                                     frame ? frame->PresContext() : nullptr,
                                                     dummy, bounds, aAppUnitsPerPixel);
@@ -4206,10 +4256,11 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(nsDisplayListBuilder *aBu
     return nullptr;
   }
 
+  uint32_t flags = ShouldPrerenderTransformedContent(aBuilder, mFrame, false) ?
+    FrameLayerBuilder::CONTAINER_NOT_CLIPPED_BY_ANCESTORS : 0;
   nsRefPtr<ContainerLayer> container = aManager->GetLayerBuilder()->
     BuildContainerLayerFor(aBuilder, aManager, mFrame, this, *mStoredList.GetChildren(),
-                           aContainerParameters, &newTransformMatrix,
-                           FrameLayerBuilder::CONTAINER_NOT_CLIPPED_BY_ANCESTORS);
+                           aContainerParameters, &newTransformMatrix, flags);
 
   if (!container) {
     return nullptr;

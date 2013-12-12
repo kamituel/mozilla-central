@@ -15,6 +15,7 @@ import org.mozilla.gecko.mozglue.generatorannotations.OptionalGeneratedParameter
 import org.mozilla.gecko.mozglue.generatorannotations.WrapElementForJNI;
 import org.mozilla.gecko.prompts.PromptService;
 import org.mozilla.gecko.mozglue.GeckoLoader;
+import org.mozilla.gecko.mozglue.RobocopTarget;
 import org.mozilla.gecko.util.EventDispatcher;
 import org.mozilla.gecko.util.GeckoEventListener;
 import org.mozilla.gecko.util.HardwareUtils;
@@ -324,6 +325,7 @@ public class GeckoAppShell
         sLayerView = lv;
     }
 
+    @RobocopTarget
     public static LayerView getLayerView() {
         return sLayerView;
     }
@@ -391,6 +393,7 @@ public class GeckoAppShell
         } catch (NoSuchElementException e) {}
     }
 
+    @RobocopTarget
     public static void sendEventToGecko(GeckoEvent e) {
         if (GeckoThread.checkLaunchState(GeckoThread.LaunchState.GeckoRunning)) {
             notifyGeckoOfEvent(e);
@@ -1512,9 +1515,13 @@ public class GeckoAppShell
     public static boolean isNetworkLinkUp() {
         ConnectivityManager cm = (ConnectivityManager)
            getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
-        NetworkInfo info = cm.getActiveNetworkInfo();
-        if (info == null || !info.isConnected())
+        try {
+            NetworkInfo info = cm.getActiveNetworkInfo();
+            if (info == null || !info.isConnected())
+                return false;
+        } catch (SecurityException se) {
             return false;
+        }
         return true;
     }
 
@@ -1522,8 +1529,12 @@ public class GeckoAppShell
     public static boolean isNetworkLinkKnown() {
         ConnectivityManager cm = (ConnectivityManager)
             getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
-        if (cm.getActiveNetworkInfo() == null)
+        try {
+            if (cm.getActiveNetworkInfo() == null)
+                return false;
+        } catch (SecurityException se) {
             return false;
+        }
         return true;
     }
 
@@ -2078,6 +2089,7 @@ public class GeckoAppShell
         return pluginCL.loadClass(className);
     }
 
+    @WrapElementForJNI(allowMultithread = true)
     public static Class<?> loadPluginClass(String className, String libName) {
         if (getGeckoInterface() == null)
             return null;
@@ -2289,6 +2301,7 @@ public class GeckoAppShell
      * any added listeners will not be invoked on the event currently being processed, but
      * will be invoked on future events of that type.
      */
+    @RobocopTarget
     public static void registerEventListener(String event, GeckoEventListener listener) {
         sEventDispatcher.registerEventListener(event, listener);
     }
@@ -2304,6 +2317,7 @@ public class GeckoAppShell
      * any removed listeners will still be invoked on the event currently being processed, but
      * will not be invoked on future events of that type.
      */
+    @RobocopTarget
     public static void unregisterEventListener(String event, GeckoEventListener listener) {
         sEventDispatcher.unregisterEventListener(event, listener);
     }
@@ -2420,6 +2434,7 @@ public class GeckoAppShell
 
     /* Called by JNI from AndroidBridge, and by reflection from tests/BaseTest.java.in */
     @WrapElementForJNI
+    @RobocopTarget
     public static boolean isTablet() {
         return HardwareUtils.isTablet();
     }

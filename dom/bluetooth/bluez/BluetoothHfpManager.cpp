@@ -343,6 +343,10 @@ Call::IsActive()
  */
 BluetoothHfpManager::BluetoothHfpManager() : mController(nullptr)
 {
+#ifdef MOZ_B2G_RIL
+  mPhoneType = PhoneType::NONE;
+#endif // MOZ_B2G_RIL
+
   Reset();
 }
 
@@ -820,7 +824,11 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
       goto respond_with_ok;
     }
 
-    NS_ASSERTION(vgm >= 0 && vgm <= 15, "Received invalid VGM value");
+    if (vgm < 0 || vgm > 15) {
+      BT_WARNING("Received invalid VGM value");
+      goto respond_with_ok;
+    }
+
     mCurrentVgm = vgm;
 #ifdef MOZ_B2G_RIL
   } else if (msg.Find("AT+CHLD=?") != -1) {
@@ -895,10 +903,18 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
       goto respond_with_ok;
     }
 
-    NS_ASSERTION(newVgs >= 0 && newVgs <= 15, "Received invalid VGS value");
+    if (newVgs < 0 || newVgs > 15) {
+      BT_WARNING("Received invalid VGS value");
+      goto respond_with_ok;
+    }
+
+    nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+    if (!os) {
+      BT_WARNING("Failed to get observer service!");
+      goto respond_with_ok;
+    }
 
     nsString data;
-    nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
     data.AppendInt(newVgs);
     os->NotifyObservers(nullptr, "bluetooth-volume-change", data.get());
 #ifdef MOZ_B2G_RIL
@@ -1002,7 +1018,7 @@ BluetoothHfpManager::ReceiveSocketData(BluetoothSocket* aSocket,
 
     for (uint8_t i = 0; i < atCommandValues.Length(); i++) {
       CINDType indicatorType = (CINDType) (i + 1);
-      if (indicatorType >= ArrayLength(sCINDItems)) {
+      if (indicatorType >= (int)ArrayLength(sCINDItems)) {
         // Ignore excess parameters at the end
         break;
       }
@@ -1786,15 +1802,8 @@ BluetoothHfpManager::ConnectSco(BluetoothReplyRunnable* aRunnable)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  if (sInShutdown) {
-    BT_WARNING("ConnecteSco called while in shutdown!");
-    return false;
-  }
-
-  if (!IsConnected()) {
-    BT_WARNING("BluetoothHfpManager is not connected");
-    return false;
-  }
+  NS_ENSURE_TRUE(!sInShutdown, false);
+  NS_ENSURE_TRUE(IsConnected(), false);
 
   SocketConnectionStatus status = mScoSocket->GetConnectionStatus();
   if (status == SocketConnectionStatus::SOCKET_CONNECTED ||
@@ -1812,16 +1821,14 @@ BluetoothHfpManager::ConnectSco(BluetoothReplyRunnable* aRunnable)
     return false;
   }
 
+  // Stop listening
   mScoSocket->Disconnect();
 
-  mScoRunnable = aRunnable;
-
-  BluetoothService* bs = BluetoothService::Get();
-  NS_ENSURE_TRUE(bs, false);
-  nsresult rv = bs->GetScoSocket(mDeviceAddress, true, false, mScoSocket);
-
+  mScoSocket->Connect(NS_ConvertUTF16toUTF8(mDeviceAddress), -1);
   mScoSocketStatus = mScoSocket->GetConnectionStatus();
-  return NS_SUCCEEDED(rv);
+
+  mScoRunnable = aRunnable;
+  return true;
 }
 
 bool

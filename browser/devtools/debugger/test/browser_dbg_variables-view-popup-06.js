@@ -12,26 +12,16 @@ function test() {
   Task.spawn(function() {
     let [tab, debuggee, panel] = yield initDebugger(TAB_URL);
     let win = panel.panelWin;
-    let events = win.EVENTS;
-    let editor = win.DebuggerView.editor;
     let bubble = win.DebuggerView.VariableBubble;
     let tooltip = bubble._tooltip.panel;
-
-    function openPopup(coords) {
-      let popupshown = once(tooltip, "popupshown");
-      let fetched = waitForDebuggerEvents(panel, events.FETCHED_BUBBLE_PROPERTIES);
-      let { left, top } = editor.getCoordsFromPosition(coords);
-      bubble._findIdentifier(left, top);
-      return promise.all([popupshown, fetched]);
-    }
 
     function verifyContents() {
       is(tooltip.querySelectorAll(".variables-view-container").length, 1,
         "There should be one variables view container added to the tooltip.");
 
-      is(tooltip.querySelectorAll(".variables-view-scope[non-header]").length, 1,
+      is(tooltip.querySelectorAll(".variables-view-scope[untitled]").length, 1,
         "There should be one scope with no header displayed.");
-      is(tooltip.querySelectorAll(".variables-view-variable[non-header]").length, 1,
+      is(tooltip.querySelectorAll(".variables-view-variable[untitled]").length, 1,
         "There should be one variable with no header displayed.");
 
       is(tooltip.querySelectorAll(".variables-view-property").length, 7,
@@ -78,7 +68,7 @@ function test() {
     yield waitForSourceAndCaretAndScopes(panel, ".html", 24);
 
     // Inspect variable.
-    yield openPopup({ line: 17, ch: 12 });
+    yield openVarPopup(panel, { line: 17, ch: 12 }, true);
     verifyContents();
 
     yield resumeDebuggerThenCloseAndFinish(panel);

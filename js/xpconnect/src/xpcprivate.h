@@ -81,7 +81,6 @@
 #include "mozilla/CycleCollectedJSRuntime.h"
 #include "mozilla/GuardObjects.h"
 #include "mozilla/MemoryReporting.h"
-#include "mozilla/Util.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -248,11 +247,6 @@ inline JSObject* GetWNExpandoChain(JSObject *obj)
     MOZ_ASSERT(IS_WN_REFLECTOR(obj));
     return JS_GetReservedSlot(obj, WN_XRAYEXPANDOCHAIN_SLOT).toObjectOrNull();
 }
-
-// We PROMISE to never screw this up.
-#ifdef _MSC_VER
-#pragma warning(disable : 4355) // OK to pass "this" in member initializer
-#endif
 
 /***************************************************************************
 ****************************************************************************
@@ -982,7 +976,6 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* getGeneric    */                                          \
         nullptr, /* getProperty    */                                         \
         nullptr, /* getElement    */                                          \
-        nullptr, /* getElementIfPresent */                                    \
         nullptr, /* getSpecial    */                                          \
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
@@ -994,6 +987,7 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* deleteElement */                                          \
         nullptr, /* deleteSpecial */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
+        nullptr, /* slice */                                                  \
         XPC_WN_JSOp_Enumerate,                                                \
         XPC_WN_JSOp_ThisObject,                                               \
     }
@@ -1011,7 +1005,6 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* getGeneric    */                                          \
         nullptr, /* getProperty    */                                         \
         nullptr, /* getElement    */                                          \
-        nullptr, /* getElementIfPresent */                                    \
         nullptr, /* getSpecial    */                                          \
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
@@ -1023,6 +1016,7 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* deleteElement */                                          \
         nullptr, /* deleteSpecial */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
+        nullptr, /* slice */                                                  \
         XPC_WN_JSOp_Enumerate,                                                \
         XPC_WN_JSOp_ThisObject,                                               \
     }
@@ -1143,11 +1137,23 @@ public:
     void
     DebugDump(int16_t depth);
 
-    static size_t
-    SizeOfAllScopesIncludingThis(mozilla::MallocSizeOf mallocSizeOf);
+    struct ScopeSizeInfo {
+        ScopeSizeInfo(mozilla::MallocSizeOf mallocSizeOf)
+            : mMallocSizeOf(mallocSizeOf),
+              mScopeAndMapSize(0),
+              mProtoAndIfaceCacheSize(0)
+        {}
 
-    size_t
-    SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf);
+        mozilla::MallocSizeOf mMallocSizeOf;
+        size_t mScopeAndMapSize;
+        size_t mProtoAndIfaceCacheSize;
+    };
+
+    static void
+    AddSizeOfAllScopesIncludingThis(ScopeSizeInfo* scopeSizeInfo);
+
+    void
+    AddSizeOfIncludingThis(ScopeSizeInfo* scopeSizeInfo);
 
     bool
     IsValid() const {return mRuntime != nullptr;}
@@ -2503,6 +2509,7 @@ public:
     nsXPCWrappedJS* Find(REFNSIID aIID);
     nsXPCWrappedJS* FindInherited(REFNSIID aIID);
 
+    bool IsRootWrapper() const {return mRoot == this;}
     bool IsValid() const {return mJSObj != nullptr;}
     void SystemIsBeingShutDown();
 
@@ -3453,6 +3460,19 @@ class MOZ_STACK_CLASS CreateObjectInOptions : public OptionsBase {
 public:
     CreateObjectInOptions(JSContext *cx = xpc_GetSafeJSContext(),
                           JSObject* options = nullptr)
+        : OptionsBase(cx, options)
+        , defineAs(cx, JSID_VOID)
+    { }
+
+    virtual bool Parse() { return ParseId("defineAs", &defineAs); };
+
+    JS::RootedId defineAs;
+};
+
+class MOZ_STACK_CLASS ExportOptions : public OptionsBase {
+public:
+    ExportOptions(JSContext *cx = xpc_GetSafeJSContext(),
+                  JSObject* options = nullptr)
         : OptionsBase(cx, options)
         , defineAs(cx, JSID_VOID)
     { }

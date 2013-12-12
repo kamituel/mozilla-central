@@ -115,6 +115,7 @@ CodeGeneratorShared::addOutOfLineCode(OutOfLineCode *code)
         code->setSource(oolIns->script(), oolIns->pc());
     else
         code->setSource(current ? current->mir()->info().script() : nullptr, lastPC_);
+    JS_ASSERT_IF(code->script(), code->script()->containsPC(code->pc()));
     return outOfLineCode_.append(code);
 }
 
@@ -280,7 +281,11 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
 #ifdef DEBUG
         if (GetIonContext()->cx) {
             uint32_t stackDepth;
-            if (ReconstructStackDepth(GetIonContext()->cx, script, bailPC, &stackDepth)) {
+            bool reachablePC;
+            if (!ReconstructStackDepth(GetIonContext()->cx, script, bailPC, &stackDepth, &reachablePC))
+                return false;
+
+            if (reachablePC) {
                 if (JSOp(*bailPC) == JSOP_FUNCALL) {
                     // For fun.call(this, ...); the reconstructStackDepth will
                     // include the this. When inlining that is not included.
@@ -719,7 +724,7 @@ class OutOfLineTruncateSlow : public OutOfLineCodeBase<CodeGeneratorShared>
 OutOfLineCode *
 CodeGeneratorShared::oolTruncateDouble(const FloatRegister &src, const Register &dest)
 {
-    OutOfLineTruncateSlow *ool = new OutOfLineTruncateSlow(src, dest);
+    OutOfLineTruncateSlow *ool = new(alloc()) OutOfLineTruncateSlow(src, dest);
     if (!addOutOfLineCode(ool))
         return nullptr;
     return ool;
@@ -740,7 +745,7 @@ CodeGeneratorShared::emitTruncateDouble(const FloatRegister &src, const Register
 bool
 CodeGeneratorShared::emitTruncateFloat32(const FloatRegister &src, const Register &dest)
 {
-    OutOfLineTruncateSlow *ool = new OutOfLineTruncateSlow(src, dest, true);
+    OutOfLineTruncateSlow *ool = new(alloc()) OutOfLineTruncateSlow(src, dest, true);
     if (!addOutOfLineCode(ool))
         return false;
 
@@ -818,7 +823,7 @@ OutOfLineAbortPar *
 CodeGeneratorShared::oolAbortPar(ParallelBailoutCause cause, MBasicBlock *basicBlock,
                                  jsbytecode *bytecode)
 {
-    OutOfLineAbortPar *ool = new OutOfLineAbortPar(cause, basicBlock, bytecode);
+    OutOfLineAbortPar *ool = new(alloc()) OutOfLineAbortPar(cause, basicBlock, bytecode);
     if (!ool || !addOutOfLineCode(ool))
         return nullptr;
     return ool;
@@ -842,7 +847,7 @@ CodeGeneratorShared::oolAbortPar(ParallelBailoutCause cause, LInstruction *lir)
 OutOfLinePropagateAbortPar *
 CodeGeneratorShared::oolPropagateAbortPar(LInstruction *lir)
 {
-    OutOfLinePropagateAbortPar *ool = new OutOfLinePropagateAbortPar(lir);
+    OutOfLinePropagateAbortPar *ool = new(alloc()) OutOfLinePropagateAbortPar(lir);
     if (!ool || !addOutOfLineCode(ool))
         return nullptr;
     return ool;
@@ -974,8 +979,7 @@ CodeGeneratorShared::jumpToBlock(MBasicBlock *mir)
         CodeOffsetJump backedge = masm.jumpWithPatch(&rejoin);
         masm.bind(&rejoin);
 
-        if (!patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)))
-            MOZ_CRASH();
+        masm.propagateOOM(patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)));
     } else {
         masm.jump(mir->lir()->label());
     }
@@ -991,8 +995,7 @@ CodeGeneratorShared::jumpToBlock(MBasicBlock *mir, Assembler::Condition cond)
         CodeOffsetJump backedge = masm.jumpWithPatch(&rejoin, cond);
         masm.bind(&rejoin);
 
-        if (!patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)))
-            MOZ_CRASH();
+        masm.propagateOOM(patchableBackedges_.append(PatchableBackedgeInfo(backedge, mir->lir()->label(), oolEntry)));
     } else {
         masm.j(cond, mir->lir()->label());
     }

@@ -143,6 +143,9 @@ typedef uint64_t nsFrameState;
 // continuation, e.g. a bidi continuation.
 #define NS_FRAME_IS_FLUID_CONTINUATION              NS_FRAME_STATE_BIT(2)
 
+// For nsIAnonymousContentCreator content that's created using ContentInfo.
+#define NS_FRAME_ANONYMOUSCONTENTCREATOR_CONTENT    NS_FRAME_STATE_BIT(3)
+
 // If this bit is set, then a reference to the frame is being held
 // elsewhere.  The frame may want to send a notification when it is
 // destroyed to allow these references to be cleared.
@@ -881,6 +884,9 @@ public:
   nsRect GetRect() const { return mRect; }
   nsPoint GetPosition() const { return mRect.TopLeft(); }
   nsSize GetSize() const { return mRect.Size(); }
+  nsRect GetRectRelativeToSelf() const {
+    return nsRect(nsPoint(0, 0), mRect.Size());
+  }
 
   /**
    * When we change the size of the frame's border-box rect, we may need to
@@ -1068,6 +1074,7 @@ public:
   nsRect GetPaddingRectRelativeToSelf() const;
   nsRect GetContentRect() const;
   nsRect GetContentRectRelativeToSelf() const;
+  nsRect GetMarginRectRelativeToSelf() const;
 
   /**
    * The area to paint box-shadows around.  The default is the border rect.

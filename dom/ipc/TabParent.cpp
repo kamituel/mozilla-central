@@ -179,7 +179,11 @@ private:
 
         MOZ_ASSERT(mFD);
 
-        PR_Close(mFD);
+        PRStatus prrc;
+        prrc = PR_Close(mFD);
+        if (prrc != PR_SUCCESS) {
+          NS_ERROR("PR_Close() failed.");
+        }
         mFD = nullptr;
     }
 };
@@ -517,6 +521,27 @@ void TabParent::HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers)
   }
 }
 
+void TabParent::HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers)
+{
+  if (!mIsDestroyed) {
+    unused << SendHandleLongTapUp(aPoint);
+  }
+}
+
+void TabParent::NotifyTransformBegin(ViewID aViewId)
+{
+  if (!mIsDestroyed) {
+    unused << SendNotifyTransformBegin(aViewId);
+  }
+}
+
+void TabParent::NotifyTransformEnd(ViewID aViewId)
+{
+  if (!mIsDestroyed) {
+    unused << SendNotifyTransformEnd(aViewId);
+  }
+}
+
 void
 TabParent::Activate()
 {
@@ -656,6 +681,61 @@ bool TabParent::SendRealMouseEvent(WidgetMouseEvent& event)
     return false;
   }
   return PBrowserParent::SendRealMouseEvent(e);
+}
+
+CSSIntPoint TabParent::AdjustTapToChildWidget(const CSSIntPoint& aPoint)
+{
+  nsCOMPtr<nsIContent> content = do_QueryInterface(mFrameElement);
+
+  if (!content || !content->OwnerDoc()) {
+    return aPoint;
+  }
+
+  nsIDocument* doc = content->OwnerDoc();
+  if (!doc || !doc->GetShell()) {
+    return aPoint;
+  }
+  nsPresContext* presContext = doc->GetShell()->GetPresContext();
+
+  return CSSIntPoint(
+    aPoint.x + presContext->DevPixelsToIntCSSPixels(mChildProcessOffsetAtTouchStart.x),
+    aPoint.y + presContext->DevPixelsToIntCSSPixels(mChildProcessOffsetAtTouchStart.y));
+}
+
+bool TabParent::SendHandleSingleTap(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleSingleTap(AdjustTapToChildWidget(aPoint));
+}
+
+bool TabParent::SendHandleLongTap(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleLongTap(AdjustTapToChildWidget(aPoint));
+}
+
+bool TabParent::SendHandleLongTapUp(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleLongTapUp(AdjustTapToChildWidget(aPoint));
+}
+
+bool TabParent::SendHandleDoubleTap(const CSSIntPoint& aPoint)
+{
+  if (mIsDestroyed) {
+    return false;
+  }
+
+  return PBrowserParent::SendHandleDoubleTap(AdjustTapToChildWidget(aPoint));
 }
 
 bool TabParent::SendMouseWheelEvent(WidgetWheelEvent& event)

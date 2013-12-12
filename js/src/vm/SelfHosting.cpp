@@ -233,13 +233,13 @@ intrinsic_SetScriptHints(JSContext *cx, unsigned argc, Value *vp)
     if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
         return false;
     if (ToBoolean(propv))
-        funScript->shouldCloneAtCallsite = true;
+        funScript->setShouldCloneAtCallsite();
 
     id = AtomToId(Atomize(cx, "inline", strlen("inline")));
     if (!JSObject::getGeneric(cx, flags, flags, id, &propv))
         return false;
     if (ToBoolean(propv))
-        funScript->shouldInline = true;
+        funScript->setShouldInline();
 
     args.rval().setUndefined();
     return true;
@@ -676,9 +676,7 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FNINFO("Memcpy",
               JSNativeThreadSafeWrapper<js::Memcpy>,
               &js::MemcpyJitInfo, 5, 0),
-    JS_FN("StandardTypeObjectDescriptors",
-          js::StandardTypeObjectDescriptors,
-          0, 0),
+    JS_FN("GetTypedObjectModule", js::GetTypedObjectModule, 0, 0),
 
 #define LOAD_AND_STORE_SCALAR_FN_DECLS(_constant, _type, _name)               \
     JS_FNINFO("Store_" #_name,                                                \

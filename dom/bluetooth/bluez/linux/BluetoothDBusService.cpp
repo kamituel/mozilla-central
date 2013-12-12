@@ -35,6 +35,7 @@
 #include "nsThreadUtils.h"
 #include "nsDebug.h"
 #include "nsDataHashtable.h"
+#include "mozilla/ArrayUtils.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/dom/bluetooth/BluetoothTypes.h"
 #include "mozilla/Hal.h"
@@ -45,7 +46,7 @@
 #include "mozilla/Mutex.h"
 #include "mozilla/NullPtr.h"
 #include "mozilla/StaticMutex.h"
-#include "mozilla/Util.h"
+
 #if defined(MOZ_WIDGET_GONK)
 #include "cutils/properties.h"
 #endif
@@ -171,13 +172,32 @@ static const char* sBluetoothDBusSignals[] =
  * used by any other thread.
  */
 static nsRefPtr<RawDBusConnection> gThreadConnection;
-static nsDataHashtable<nsStringHashKey, DBusMessage* >* sPairingReqTable;
-static nsTArray<uint32_t> sAuthorizedServiceClass;
+
+// Only A2DP and HID are authorized.
+static nsTArray<BluetoothServiceClass> sAuthorizedServiceClass;
+
+// The object path of adpater which should be updated after switching Bluetooth.
 static nsString sAdapterPath;
+
+/**
+ * The adapter name may not be ready whenever event 'AdapterAdded' is received,
+ * so we'd like to wait for a bit.
+ */
 static bool sAdapterNameIsReady = false;
+static int sWaitingForAdapterNameInterval = 1000; //unit: ms
+
+// Keep the pairing requests.
 static Atomic<int32_t> sIsPairing(0);
+static nsDataHashtable<nsStringHashKey, DBusMessage* >* sPairingReqTable;
+
+/**
+ * Disconnect all profiles before turning off Bluetooth. Please see Bug 891257
+ * for more details.
+ */
 static int sConnectedDeviceCount = 0;
 static StaticAutoPtr<Monitor> sStopBluetoothMonitor;
+
+// A quene for connect/disconnect request. See Bug 913372 for details.
 static nsTArray<nsRefPtr<BluetoothProfileController> > sControllerArray;
 
 typedef void (*UnpackFunc)(DBusMessage*, DBusError*, BluetoothValue&, nsAString&);
@@ -335,22 +355,46 @@ private:
   BluetoothSignal mSignal;
 };
 
-class TryFiringAdapterAddedTask : public nsRunnable
+class TryFiringAdapterAddedTask : public Task
 {
 public:
-  NS_IMETHOD
-  Run()
+  void Run() MOZ_OVERRIDE
   {
     MOZ_ASSERT(NS_IsMainThread());
 
     BluetoothService* bs = BluetoothService::Get();
-    NS_ENSURE_TRUE(bs, NS_ERROR_FAILURE);
+    NS_ENSURE_TRUE_VOID(bs);
 
     bs->AdapterAddedReceived();
     bs->TryFiringAdapterAdded();
+  }
+};
+
+class TryFiringAdapterAddedRunnable : public nsRunnable
+{
+public:
+  TryFiringAdapterAddedRunnable(bool aDelay)
+    : mDelay(aDelay)
+  { }
+
+  nsresult Run()
+  {
+    MOZ_ASSERT(NS_IsMainThread());
+
+    if (mDelay) {
+      MessageLoop::current()->
+        PostDelayedTask(FROM_HERE, new TryFiringAdapterAddedTask(),
+                        sWaitingForAdapterNameInterval);
+    } else {
+      MessageLoop::current()->
+        PostTask(FROM_HERE, new TryFiringAdapterAddedTask());
+    }
 
     return NS_OK;
   }
+
+private:
+  bool mDelay;
 };
 
 static bool
@@ -727,7 +771,7 @@ GetProperty(DBusMessageIter aIter, Properties* aPropertyTypes,
     // Notify BluetoothManager whenever adapter name is ready.
     if (!propertyValue.get_nsString().IsEmpty()) {
       sAdapterNameIsReady = true;
-      NS_DispatchToMainThread(new TryFiringAdapterAddedTask());
+      NS_DispatchToMainThread(new TryFiringAdapterAddedRunnable(false));
     }
   }
 
@@ -1305,6 +1349,8 @@ public:
 
   NS_IMETHOD Run()
   {
+    MOZ_ASSERT(NS_IsMainThread());
+
     static const dbus_uint32_t sServices[] = {
       BluetoothServiceClass::HANDSFREE_AG,
       BluetoothServiceClass::HEADSET_AG,
@@ -1576,6 +1622,7 @@ EventFilter(DBusConnection* aConn, DBusMessage* aMsg, void* aData)
       errorStr.AssignLiteral("Cannot parse manager path!");
     } else {
       v = NS_ConvertUTF8toUTF16(str);
+      NS_DispatchToMainThread(new TryFiringAdapterAddedRunnable(true));
       NS_DispatchToMainThread(new PrepareAdapterRunnable(v.get_nsString()));
 
       /**
@@ -2319,7 +2366,7 @@ BluetoothDBusService::SetProperty(BluetoothObjectType aType,
     return NS_OK;
   }
 
-  MOZ_ASSERT(aType < ArrayLength(sBluetoothDBusIfaces));
+  MOZ_ASSERT(aType < (int)ArrayLength(sBluetoothDBusIfaces));
   MOZ_ASSERT(!sAdapterPath.IsEmpty());
   const char* interface = sBluetoothDBusIfaces[aType];
 
@@ -2390,15 +2437,6 @@ BluetoothDBusService::SetProperty(BluetoothObjectType aType,
   }
   runnable.forget();
   return NS_OK;
-}
-
-bool
-BluetoothDBusService::GetDevicePath(const nsAString& aAdapterPath,
-                                    const nsAString& aDeviceAddress,
-                                    nsAString& aDevicePath)
-{
-  aDevicePath = GetObjectPathFromAddress(aAdapterPath, aDeviceAddress);
-  return true;
 }
 
 nsresult
@@ -2932,32 +2970,6 @@ BluetoothDBusService::UpdateSdpRecords(const nsAString& aDeviceAddress,
                                     DBUS_TYPE_INVALID);
 }
 
-nsresult
-BluetoothDBusService::GetScoSocket(const nsAString& aAddress,
-                                   bool aAuth,
-                                   bool aEncrypt,
-                                   mozilla::ipc::UnixSocketConsumer* aConsumer)
-{
-  MOZ_ASSERT(NS_IsMainThread());
-
-  if (!mConnection || !gThreadConnection) {
-    NS_ERROR("Bluetooth service not started yet!");
-    return NS_ERROR_FAILURE;
-  }
-
-  BluetoothUnixSocketConnector* c =
-    new BluetoothUnixSocketConnector(BluetoothSocketType::SCO, -1,
-                                     aAuth, aEncrypt);
-
-  if (!aConsumer->ConnectSocket(c, NS_ConvertUTF16toUTF8(aAddress).get())) {
-    nsAutoString replyError;
-    replyError.AssignLiteral("SocketConnectionError");
-    return NS_ERROR_FAILURE;
-  }
-
-  return NS_OK;
-}
-
 void
 BluetoothDBusService::SendFile(const nsAString& aDeviceAddress,
                                BlobParent* aBlobParent,
@@ -3024,10 +3036,8 @@ BluetoothDBusService::ConnectSco(BluetoothReplyRunnable* aRunnable)
   MOZ_ASSERT(NS_IsMainThread());
 
   BluetoothHfpManager* hfp = BluetoothHfpManager::Get();
-  NS_ENSURE_TRUE_VOID(hfp);
-  if (!hfp->ConnectSco(aRunnable)) {
-    NS_NAMED_LITERAL_STRING(replyError,
-      "SCO socket exists or HFP is not connected");
+  if (!hfp || !hfp->ConnectSco(aRunnable)) {
+    NS_NAMED_LITERAL_STRING(replyError, "Calling ConnectSco() failed");
     DispatchBluetoothReply(aRunnable, BluetoothValue(), replyError);
   }
 }
@@ -3038,16 +3048,13 @@ BluetoothDBusService::DisconnectSco(BluetoothReplyRunnable* aRunnable)
   MOZ_ASSERT(NS_IsMainThread());
 
   BluetoothHfpManager* hfp = BluetoothHfpManager::Get();
-  NS_ENSURE_TRUE_VOID(hfp);
-  if (hfp->DisconnectSco()) {
-    DispatchBluetoothReply(aRunnable,
-                           BluetoothValue(true), NS_LITERAL_STRING(""));
+  if (!hfp || !hfp->DisconnectSco()) {
+    NS_NAMED_LITERAL_STRING(replyError, "Calling DisconnectSco() failed");
+    DispatchBluetoothReply(aRunnable, BluetoothValue(), replyError);
     return;
   }
 
-  NS_NAMED_LITERAL_STRING(replyError,
-    "SCO socket doesn't exist or HFP is not connected");
-  DispatchBluetoothReply(aRunnable, BluetoothValue(), replyError);
+  DispatchBluetoothReply(aRunnable, BluetoothValue(true), EmptyString());
 }
 
 void
@@ -3056,9 +3063,13 @@ BluetoothDBusService::IsScoConnected(BluetoothReplyRunnable* aRunnable)
   MOZ_ASSERT(NS_IsMainThread());
 
   BluetoothHfpManager* hfp = BluetoothHfpManager::Get();
-  NS_ENSURE_TRUE_VOID(hfp);
-  DispatchBluetoothReply(aRunnable,
-                         hfp->IsScoConnected(), EmptyString());
+  if (!hfp) {
+    NS_NAMED_LITERAL_STRING(replyError, "Fail to get BluetoothHfpManager");
+    DispatchBluetoothReply(aRunnable, BluetoothValue(), replyError);
+    return;
+  }
+
+  DispatchBluetoothReply(aRunnable, hfp->IsScoConnected(), EmptyString());
 }
 
 void

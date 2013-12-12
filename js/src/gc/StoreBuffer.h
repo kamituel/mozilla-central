@@ -96,7 +96,9 @@ class StoreBuffer
         MonoTypeBuffer &operator=(const MonoTypeBuffer& other) MOZ_DELETE;
 
         bool init() {
-            storage_ = js_new<LifoAlloc>(LifoAllocBlockSize);
+            if (!storage_)
+                storage_ = js_new<LifoAlloc>(LifoAllocBlockSize);
+            clear();
             return bool(storage_);
         }
 
@@ -170,7 +172,9 @@ class StoreBuffer
         GenericBuffer &operator=(const GenericBuffer& other) MOZ_DELETE;
 
         bool init() {
-            storage_ = js_new<LifoAlloc>(LifoAllocBlockSize);
+            if (!storage_)
+                storage_ = js_new<LifoAlloc>(LifoAllocBlockSize);
+            clear();
             return bool(storage_);
         }
 
@@ -398,7 +402,8 @@ class StoreBuffer
     explicit StoreBuffer(JSRuntime *rt, const Nursery &nursery)
       : bufferVal(), bufferCell(), bufferSlot(), bufferWholeCell(),
         bufferRelocVal(), bufferRelocCell(), bufferGeneric(),
-        runtime_(rt), nursery_(nursery), aboutToOverflow_(false), enabled_(false)
+        runtime_(rt), nursery_(nursery), aboutToOverflow_(false), enabled_(false),
+        entered(false)
     {
     }
 

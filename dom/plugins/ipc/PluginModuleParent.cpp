@@ -264,7 +264,7 @@ PluginModuleParent::SetChildTimeout(const int32_t aChildTimeout)
     SetReplyTimeoutMs(timeoutMs);
 }
 
-int
+void
 PluginModuleParent::TimeoutChanged(const char* aPref, void* aModule)
 {
     NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
@@ -284,7 +284,6 @@ PluginModuleParent::TimeoutChanged(const char* aPref, void* aModule)
       int32_t timeoutSecs = Preferences::GetInt(kParentTimeoutPref, 0);
       unused << static_cast<PluginModuleParent*>(aModule)->SendSetParentHangTimeout(timeoutSecs);
     }
-    return 0;
 }
 
 void
@@ -1560,11 +1559,13 @@ PluginModuleParent::AllocPCrashReporterParent(mozilla::dom::NativeThreadId* id,
 bool
 PluginModuleParent::DeallocPCrashReporterParent(PCrashReporterParent* actor)
 {
+#ifdef MOZ_CRASHREPORTER
 #ifdef XP_WIN
     mozilla::MutexAutoLock lock(mCrashReporterMutex);
     if (actor == static_cast<PCrashReporterParent*>(mCrashReporter)) {
         mCrashReporter = nullptr;
     }
+#endif
 #endif
     delete actor;
     return true;

@@ -8,10 +8,11 @@
  * values they accept
  */
 
-#include "mozilla/Util.h"
+#include "mozilla/ArrayUtils.h"
 
 #include "nsCSSProps.h"
 #include "nsCSSKeywords.h"
+#include "nsLayoutUtils.h"
 #include "nsStyleConsts.h"
 #include "nsIWidget.h"
 #include "nsThemeConstants.h"  // For system widget appearance types
@@ -20,9 +21,6 @@
 
 #include "nsString.h"
 #include "nsStaticNameTable.h"
-#include "nsStyleConsts.h"
-#include "gfxFontConstants.h"
-#include "nsStyleStruct.h"
 
 #include "mozilla/Preferences.h"
 
@@ -348,11 +346,43 @@ nsCSSProps::ReleaseTable(void)
   }
 }
 
+// Length of the "var-" custom property name prefix.
+#define VAR_PREFIX_LENGTH 4
+
+/* static */ bool
+nsCSSProps::IsInherited(nsCSSProperty aProperty)
+{
+  MOZ_ASSERT(!IsShorthand(aProperty));
+
+  nsStyleStructID sid = kSIDTable[aProperty];
+  return nsCachedStyleData::IsInherited(sid);
+}
+
+/* static */ bool
+nsCSSProps::IsCustomPropertyName(const nsACString& aProperty)
+{
+  // Custom properties must have at least one character after the "var-" prefix.
+  return aProperty.Length() >= (VAR_PREFIX_LENGTH + 1) &&
+         StringBeginsWith(aProperty, NS_LITERAL_CSTRING("var-"));
+}
+
+/* static */ bool
+nsCSSProps::IsCustomPropertyName(const nsAString& aProperty)
+{
+  return aProperty.Length() >= (VAR_PREFIX_LENGTH + 1) &&
+         StringBeginsWith(aProperty, NS_LITERAL_STRING("var-"));
+}
+
 nsCSSProperty
 nsCSSProps::LookupProperty(const nsACString& aProperty,
                            EnabledState aEnabled)
 {
   NS_ABORT_IF_FALSE(gPropertyTable, "no lookup table, needs addref");
+
+  if (nsLayoutUtils::CSSVariablesEnabled() &&
+      IsCustomPropertyName(aProperty)) {
+    return eCSSPropertyExtra_variable;
+  }
 
   nsCSSProperty res = nsCSSProperty(gPropertyTable->Lookup(aProperty));
   // Check eCSSAliasCount against 0 to make it easy for the
@@ -377,6 +407,11 @@ nsCSSProps::LookupProperty(const nsACString& aProperty,
 nsCSSProperty
 nsCSSProps::LookupProperty(const nsAString& aProperty, EnabledState aEnabled)
 {
+  if (nsLayoutUtils::CSSVariablesEnabled() &&
+      IsCustomPropertyName(aProperty)) {
+    return eCSSPropertyExtra_variable;
+  }
+
   // This is faster than converting and calling
   // LookupProperty(nsACString&).  The table will do its own
   // converting and avoid a PromiseFlatCString() call.
@@ -529,6 +564,7 @@ const int32_t nsCSSProps::kAppearanceKTable[] = {
   eCSSKeyword_button_arrow_previous,  NS_THEME_BUTTON_ARROW_PREVIOUS,
   eCSSKeyword_meterbar,               NS_THEME_METERBAR,
   eCSSKeyword_meterchunk,             NS_THEME_METERBAR_CHUNK,
+  eCSSKeyword_number_input,           NS_THEME_NUMBER_INPUT,
   eCSSKeyword_separator,              NS_THEME_TOOLBAR_SEPARATOR,
   eCSSKeyword_splitter,               NS_THEME_SPLITTER,
   eCSSKeyword_statusbar,              NS_THEME_STATUSBAR,
@@ -973,6 +1009,16 @@ const int32_t nsCSSProps::kEmptyCellsKTable[] = {
   eCSSKeyword_UNKNOWN,-1
 };
 
+const int32_t nsCSSProps::kAlignContentKTable[] = {
+  eCSSKeyword_flex_start,    NS_STYLE_ALIGN_CONTENT_FLEX_START,
+  eCSSKeyword_flex_end,      NS_STYLE_ALIGN_CONTENT_FLEX_END,
+  eCSSKeyword_center,        NS_STYLE_ALIGN_CONTENT_CENTER,
+  eCSSKeyword_space_between, NS_STYLE_ALIGN_CONTENT_SPACE_BETWEEN,
+  eCSSKeyword_space_around,  NS_STYLE_ALIGN_CONTENT_SPACE_AROUND,
+  eCSSKeyword_stretch,       NS_STYLE_ALIGN_CONTENT_STRETCH,
+  eCSSKeyword_UNKNOWN,-1
+};
+
 const int32_t nsCSSProps::kAlignItemsKTable[] = {
   eCSSKeyword_flex_start, NS_STYLE_ALIGN_ITEMS_FLEX_START,
   eCSSKeyword_flex_end,   NS_STYLE_ALIGN_ITEMS_FLEX_END,
@@ -998,6 +1044,13 @@ const int32_t nsCSSProps::kFlexDirectionKTable[] = {
   eCSSKeyword_row_reverse,    NS_STYLE_FLEX_DIRECTION_ROW_REVERSE,
   eCSSKeyword_column,         NS_STYLE_FLEX_DIRECTION_COLUMN,
   eCSSKeyword_column_reverse, NS_STYLE_FLEX_DIRECTION_COLUMN_REVERSE,
+  eCSSKeyword_UNKNOWN,-1
+};
+
+const int32_t nsCSSProps::kFlexWrapKTable[] = {
+  eCSSKeyword_nowrap,       NS_STYLE_FLEX_WRAP_NOWRAP,
+  eCSSKeyword_wrap,         NS_STYLE_FLEX_WRAP_WRAP,
+  eCSSKeyword_wrap_reverse, NS_STYLE_FLEX_WRAP_WRAP_REVERSE,
   eCSSKeyword_UNKNOWN,-1
 };
 
@@ -2404,6 +2457,12 @@ static const nsCSSProperty gFlexSubpropTable[] = {
   eCSSProperty_UNKNOWN
 };
 
+static const nsCSSProperty gFlexFlowSubpropTable[] = {
+  eCSSProperty_flex_direction,
+  eCSSProperty_flex_wrap,
+  eCSSProperty_UNKNOWN
+};
+
 static const nsCSSProperty gOverflowSubpropTable[] = {
   eCSSProperty_overflow_x,
   eCSSProperty_overflow_y,
@@ -2675,6 +2734,13 @@ enum ColumnCheckCounter {
   #include "nsCSSPropList.h"
   #undef CSS_PROP_COLUMN
   ePropertyCount_for_Column
+};
+
+enum VariablesCheckCounter {
+  #define CSS_PROP_VARIABLES ENUM_DATA_FOR_PROPERTY
+  #include "nsCSSPropList.h"
+  #undef CSS_PROP_VARIABLES
+  ePropertyCount_for_Variables
 };
 
 #undef ENUM_DATA_FOR_PROPERTY

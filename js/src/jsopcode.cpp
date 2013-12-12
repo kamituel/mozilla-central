@@ -10,8 +10,6 @@
 
 #include "jsopcodeinlines.h"
 
-#include "mozilla/Util.h"
-
 #include <ctype.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -49,7 +47,6 @@ using namespace js;
 using namespace js::gc;
 
 using js::frontend::IsIdentifier;
-using mozilla::ArrayLength;
 
 /*
  * Index limit must stay within 32 bits.
@@ -280,7 +277,7 @@ js::DumpIonScriptCounts(Sprinter *sp, jit::IonScriptCounts *ionCounts)
 void
 js_DumpPCCounts(JSContext *cx, HandleScript script, js::Sprinter *sp)
 {
-    JS_ASSERT(script->hasScriptCounts);
+    JS_ASSERT(script->hasScriptCounts());
 
 #ifdef DEBUG
     jsbytecode *pc = script->code();
@@ -440,11 +437,11 @@ class BytecodeParser
     }
 
     uint32_t numSlots() {
-        return 1 + (script_->function() ? script_->function()->nargs : 0) + script_->nfixed;
+        return 1 + (script_->function() ? script_->function()->nargs : 0) + script_->nfixed();
     }
 
     uint32_t maximumStackDepth() {
-        return script_->nslots - script_->nfixed;
+        return script_->nslots() - script_->nfixed();
     }
 
     Bytecode& getCode(uint32_t offset) {
@@ -643,7 +640,7 @@ BytecodeParser::parse()
             JSTryNote *tn = script_->trynotes()->vector;
             JSTryNote *tnlimit = tn + script_->trynotes()->length;
             for (; tn < tnlimit; tn++) {
-                uint32_t startOffset = script_->mainOffset + tn->start;
+                uint32_t startOffset = script_->mainOffset() + tn->start;
                 if (startOffset == offset + 1) {
                     uint32_t catchOffset = startOffset + tn->length;
                     if (tn->kind != JSTRY_ITER && tn->kind != JSTRY_LOOP) {
@@ -700,16 +697,16 @@ BytecodeParser::parse()
 #ifdef DEBUG
 
 bool
-js::ReconstructStackDepth(JSContext *cx, JSScript *script, jsbytecode *pc, uint32_t *depth)
+js::ReconstructStackDepth(JSContext *cx, JSScript *script, jsbytecode *pc, uint32_t *depth, bool *reachablePC)
 {
     BytecodeParser parser(cx, script);
     if (!parser.parse())
         return false;
 
-    if (!parser.isReachable(pc))
-        return false;
+    *reachablePC = parser.isReachable(pc);
 
-    *depth = parser.stackDepthAtPC(pc);
+    if (*reachablePC)
+        *depth = parser.stackDepthAtPC(pc);
 
     return true;
 }
@@ -733,7 +730,7 @@ js_DisassembleAtPC(JSContext *cx, JSScript *scriptArg, bool lines,
         return false;
 
     if (showAll)
-        Sprint(sp, "%s:%u\n", script->filename(), script->lineno);
+        Sprint(sp, "%s:%u\n", script->filename(), script->lineno());
 
     if (pc != nullptr)
         sp->put("    ");
@@ -1432,30 +1429,58 @@ js_QuoteString(ExclusiveContext *cx, JSString *str, jschar quote)
 
 /************************************************************************/
 
-static JSObject *
-GetBlockChainAtPC(JSContext *cx, JSScript *script, jsbytecode *pc)
+StaticBlockObject *
+js::GetBlockChainAtPC(JSScript *script, jsbytecode *pc)
 {
     JS_ASSERT(script->containsPC(pc));
-    JS_ASSERT(pc >= script->main());
-
-    ptrdiff_t offset = pc - script->main();
 
     if (!script->hasBlockScopes())
         return nullptr;
 
+    if (pc < script->main())
+        return nullptr;
+    ptrdiff_t offset = pc - script->main();
+
     BlockScopeArray *blockScopes = script->blockScopes();
-    JSObject *blockChain = nullptr;
-    for (uint32_t n = 0; n < blockScopes->length; n++) {
-        const BlockScopeNote *note = &blockScopes->vector[n];
-        if (note->start > offset)
-            break;
-        if (offset <= note->start + note->length)
-            blockChain = script->getObject(note->index);
+    StaticBlockObject *blockChain = nullptr;
+
+    // Find the innermost block chain using a binary search.
+    size_t bottom = 0;
+    size_t top = blockScopes->length;
+
+    while (bottom < top) {
+        size_t mid = bottom + (top - bottom) / 2;
+        const BlockScopeNote *note = &blockScopes->vector[mid];
+        if (note->start <= offset) {
+            // Block scopes are ordered in the list by their starting offset, and since
+            // blocks form a tree ones earlier in the list may cover the pc even if
+            // later blocks end before the pc. This only happens when the earlier block
+            // is a parent of the later block, so we need to check parents of |mid| in
+            // the searched range for coverage.
+            size_t check = mid;
+            while (check >= bottom) {
+                const BlockScopeNote *checkNote = &blockScopes->vector[check];
+                JS_ASSERT(checkNote->start <= offset);
+                if (offset < checkNote->start + checkNote->length) {
+                    // We found a matching block chain but there may be inner ones
+                    // at a higher block chain index than mid. Continue the binary search.
+                    blockChain = &script->getObject(checkNote->index)->as<StaticBlockObject>();
+                    break;
+                }
+                if (checkNote->parent == UINT32_MAX)
+                    break;
+                check = checkNote->parent;
+            }
+            bottom = mid + 1;
+        } else {
+            top = mid;
+        }
     }
 
     return blockChain;
 }
 
+namespace {
 /*
  * The expression decompiler is invoked by error handling code to produce a
  * string representation of the erroring expression. As it's only a debugging
@@ -1576,8 +1601,8 @@ ExpressionDecompiler::decompilePC(jsbytecode *pc)
       case JSOP_CALLLOCAL: {
         unsigned i = GET_SLOTNO(pc);
         JSAtom *atom;
-        if (i >= script->nfixed) {
-            i -= script->nfixed;
+        if (i >= script->nfixed()) {
+            i -= script->nfixed();
             JS_ASSERT(i < unsigned(parser.stackDepthAtPC(pc)));
             atom = findLetVar(pc, i);
             if (!atom)
@@ -1715,7 +1740,7 @@ JSAtom *
 ExpressionDecompiler::findLetVar(jsbytecode *pc, unsigned depth)
 {
     if (script->hasObjects()) {
-        JSObject *chain = GetBlockChainAtPC(cx, script, pc);
+        JSObject *chain = GetBlockChainAtPC(script, pc);
         if (!chain)
             return nullptr;
         JS_ASSERT(chain->is<BlockObject>());
@@ -1764,6 +1789,8 @@ ExpressionDecompiler::getOutput(char **res)
     (*res)[len] = 0;
     return true;
 }
+
+}  // anonymous namespace
 
 static bool
 FindStartPC(JSContext *cx, ScriptFrameIter &iter, int spindex, int skipStackHits, Value v,
@@ -2092,7 +2119,7 @@ js::GetPCCountScriptSummary(JSContext *cx, size_t index)
     buf.append(str);
 
     AppendJSONProperty(buf, "line");
-    NumberValueToStringBuffer(cx, Int32Value(script->lineno), buf);
+    NumberValueToStringBuffer(cx, Int32Value(script->lineno()), buf);
 
     if (script->function()) {
         JSAtom *atom = script->function()->displayAtom();
@@ -2191,13 +2218,13 @@ GetPCCountJSON(JSContext *cx, const ScriptAndCounts &sac, StringBuffer &buf)
     buf.append(str);
 
     AppendJSONProperty(buf, "line");
-    NumberValueToStringBuffer(cx, Int32Value(script->lineno), buf);
+    NumberValueToStringBuffer(cx, Int32Value(script->lineno()), buf);
 
     AppendJSONProperty(buf, "opcodes");
     buf.append('[');
     bool comma = false;
 
-    SrcNoteLineScanner scanner(script->notes(), script->lineno);
+    SrcNoteLineScanner scanner(script->notes(), script->lineno());
 
     for (jsbytecode *pc = script->code(); pc < script->codeEnd(); pc += GetBytecodeLength(pc)) {
         size_t offset = script->pcToOffset(pc);
@@ -2338,7 +2365,7 @@ js::GetPCCountScriptContents(JSContext *cx, size_t index)
 
     StringBuffer buf(cx);
 
-    if (!script->function() && !script->compileAndGo)
+    if (!script->function() && !script->compileAndGo())
         return buf.finishString();
 
     {

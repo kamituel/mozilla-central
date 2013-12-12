@@ -805,8 +805,8 @@ nsFrameMessageManager::AssertAppHasPermission(const nsAString& aPermission,
 }
 
 NS_IMETHODIMP
-nsFrameMessageManager::CheckAppHasStatus(unsigned short aStatus,
-                                         bool* aHasStatus)
+nsFrameMessageManager::AssertAppHasStatus(unsigned short aStatus,
+                                          bool* aHasStatus)
 {
   *aHasStatus = false;
 
@@ -1130,21 +1130,19 @@ struct MessageManagerReferentCount
 namespace mozilla {
 namespace dom {
 
-class MessageManagerReporter MOZ_FINAL : public MemoryMultiReporter
+class MessageManagerReporter MOZ_FINAL : public nsIMemoryReporter
 {
 public:
-  MessageManagerReporter()
-    : MemoryMultiReporter("message-manager")
-  {}
-
-  NS_IMETHOD CollectReports(nsIMemoryReporterCallback* aCallback,
-                            nsISupports* aData);
+  NS_DECL_ISUPPORTS
+  NS_DECL_NSIMEMORYREPORTER
 
   static const size_t kSuspectReferentCount = 300;
 protected:
   void CountReferents(nsFrameMessageManager* aMessageManager,
                       MessageManagerReferentCount* aReferentCount);
 };
+
+NS_IMPL_ISUPPORTS1(MessageManagerReporter, nsIMemoryReporter)
 
 static PLDHashOperator
 CollectMessageListenerData(const nsAString& aKey,
@@ -1590,6 +1588,12 @@ public:
   }
 
   bool CheckAppHasPermission(const nsAString& aPermission)
+  {
+    // In a single-process scenario, the child always has all capabilities.
+    return true;
+  }
+
+  virtual bool CheckAppHasStatus(unsigned short aStatus)
   {
     // In a single-process scenario, the child always has all capabilities.
     return true;

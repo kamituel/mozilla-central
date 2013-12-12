@@ -993,6 +993,16 @@ nsIFrame::GetPaddingRect() const
   return GetPaddingRectRelativeToSelf() + GetPosition();
 }
 
+nsRect
+nsIFrame::GetMarginRectRelativeToSelf() const
+{
+  nsMargin m = GetUsedMargin();
+  ApplySkipSides(m);
+  nsRect r(0, 0, mRect.width, mRect.height);
+  r.Inflate(m);
+  return r;
+}
+
 bool
 nsIFrame::IsTransformed() const
 {
@@ -5295,6 +5305,9 @@ nsIFrame::ListGeneric(FILE* out, int32_t aIndent, uint32_t aFlags) const
       nsAutoString atomString;
       pseudoTag->ToString(atomString);
       fprintf(out, "%s", NS_LossyConvertUTF16toASCII(atomString).get());
+    }
+    if (mParent && mStyleContext->GetParent() != mParent->StyleContext()) {
+      fprintf(out, ",parent=%p", mStyleContext->GetParent());
     }
   }
   fputs("]", out);
