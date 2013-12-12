@@ -46,6 +46,44 @@ interface nsINfcContentHelper : nsISupports
   * @param window
   *        Current window
   *
+  * @param aBlob
+  *        Raw data of the file to be sent
+  *
+  * @param sessionToken
+  *        Current token
+  *
+  * Returns DOMRequest, if sending of file then 'onsuccess' is called else 'onerror'
+  */
+  nsIDOMDOMRequest sendFile(in nsIDOMWindow window,
+                            in jsval aBlob,
+                            in DOMString sessionToken);
+
+ /**
+  * Notify the status of sendFile operation to Chrome process
+  *
+  * @param window
+  *        Current window
+  *
+  * @param status
+  *        Status of sendFile operation (SUCCESS : 0 / FAILURE: 1)
+  *
+  * @param requestId
+  *        Request ID of previous SendFile operation
+  *
+  * @param sessionToken
+  *        Current token
+  */
+  void notifySendFileStatus(in nsIDOMWindow window,
+                            in octet status,
+                            in DOMString requestId,
+                            in DOMString sessionToken);
+
+ /**
+  * Register the given application id with Chrome process
+  *
+  * @param window
+  *        Current window
+  *
   * @param appId
   *        Application ID to be registered
   *

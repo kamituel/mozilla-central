@@ -49,6 +49,7 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:ConnectResponse",
   "NFC:CloseResponse",
   "NFC:CheckP2PRegistrationResponse",
+  "NFC:NotifySendFileStatusResponse",
   "NFC:PeerEvent"
 ];
 
@@ -215,6 +216,38 @@ NfcContentHelper.prototype = {
     return request;
   },
 
+  sendFile: function sendFile(window, data, sessionToken) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = btoa(this.getRequestId(request));
+    this._requestMap[requestId] = window;
+
+    cpmm.sendAsyncMessage("NFC:SendFile", {
+      requestId: requestId,
+      blob: data.blob,
+      sessionToken: sessionToken
+    });
+    return request;
+  },
+
+  notifySendFileStatus: function notifySendFileStatus(window, status,
+                                                      requestId,
+                                                      sessionToken) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    cpmm.sendAsyncMessage("NFC:NotifySendFileStatus", {
+      status: status,
+      requestId: requestId,
+      sessionToken: sessionToken
+    });
+  },
+
   registerTargetForPeerEvent: function registerTargetForPeerEvent(window,
                                                   appId, event, callback) {
     if (window == null) {
@@ -273,7 +306,6 @@ NfcContentHelper.prototype = {
   },
 
   // nsIObserver
-
   observe: function observe(subject, topic, data) {
     if (topic == "xpcom-shutdown") {
       this.removeMessageListener();
@@ -322,6 +354,7 @@ NfcContentHelper.prototype = {
       case "NFC:MakeReadOnlyNDEFResponse":
       case "NFC:GetDetailsNDEFResponse":
       case "NFC:CheckP2PRegistrationResponse":
+      case "NFC:NotifySendFileStatusResponse":
         this.handleResponse(message.json);
         break;
       case "NFC:PeerEvent":

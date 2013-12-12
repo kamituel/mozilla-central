@@ -6,7 +6,7 @@
 
 "use strict";
 
-const DEBUG = false;
+const DEBUG = true;
 function debug(s) {
   if (DEBUG) dump("-*- Nfc DOM: " + s + "\n");
 }
@@ -128,8 +128,12 @@ MozNFCPeer.prototype = {
   },
 
   sendFile: function sendFile(blob) {
-    debug("sendFile is not currently implemented.");
-    return null;
+    let data = {
+      "blob": blob
+    };
+    return this._nfcContentHelper.sendFile(this._window,
+                                           ObjectWrapper.wrap(data, this._window),
+                                           this.session);
   },
 
   classID: Components.ID("{c1b2bcf0-35eb-11e3-aa6e-0800200c9a66}"),
@@ -157,7 +161,8 @@ mozNfc.prototype = {
     debug("mozNfc init called");
     this._window = aWindow;
     let origin = this._window.document.nodePrincipal.origin;
-    // Only System Process should listen on 'nfc-p2p-user-accept' event
+    // Only System Process should listen on following events
+    // 'nfc-p2p-user-accept' , 'nfc-send-file-status'
     if (origin !== 'app://system.gaiamobile.org') {
       return;
     }
@@ -166,6 +171,12 @@ mozNfc.prototype = {
       let appID = appsService.getAppLocalIdByManifestURL(event.detail.manifestUrl);
       // Notify Chrome process of User's acknowledgement
       self._nfcContentHelper.notifyUserAcceptedP2P(self._window, appID);
+    });
+    this._window.addEventListener("nfc-send-file-status", function (event) {
+      self._nfcContentHelper.notifySendFileStatus(self._window,
+                                                  event.detail.status,
+                                                  event.detail.requestId,
+                                                  event.detail.sessionToken);
     });
   },
 
