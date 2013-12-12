@@ -62,30 +62,13 @@ MDefinition::PrintOpcodeName(FILE *fp, MDefinition::Opcode op)
         fprintf(fp, "%c", tolower(name[i]));
 }
 
-// If one of the inputs to any non-phi are in a block that will abort, then there is
-// no point in processing this instruction, since control flow cannot reach here.
-bool
-MDefinition::earlyAbortCheck()
-{
-    if (isPhi())
-        return false;
-    for (size_t i = 0, e = numOperands(); i < e; i++) {
-        if (getOperand(i)->block()->earlyAbort()) {
-            block()->setEarlyAbort();
-            IonSpew(IonSpew_Range, "Ignoring value from block %d because instruction %d is in a block that aborts", block()->id(), getOperand(i)->id());
-            return true;
-        }
-    }
-    return false;
-}
-
 static inline bool
 EqualValues(bool useGVN, MDefinition *left, MDefinition *right)
 {
     if (useGVN)
         return left->valueNumber() == right->valueNumber();
 
-    return left->id() == right->id();
+    return left == right;
 }
 
 static MConstant *
@@ -516,8 +499,8 @@ MConstant::printOpcode(FILE *fp) const
             }
             if (fun->hasScript()) {
                 JSScript *script = fun->nonLazyScript();
-                fprintf(fp, " (%s:%u)",
-                        script->filename() ? script->filename() : "", script->lineno);
+                fprintf(fp, " (%s:%d)",
+                        script->filename() ? script->filename() : "", (int) script->lineno());
             }
             fprintf(fp, " at %p", (void *) fun);
             break;
@@ -2784,21 +2767,17 @@ MAsmJSCall::New(TempAllocator &alloc, Callee callee, const Args &args, MIRType r
     call->callee_ = callee;
     call->setResultType(resultType);
 
-    call->numArgs_ = args.length();
-    call->argRegs_ = (AnyRegister *)GetIonContext()->temp->allocate(call->numArgs_ * sizeof(AnyRegister));
-    if (!call->argRegs_)
+    if (!call->argRegs_.init(alloc, args.length()))
         return nullptr;
-    for (size_t i = 0; i < call->numArgs_; i++)
+    for (size_t i = 0; i < call->argRegs_.length(); i++)
         call->argRegs_[i] = args[i].reg;
 
-    call->numOperands_ = call->numArgs_ + (callee.which() == Callee::Dynamic ? 1 : 0);
-    call->operands_ = (MUse *)GetIonContext()->temp->allocate(call->numOperands_ * sizeof(MUse));
-    if (!call->operands_)
+    if (!call->operands_.init(alloc, call->argRegs_.length() + (callee.which() == Callee::Dynamic ? 1 : 0)))
         return nullptr;
-    for (size_t i = 0; i < call->numArgs_; i++)
+    for (size_t i = 0; i < call->argRegs_.length(); i++)
         call->setOperand(i, args[i].def);
     if (callee.which() == Callee::Dynamic)
-        call->setOperand(call->numArgs_, callee.dynamic());
+        call->setOperand(call->argRegs_.length(), callee.dynamic());
 
     return call;
 }
@@ -2958,10 +2937,10 @@ jit::PropertyReadNeedsTypeBarrier(JSContext *propertycx,
                 if (property.maybeTypes()) {
                     types::TypeSet::TypeList types;
                     if (!property.maybeTypes()->enumerateTypes(&types))
-                        return false;
+                        break;
                     if (types.length()) {
-                        if (!observed->addType(types[0], GetIonContext()->temp->lifoAlloc()))
-                            return false;
+                        // Note: the return value here is ignored.
+                        observed->addType(types[0], GetIonContext()->temp->lifoAlloc());
                         break;
                     }
                 }
