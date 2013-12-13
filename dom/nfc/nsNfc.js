@@ -175,8 +175,7 @@ mozNfc.prototype = {
     this._window.addEventListener("nfc-send-file-status", function (event) {
       self._nfcContentHelper.notifySendFileStatus(self._window,
                                                   event.detail.status,
-                                                  event.detail.requestId,
-                                                  event.detail.sessionToken);
+                                                  event.detail.requestId);
     });
   },
 

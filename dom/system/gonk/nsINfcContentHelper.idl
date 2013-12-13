@@ -69,14 +69,10 @@ interface nsINfcContentHelper : nsISupports
   *
   * @param requestId
   *        Request ID of previous SendFile operation
-  *
-  * @param sessionToken
-  *        Current token
   */
   void notifySendFileStatus(in nsIDOMWindow window,
                             in octet status,
-                            in DOMString requestId,
-                            in DOMString sessionToken);
+                            in DOMString requestId);
 
  /**
   * Register the given application id with Chrome process
