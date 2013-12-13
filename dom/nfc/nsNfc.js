@@ -6,7 +6,7 @@
 
 "use strict";
 
-const DEBUG = true;
+const DEBUG = false;
 function debug(s) {
   if (DEBUG) dump("-*- Nfc DOM: " + s + "\n");
 }
@@ -175,8 +175,7 @@ mozNfc.prototype = {
     this._window.addEventListener("nfc-send-file-status", function (event) {
       self._nfcContentHelper.notifySendFileStatus(self._window,
                                                   event.detail.status,
-                                                  event.detail.requestId,
-                                                  event.detail.sessionToken);
+                                                  event.detail.requestId);
     });
   },
 
