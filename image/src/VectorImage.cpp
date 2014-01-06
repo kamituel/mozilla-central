@@ -647,18 +647,17 @@ VectorImage::FrameIsOpaque(uint32_t aWhichFrame)
 //******************************************************************************
 /* [noscript] gfxASurface getFrame(in uint32_t aWhichFrame,
  *                                 in uint32_t aFlags; */
-NS_IMETHODIMP
+NS_IMETHODIMP_(already_AddRefed<gfxASurface>)
 VectorImage::GetFrame(uint32_t aWhichFrame,
-                      uint32_t aFlags,
-                      gfxASurface** _retval)
+                      uint32_t aFlags)
 {
-  NS_ENSURE_ARG_POINTER(_retval);
+  MOZ_ASSERT(aWhichFrame <= FRAME_MAX_VALUE);
 
   if (aWhichFrame > FRAME_MAX_VALUE)
-    return NS_ERROR_INVALID_ARG;
+    return nullptr;
 
   if (mError)
-    return NS_ERROR_FAILURE;
+    return nullptr;
 
   // Look up height & width
   // ----------------------
@@ -668,7 +667,7 @@ VectorImage::GetFrame(uint32_t aWhichFrame,
       !mSVGDocumentWrapper->GetWidthOrHeight(SVGDocumentWrapper::eHeight,
                                              imageIntSize.height)) {
     // We'll get here if our SVG doc has a percent-valued width or height.
-    return NS_ERROR_FAILURE;
+    return nullptr;
   }
 
   // Create a surface that we'll ultimately return
@@ -689,9 +688,8 @@ VectorImage::GetFrame(uint32_t aWhichFrame,
                      nsIntRect(nsIntPoint(0,0), imageIntSize),
                      imageIntSize, nullptr, aWhichFrame, aFlags);
 
-  NS_ENSURE_SUCCESS(rv, rv);
-  *_retval = surface.forget().get();
-  return rv;
+  NS_ENSURE_SUCCESS(rv, nullptr);
+  return surface.forget();
 }
 
 //******************************************************************************
@@ -853,7 +851,7 @@ VectorImage::CreateDrawableAndShow(const SVGDrawingParameters& aParams)
 
   // Try to create an offscreen surface.
   mozilla::RefPtr<mozilla::gfx::DrawTarget> target =
-   gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(aParams.imageRect.Size(), gfx::FORMAT_B8G8R8A8);
+   gfxPlatform::GetPlatform()->CreateOffscreenContentDrawTarget(aParams.imageRect.Size().ToIntSize(), gfx::FORMAT_B8G8R8A8);
 
   // If we couldn't create the draw target, it was probably because it would end
   // up way too big. Generally it also wouldn't fit in the cache, but the prefs

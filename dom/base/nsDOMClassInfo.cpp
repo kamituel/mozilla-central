@@ -77,7 +77,6 @@
 #include "nsError.h"
 #include "nsIDOMDOMStringList.h"
 #include "nsIDOMUserDataHandler.h"
-#include "nsIDOMLoadStatus.h"
 #include "nsIDOMXPathNamespace.h"
 #include "nsIDOMXULButtonElement.h"
 #include "nsIDOMXULCheckboxElement.h"
@@ -110,13 +109,11 @@
 #include "nsIDOMCSSPageRule.h"
 #include "nsIDOMCSSStyleRule.h"
 #include "nsIDOMCSSStyleSheet.h"
-#include "nsIDOMDeviceMotionEvent.h" //nsIDOMDeviceAcceleration
 #include "nsIDOMXULCommandDispatcher.h"
 #ifndef MOZ_DISABLE_CRYPTOLEGACY
 #include "nsIDOMCRMFObject.h"
 #endif
 #include "nsIControllers.h"
-#include "nsISelection.h"
 #include "nsIBoxObject.h"
 #ifdef MOZ_XUL
 #include "nsITreeSelection.h"
@@ -145,7 +142,6 @@
 
 #include "nsIEventListenerService.h"
 #include "nsIMessageManager.h"
-#include "nsIDOMMediaQueryList.h"
 
 #include "nsDOMTouchEvent.h"
 
@@ -250,7 +246,6 @@ DOMCI_DATA_NO_CLASS(DOMPrototype)
 DOMCI_DATA_NO_CLASS(DOMConstructor)
 
 DOMCI_DATA_NO_CLASS(UserDataHandler)
-DOMCI_DATA_NO_CLASS(LoadStatus)
 DOMCI_DATA_NO_CLASS(XPathNamespace)
 DOMCI_DATA_NO_CLASS(XULControlElement)
 DOMCI_DATA_NO_CLASS(XULLabeledControlElement)
@@ -331,11 +326,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
 
   // Misc Core related classes
 
-  NS_DEFINE_CLASSINFO_DATA(DeviceAcceleration, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CLASSINFO_DATA(DeviceRotationRate, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
   // CSS classes
   NS_DEFINE_CLASSINFO_DATA(CSSStyleRule, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
@@ -353,9 +343,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            ARRAY_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(CSSStyleSheet, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
-  NS_DEFINE_CLASSINFO_DATA(Selection, nsDOMGenericSH,
-                           DEFAULT_SCRIPTABLE_FLAGS)
 
   // XUL classes
 #ifdef MOZ_XUL
@@ -504,9 +491,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
   NS_DEFINE_CLASSINFO_DATA(CSSPageRule, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
-  NS_DEFINE_CLASSINFO_DATA(MediaQueryList, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
 #ifdef MOZ_B2G_RIL
   NS_DEFINE_CLASSINFO_DATA(MozIccManager, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
@@ -527,8 +511,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
 
   NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(UserDataHandler, nsDOMGenericSH,
                                       DOM_DEFAULT_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CLASSINFO_DATA(LoadStatus, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(XPathNamespace, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CHROME_XBL_CLASSINFO_DATA(XULControlElement, nsDOMGenericSH,
@@ -1009,14 +991,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMDOMConstructor)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(DeviceAcceleration, nsIDOMDeviceAcceleration)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMDeviceAcceleration)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN(DeviceRotationRate, nsIDOMDeviceRotationRate)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMDeviceRotationRate)
-  DOM_CLASSINFO_MAP_END
-
   DOM_CLASSINFO_MAP_BEGIN(CSSStyleRule, nsIDOMCSSStyleRule)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCSSStyleRule)
   DOM_CLASSINFO_MAP_END
@@ -1047,10 +1021,6 @@ nsDOMClassInfo::Init()
 
   DOM_CLASSINFO_MAP_BEGIN(CSSStyleSheet, nsIDOMCSSStyleSheet)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCSSStyleSheet)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN(Selection, nsISelection)
-    DOM_CLASSINFO_MAP_ENTRY(nsISelection)
   DOM_CLASSINFO_MAP_END
 
 #ifdef MOZ_XUL
@@ -1257,10 +1227,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCSSPageRule)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(MediaQueryList, nsIDOMMediaQueryList)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMMediaQueryList)
-  DOM_CLASSINFO_MAP_END
-
 #ifdef MOZ_B2G_RIL
   DOM_CLASSINFO_MAP_BEGIN(MozIccManager, nsIDOMMozIccManager)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozIccManager)
@@ -1289,10 +1255,6 @@ nsDOMClassInfo::Init()
 
   DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(UserDataHandler, nsIDOMUserDataHandler)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMUserDataHandler)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(LoadStatus, nsIDOMLoadStatus)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMLoadStatus)
   DOM_CLASSINFO_MAP_END
 
   DOM_CLASSINFO_MAP_BEGIN_NO_CLASS_IF(XPathNamespace, nsIDOMXPathNamespace)
@@ -1777,7 +1739,7 @@ GetExternalClassInfo(nsScriptNameSpaceManager *aNameSpaceManager,
 
 static nsresult
 ResolvePrototype(nsIXPConnect *aXPConnect, nsGlobalWindow *aWin, JSContext *cx,
-                 JS::Handle<JSObject*> obj, const PRUnichar *name,
+                 JS::Handle<JSObject*> obj, const char16_t *name,
                  const nsDOMClassInfoData *ci_data,
                  const nsGlobalNameStruct *name_struct,
                  nsScriptNameSpaceManager *nameSpaceManager,
@@ -2303,7 +2265,7 @@ DefineInterfaceConstants(JSContext *cx, JS::Handle<JSObject*> obj, const nsIID *
 class nsDOMConstructor MOZ_FINAL : public nsIDOMDOMConstructor
 {
 protected:
-  nsDOMConstructor(const PRUnichar* aName,
+  nsDOMConstructor(const char16_t* aName,
                    bool aIsConstructable,
                    nsPIDOMWindow* aOwner)
     : mClassName(aName),
@@ -2314,7 +2276,7 @@ protected:
 
 public:
 
-  static nsresult Create(const PRUnichar* aName,
+  static nsresult Create(const char16_t* aName,
                          const nsDOMClassInfoData* aData,
                          const nsGlobalNameStruct* aNameStruct,
                          nsPIDOMWindow* aOwner,
@@ -2406,14 +2368,14 @@ private:
       aNameStruct->mType == nsGlobalNameStruct::eTypeExternalConstructorAlias;
   }
 
-  const PRUnichar*   mClassName;
+  const char16_t*   mClassName;
   const bool mConstructable;
   nsWeakPtr          mWeakOwner;
 };
 
 //static
 nsresult
-nsDOMConstructor::Create(const PRUnichar* aName,
+nsDOMConstructor::Create(const char16_t* aName,
                          const nsDOMClassInfoData* aData,
                          const nsGlobalNameStruct* aNameStruct,
                          nsPIDOMWindow* aOwner,
@@ -2699,7 +2661,7 @@ nsDOMConstructor::ToString(nsAString &aResult)
 {
   aResult.AssignLiteral("[object ");
   aResult.Append(mClassName);
-  aResult.Append(PRUnichar(']'));
+  aResult.Append(char16_t(']'));
 
   return NS_OK;
 }
@@ -2764,7 +2726,7 @@ GetXPCProto(nsIXPConnect *aXPConnect, JSContext *cx, nsGlobalWindow *aWin,
 // eTypeClassProto.
 static nsresult
 ResolvePrototype(nsIXPConnect *aXPConnect, nsGlobalWindow *aWin, JSContext *cx,
-                 JS::Handle<JSObject*> obj, const PRUnichar *name,
+                 JS::Handle<JSObject*> obj, const char16_t *name,
                  const nsDOMClassInfoData *ci_data,
                  const nsGlobalNameStruct *name_struct,
                  nsScriptNameSpaceManager *nameSpaceManager,
@@ -2966,7 +2928,7 @@ nsWindowSH::GlobalResolve(nsGlobalWindow *aWin, JSContext *cx,
 
   nsDependentJSString name(id);
 
-  const PRUnichar *class_name = nullptr;
+  const char16_t *class_name = nullptr;
   const nsGlobalNameStruct *name_struct =
     nameSpaceManager->LookupName(name, &class_name);
 
@@ -3353,7 +3315,6 @@ const InterfaceShimEntry kInterfaceShimMap[] =
   { "nsIDOMUIEvent", "UIEvent" },
   { "nsIDOMHTMLMediaElement", "HTMLMediaElement" },
   { "nsIDOMMediaError", "MediaError" },
-  { "nsIDOMLoadStatus", "LoadStatus" },
   { "nsIDOMOfflineResourceList", "OfflineResourceList" },
   { "nsIDOMRange", "Range" },
   { "nsIDOMSVGLength", "SVGLength" },

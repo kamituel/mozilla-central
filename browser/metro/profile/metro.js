@@ -203,6 +203,8 @@ pref("layout.spellcheckDefault", 1);
 /* extension manager and xpinstall */
 // Completely disable extensions
 pref("extensions.defaultProviders.enabled", false);
+// Disable version checks making addons compatible by default
+pref("extensions.strictCompatibility", false);
 // Disable all add-on locations other than the profile
 pref("extensions.enabledScopes", 1);
 // Auto-disable any add-ons that are "dropped in" to the profile
@@ -218,6 +220,7 @@ pref("extensions.blocklist.enabled", true);
 pref("extensions.blocklist.interval", 86400);
 pref("extensions.blocklist.url", "https://addons.mozilla.org/blocklist/3/%APP_ID%/%APP_VERSION%/%PRODUCT%/%BUILD_ID%/%BUILD_TARGET%/%LOCALE%/%CHANNEL%/%OS_VERSION%/%DISTRIBUTION%/%DISTRIBUTION_VERSION%/%PING_COUNT%/%TOTAL_PING_COUNT%/%DAYS_SINCE_LAST_PING%/");
 pref("extensions.blocklist.detailsURL", "https://www.mozilla.org/%LOCALE%/blocklist/");
+pref("extensions.showMismatchUI", false);
 
 /* block popups by default, and notify the user about blocked popups */
 pref("dom.disable_open_during_load", true);
@@ -537,17 +540,23 @@ pref("ui.dragThresholdY", 50);
 // prevent tooltips from showing up
 pref("browser.chrome.toolbar_tips", false);
 
+#ifdef NIGHTLY_BUILD
 // Completely disable pdf.js as an option to preview pdfs within firefox.
 // Note: if this is not disabled it does not necessarily mean pdf.js is the pdf
 // handler just that it is an option.
 pref("pdfjs.disabled", true);
 // Used by pdf.js to know the first time firefox is run with it installed so it
 // can become the default pdf viewer.
-pref("pdfjs.firstRun", false);
+pref("pdfjs.firstRun", true);
 // The values of preferredAction and alwaysAskBeforeHandling before pdf.js
 // became the default.
 pref("pdfjs.previousHandler.preferredAction", 0);
 pref("pdfjs.previousHandler.alwaysAskBeforeHandling", false);
+#endif
+
+#ifdef NIGHTLY_BUILD
+pref("shumway.disabled", true);
+#endif
 
 // The maximum amount of decoded image data we'll willingly keep around (we
 // might keep around more than this, but we'll try to get down to this value).

@@ -16,6 +16,7 @@
 #include "nsIPresShell.h"
 #include "nsEventStateManager.h"
 #include "nsIDOMMouseEvent.h"
+#include "nsIXULRuntime.h"
 #include "nsFontMetrics.h"
 #include "nsIScrollableFrame.h"
 #include "nsCSSRendering.h"
@@ -550,7 +551,7 @@ nsListControlFrame::ReflowAsDropdown(nsPresContext*           aPresContext,
       mNumDisplayRows = 1;
       mDropdownCanGrow = GetNumberOfRows() > 1;
     } else {
-      nscoord bp = aReflowState.mComputedBorderPadding.TopBottom();
+      nscoord bp = aReflowState.ComputedPhysicalBorderPadding().TopBottom();
       nscoord availableHeight = std::max(above, below) - bp;
       nscoord newHeight;
       uint32_t rows;
@@ -1470,7 +1471,7 @@ nsListControlFrame::GetType() const
   return nsGkAtoms::listControlFrame; 
 }
 
-#ifdef DEBUG
+#ifdef DEBUG_FRAME_DUMP
 NS_IMETHODIMP
 nsListControlFrame::GetFrameName(nsAString& aResult) const
 {
@@ -1806,8 +1807,7 @@ nsListControlFrame::MouseDown(nsIDOMEvent* aMouseEvent)
   } else {
     // NOTE: the combo box is responsible for dropping it down
     if (mComboboxFrame) {
-      if (XRE_GetProcessType() == GeckoProcessType_Content &&
-          Preferences::GetBool("browser.tabs.remote", false)) {
+      if (XRE_GetProcessType() == GeckoProcessType_Content && BrowserTabsRemote()) {
         nsContentUtils::DispatchChromeEvent(mContent->OwnerDoc(), mContent,
                                             NS_LITERAL_STRING("mozshowdropdown"), true,
                                             false);
@@ -2289,7 +2289,7 @@ nsListControlFrame::KeyPress(nsIDOMEvent* aKeyEvent)
   gLastKeyTime = keyEvent->time;
 
   // Append this keystroke to the search string. 
-  PRUnichar uniChar = ToLowerCase(static_cast<PRUnichar>(keyEvent->charCode));
+  char16_t uniChar = ToLowerCase(static_cast<char16_t>(keyEvent->charCode));
   GetIncrementalString().Append(uniChar);
 
   // See bug 188199, if all letters in incremental string are same, just try to

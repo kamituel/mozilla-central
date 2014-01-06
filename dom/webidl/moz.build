@@ -167,6 +167,7 @@ WEBIDL_FILES = [
     'HTMLQuoteElement.webidl',
     'HTMLScriptElement.webidl',
     'HTMLSelectElement.webidl',
+    'HTMLShadowElement.webidl',
     'HTMLSourceElement.webidl',
     'HTMLSpanElement.webidl',
     'HTMLStyleElement.webidl',
@@ -211,6 +212,7 @@ WEBIDL_FILES = [
     'MediaElementAudioSourceNode.webidl',
     'MediaError.webidl',
     'MediaList.webidl',
+    'MediaQueryList.webidl',
     'MediaRecorder.webidl',
     'MediaSource.webidl',
     'MediaStream.webidl',
@@ -273,6 +275,7 @@ WEBIDL_FILES = [
     'Screen.webidl',
     'ScriptProcessorNode.webidl',
     'ScrollAreaEvent.webidl',
+    'Selection.webidl',
     'SettingsManager.webidl',
     'ShadowRoot.webidl',
     'SharedWorker.webidl',
@@ -407,6 +410,7 @@ WEBIDL_FILES = [
     'UIEvent.webidl',
     'UndoManager.webidl',
     'URL.webidl',
+    'URLSearchParams.webidl',
     'URLUtils.webidl',
     'URLUtilsReadOnly.webidl',
     'ValidityState.webidl',
@@ -505,25 +509,19 @@ if CONFIG['MOZ_B2G_BT']:
         'BluetoothAdapter.webidl',
         'BluetoothDevice.webidl',
         'BluetoothDeviceEvent.webidl',
-        'BluetoothDiscoveryStateChangedEvent.webidl',
         'BluetoothManager.webidl',
         'BluetoothStatusChangedEvent.webidl',
     ]
 
 if CONFIG['MOZ_B2G_RIL']:
     WEBIDL_FILES += [
-        'CFStateChangeEvent.webidl',
-        'DataErrorEvent.webidl',
         'IccCardLockError.webidl',
         'MozCellBroadcast.webidl',
         'MozCellBroadcastEvent.webidl',
-        'MozEmergencyCbModeEvent.webidl',
         'MozIcc.webidl',
         'MozMobileConnectionArray.webidl',
-        'MozOtaStatusEvent.webidl',
         'MozVoicemail.webidl',
         'MozVoicemailEvent.webidl',
-        'USSDReceivedEvent.webidl',
     ]
 
 if CONFIG['MOZ_NFC']:
@@ -552,21 +550,11 @@ if CONFIG['MOZ_B2G_FM']:
         'FMRadio.webidl',
     ]
 
-if CONFIG['ENABLE_TESTS']:
-    TEST_WEBIDL_FILES += [
-        'TestDictionary.webidl',
-        'TestJSImplInheritanceGen.webidl',
-        'TestTypedef.webidl',
-    ]
-    PREPROCESSED_TEST_WEBIDL_FILES += [
-        'TestCodeGen.webidl',
-        'TestExampleGen.webidl',
-        'TestJSImplGen.webidl',
-    ]
-
 GENERATED_EVENTS_WEBIDL_FILES = [
     'BlobEvent.webidl',
     'CallGroupErrorEvent.webidl',
+    'CFStateChangeEvent.webidl',
+    'DataErrorEvent.webidl',
     'DataStoreChangeEvent.webidl',
     'DeviceLightEvent.webidl',
     'DeviceProximityEvent.webidl',
@@ -575,12 +563,15 @@ GENERATED_EVENTS_WEBIDL_FILES = [
     'IccChangeEvent.webidl',
     'MediaStreamEvent.webidl',
     'MozContactChangeEvent.webidl',
+    'MozEmergencyCbModeEvent.webidl',
     'MozInterAppMessageEvent.webidl',
+    'MozOtaStatusEvent.webidl',
     'MozStkCommandEvent.webidl',
     'RTCDataChannelEvent.webidl',
     'RTCPeerConnectionIceEvent.webidl',
     'TrackEvent.webidl',
     'UserProximityEvent.webidl',
+    'USSDReceivedEvent.webidl',
 ]
 
 if CONFIG['MOZ_GAMEPAD']:

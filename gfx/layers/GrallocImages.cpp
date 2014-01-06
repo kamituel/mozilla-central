@@ -110,12 +110,11 @@ GrallocImage::SetData(const Data& aData)
   }
 
   uint8_t* yChannel = static_cast<uint8_t*>(vaddr);
-  gfxIntSize ySize = gfxIntSize(aData.mYSize.width,
-                                aData.mYSize.height);
+  gfx::IntSize ySize = aData.mYSize;
   int32_t yStride = graphicBuffer->getStride();
 
   uint8_t* vChannel = yChannel + (yStride * ySize.height);
-  gfxIntSize uvSize = gfxIntSize(ySize.width / 2,
+  gfx::IntSize uvSize = gfx::IntSize(ySize.width / 2,
                                  ySize.height / 2);
   // Align to 16 bytes boundary
   int32_t uvStride = ((yStride / 2) + 15) & ~0x0F;
@@ -230,7 +229,7 @@ GrallocImage::GetAsSurface()
   }
 
   nsRefPtr<gfxImageSurface> imageSurface =
-    new gfxImageSurface(GetSize(), gfxImageFormatRGB16_565);
+    new gfxImageSurface(gfx::ThebesIntSize(GetSize()), gfxImageFormatRGB16_565);
 
   uint32_t width = GetSize().width;
   uint32_t height = GetSize().height;
@@ -295,9 +294,7 @@ GrallocImage::GetTextureClient()
       flags |= TEXTURE_RB_SWAPPED;
     }
     GrallocBufferActor* actor = static_cast<GrallocBufferActor*>(desc.bufferChild());
-    mTextureClient = new GrallocTextureClientOGL(actor,
-                                                 gfx::ToIntSize(mSize),
-                                                 flags);
+    mTextureClient = new GrallocTextureClientOGL(actor, mSize, flags);
     mTextureClient->SetGraphicBufferLocked(mGraphicBuffer);
   }
   return mTextureClient;

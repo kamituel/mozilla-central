@@ -8,6 +8,7 @@
 
 #include "xpcprivate.h"
 #include "jsprf.h"
+#include "nsCCUncollectableMarker.h"
 #include "nsCxPusher.h"
 #include "nsContentUtils.h"
 #include "nsThreadUtils.h"
@@ -15,6 +16,76 @@
 using namespace mozilla;
 
 // NOTE: much of the fancy footwork is done in xpcstubs.cpp
+
+
+// nsXPCWrappedJS lifetime.
+//
+// An nsXPCWrappedJS is either rooting its JS object or is subject to finalization.
+// The subject-to-finalization state lets wrappers support
+// nsSupportsWeakReference in the case where the underlying JS object
+// is strongly owned, but the wrapper itself is only weakly owned.
+//
+// A wrapper is rooting its JS object whenever its refcount is greater than 1. In
+// this state, root wrappers are always added to the cycle collector graph. The
+// wrapper keeps around an extra refcount, added in the constructor, to support
+// the possibility of an eventual transition to the subject-to-finalization state.
+// This extra refcount is ignored by the cycle collector, which traverses the "self"
+// edge for this refcount.
+//
+// When the refcount of a rooting wrapper drops to 1, if there is no weak reference
+// to the wrapper (which can only happen for the root wrapper), it is immediately
+// Destroy()'d. Otherwise, it becomes subject to finalization.
+//
+// When a wrapper is subject to finalization, the wrapper has a refcount of 1. It is
+// now owned exclusively by its JS object. Either a weak reference will be turned into
+// a strong ref which will bring its refcount up to 2 and change the wrapper back to
+// the rooting state, or it will stay alive until the JS object dies. If the JS object
+// dies, then when XPCJSRuntime::FinalizeCallback calls FindDyingJSObjects
+// it will find the wrapper and call Release() in it, destroying the wrapper.
+// Otherwise, the wrapper will stay alive, even if it no longer has a weak reference
+// to it.
+//
+// When the wrapper is subject to finalization, it is kept alive by an implicit reference
+// from the JS object which is invisible to the cycle collector, so the cycle collector
+// does not traverse any children of wrappers that are subject to finalization. This will
+// result in a leak if a wrapper in the non-rooting state has an aggregated native that
+// keeps alive the wrapper's JS object.  See bug 947049.
+
+
+// If traversing wrappedJS wouldn't release it, nor cause any other objects to be
+// added to the graph, there is no need to add it to the graph at all.
+bool
+nsXPCWrappedJS::CanSkip()
+{
+    if (!nsCCUncollectableMarker::sGeneration)
+        return false;
+
+    if (IsSubjectToFinalization())
+        return true;
+
+    // If this wrapper holds a gray object, need to trace it.
+    JSObject *obj = GetJSObjectPreserveColor();
+    if (obj && xpc_IsGrayGCThing(obj))
+        return false;
+
+    // For non-root wrappers, check if the root wrapper will be
+    // added to the CC graph.
+    if (!IsRootWrapper())
+        return mRoot->CanSkip();
+
+    // For the root wrapper, check if there is an aggregated
+    // native object that will be added to the CC graph.
+    if (!IsAggregatedToNative())
+        return true;
+
+    nsISupports* agg = GetAggregatedNativeObject();
+    nsXPCOMCycleCollectionParticipant* cp = nullptr;
+    CallQueryInterface(agg, &cp);
+    nsISupports* canonical = nullptr;
+    agg->QueryInterface(NS_GET_IID(nsCycleCollectionISupports),
+                        reinterpret_cast<void**>(&canonical));
+    return cp && canonical && cp->CanSkipThis(canonical);
+}
 
 NS_IMETHODIMP
 NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
@@ -37,14 +108,17 @@ NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
         NS_IMPL_CYCLE_COLLECTION_DESCRIBE(nsXPCWrappedJS, refcnt)
     }
 
-    // nsXPCWrappedJS keeps its own refcount artificially at or above 1, see the
-    // comment above nsXPCWrappedJS::AddRef.
+    // A wrapper that is subject to finalization will only die when its JS object dies.
+    if (tmp->IsSubjectToFinalization())
+        return NS_OK;
+
+    // Don't let the extra reference for nsSupportsWeakReference keep a wrapper that is
+    // not subject to finalization alive.
     NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "self");
     cb.NoteXPCOMChild(s);
 
-    if (refcnt > 1) {
-        // nsXPCWrappedJS roots its mJSObj when its refcount is > 1, see
-        // the comment above nsXPCWrappedJS::AddRef.
+    if (tmp->IsValid()) {
+        MOZ_ASSERT(refcnt > 1);
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mJSObj");
         cb.NoteJSChild(tmp->GetJSObjectPreserveColor());
     }
@@ -54,7 +128,7 @@ NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
         cb.NoteXPCOMChild(tmp->GetAggregatedNativeObject());
     } else {
         NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "root");
-        cb.NoteXPCOMChild(static_cast<nsIXPConnectWrappedJS*>(tmp->GetRootWrapper()));
+        cb.NoteXPCOMChild(ToSupports(tmp->GetRootWrapper()));
     }
 
     return NS_OK;
@@ -65,6 +139,20 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(nsXPCWrappedJS)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXPCWrappedJS)
     tmp->Unlink();
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
+// XPCJSRuntime keeps a table of WJS, so we can remove them from
+// the purple buffer in between CCs.
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsXPCWrappedJS)
+    return true;
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsXPCWrappedJS)
+    return tmp->CanSkip();
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsXPCWrappedJS)
+    return tmp->CanSkip();
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 NS_IMETHODIMP
 nsXPCWrappedJS::AggregatedQueryInterface(REFNSIID aIID, void** aInstancePtr)
@@ -127,37 +215,23 @@ nsXPCWrappedJS::QueryInterface(REFNSIID aIID, void** aInstancePtr)
 }
 
 
-// Refcounting is now similar to that used in the chained (pre-flattening)
-// wrappednative system.
-//
-// We are now holding an extra refcount for nsISupportsWeakReference support.
-//
-// Non-root wrappers remove themselves from the chain in their destructors.
-// We root the JSObject as the refcount transitions from 1->2. And we unroot
-// the JSObject when the refcount transitions from 2->1.
-//
-// When the transition from 2->1 is made and no one holds a weak ref to the
-// (aggregated) object then we decrement the refcount again to 0 (and
-// destruct) . However, if a weak ref is held at the 2->1 transition, then we
-// leave the refcount at 1 to indicate that state. This leaves the JSObject
-// no longer rooted by us and (as far as we know) subject to possible
-// collection. Code in XPCJSRuntime watches for JS gc to happen and will do
-// the final release on wrappers whose JSObjects get finalized. Note that
-// even after tranistioning to this refcount-of-one state callers might do
-// an addref and cause us to re-root the JSObject and continue on more normally.
+// For a description of nsXPCWrappedJS lifetime and reference counting, see
+// the comment at the top of this file.
 
 nsrefcnt
 nsXPCWrappedJS::AddRef(void)
 {
     if (!MOZ_LIKELY(NS_IsMainThread()))
         MOZ_CRASH();
-    nsrefcnt cnt = ++mRefCnt;
+
+    MOZ_ASSERT(int32_t(mRefCnt) >= 0, "illegal refcnt");
+    nsISupports *base = NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Upcast(this);
+    nsrefcnt cnt = mRefCnt.incr(base);
     NS_LOG_ADDREF(this, cnt, "nsXPCWrappedJS", sizeof(*this));
 
     if (2 == cnt && IsValid()) {
         GetJSObject(); // Unmark gray JSObject.
-        XPCJSRuntime* rt = mClass->GetRuntime();
-        rt->AddWrappedJSRoot(this);
+        mClass->GetRuntime()->AddWrappedJSRoot(this);
     }
 
     return cnt;
@@ -168,29 +242,42 @@ nsXPCWrappedJS::Release(void)
 {
     if (!MOZ_LIKELY(NS_IsMainThread()))
         MOZ_CRASH();
-    NS_PRECONDITION(0 != mRefCnt, "dup release");
+    MOZ_ASSERT(int32_t(mRefCnt) > 0, "dup release");
+    NS_ASSERT_OWNINGTHREAD(nsXPCWrappedJS);
 
-do_decrement:
-
-    nsrefcnt cnt = --mRefCnt;
+    bool shouldDelete = false;
+    nsISupports *base = NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Upcast(this);
+    nsrefcnt cnt = mRefCnt.decr(base, &shouldDelete);
     NS_LOG_RELEASE(this, cnt, "nsXPCWrappedJS");
 
     if (0 == cnt) {
-        delete this;   // also unlinks us from chain
-        return 0;
-    }
-    if (1 == cnt) {
+        if (MOZ_UNLIKELY(shouldDelete)) {
+            mRefCnt.stabilizeForDeletion();
+            DeleteCycleCollectable();
+        } else {
+            mRefCnt.incr(base);
+            Destroy();
+            mRefCnt.decr(base);
+        }
+    } else if (1 == cnt) {
         if (IsValid())
             RemoveFromRootSet();
 
-        // If we are not the root wrapper or if we are not being used from a
-        // weak reference, then this extra ref is not needed and we can let
-        // ourself be deleted.
-        // Note: HasWeakReferences() could only return true for the root.
+        // If we are not a root wrapper being used from a weak reference,
+        // then the extra ref is not needed and we can let outselves be
+        // deleted.
         if (!HasWeakReferences())
-            goto do_decrement;
+            return Release();
+
+        MOZ_ASSERT(IsRootWrapper(), "Only root wrappers should have weak references");
     }
     return cnt;
+}
+
+NS_IMETHODIMP_(void)
+nsXPCWrappedJS::DeleteCycleCollectable(void)
+{
+    delete this;
 }
 
 void
@@ -233,7 +320,6 @@ nsXPCWrappedJS::GetJSObject()
 nsresult
 nsXPCWrappedJS::GetNewOrUsed(JS::HandleObject jsObj,
                              REFNSIID aIID,
-                             nsISupports* aOuter,
                              nsXPCWrappedJS** wrapperResult)
 {
     // Do a release-mode assert against accessing nsXPCWrappedJS off-main-thread.
@@ -244,7 +330,7 @@ nsXPCWrappedJS::GetNewOrUsed(JS::HandleObject jsObj,
     JSObject2WrappedJSMap* map;
     nsXPCWrappedJS* root = nullptr;
     nsXPCWrappedJS* wrapper = nullptr;
-    nsXPCWrappedJSClass* clazz = nullptr;
+    nsRefPtr<nsXPCWrappedJSClass> clasp;
     XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
     bool release_root = false;
 
@@ -254,50 +340,43 @@ nsXPCWrappedJS::GetNewOrUsed(JS::HandleObject jsObj,
         return NS_ERROR_FAILURE;
     }
 
-    nsXPCWrappedJSClass::GetNewOrUsed(cx, aIID, &clazz);
-    if (!clazz)
+    nsXPCWrappedJSClass::GetNewOrUsed(cx, aIID, getter_AddRefs(clasp));
+    if (!clasp)
         return NS_ERROR_FAILURE;
-    // from here on we need to return through 'return_wrapper'
 
     // always find the root JSObject
-    JS::RootedObject rootJSObj(cx, clazz->GetRootJSObject(cx, jsObj));
+    JS::RootedObject rootJSObj(cx, clasp->GetRootJSObject(cx, jsObj));
     if (!rootJSObj)
-        goto return_wrapper;
+        return NS_ERROR_FAILURE;
 
     root = map->Find(rootJSObj);
     if (root) {
-        if ((nullptr != (wrapper = root->Find(aIID))) ||
-            (nullptr != (wrapper = root->FindInherited(aIID)))) {
+        wrapper = root->FindOrFindInherited(aIID);
+        if (wrapper) {
             NS_ADDREF(wrapper);
-            goto return_wrapper;
+            *wrapperResult = wrapper;
+            return NS_OK;
         }
-    }
-
-    if (!root) {
+    } else {
         // build the root wrapper
         if (rootJSObj == jsObj) {
             // the root will do double duty as the interface wrapper
-            wrapper = root = new nsXPCWrappedJS(cx, jsObj, clazz, nullptr,
-                                                aOuter);
-            if (!root)
-                goto return_wrapper;
+            wrapper = root = new nsXPCWrappedJS(cx, jsObj, clasp, nullptr);
 
             map->Add(cx, root);
 
-            goto return_wrapper;
+            *wrapperResult = wrapper;
+            return NS_OK;
         } else {
             // just a root wrapper
-            nsXPCWrappedJSClass* rootClazz = nullptr;
+            nsXPCWrappedJSClass* rootClasp = nullptr;
             nsXPCWrappedJSClass::GetNewOrUsed(cx, NS_GET_IID(nsISupports),
-                                              &rootClazz);
-            if (!rootClazz)
-                goto return_wrapper;
+                                              &rootClasp);
+            if (!rootClasp)
+                return NS_ERROR_FAILURE;
 
-            root = new nsXPCWrappedJS(cx, rootJSObj, rootClazz, nullptr, aOuter);
-            NS_RELEASE(rootClazz);
-
-            if (!root)
-                goto return_wrapper;
+            root = new nsXPCWrappedJS(cx, rootJSObj, rootClasp, nullptr);
+            NS_RELEASE(rootClasp);
 
             release_root = true;
 
@@ -306,27 +385,14 @@ nsXPCWrappedJS::GetNewOrUsed(JS::HandleObject jsObj,
     }
 
     // at this point we have a root and may need to build the specific wrapper
-    MOZ_ASSERT(root,"bad root");
-    MOZ_ASSERT(clazz,"bad clazz");
+    MOZ_ASSERT(root, "bad root");
+    MOZ_ASSERT(clasp, "bad clasp");
+    MOZ_ASSERT(!wrapper, "no wrapper found yet");
 
-    if (!wrapper) {
-        wrapper = new nsXPCWrappedJS(cx, jsObj, clazz, root, aOuter);
-        if (!wrapper)
-            goto return_wrapper;
-    }
-
-    wrapper->mNext = root->mNext;
-    root->mNext = wrapper;
-
-return_wrapper:
-    if (clazz)
-        NS_RELEASE(clazz);
+    wrapper = new nsXPCWrappedJS(cx, jsObj, clasp, root);
 
     if (release_root)
         NS_RELEASE(root);
-
-    if (!wrapper)
-        return NS_ERROR_FAILURE;
 
     *wrapperResult = wrapper;
     return NS_OK;
@@ -335,30 +401,36 @@ return_wrapper:
 nsXPCWrappedJS::nsXPCWrappedJS(JSContext* cx,
                                JSObject* aJSObj,
                                nsXPCWrappedJSClass* aClass,
-                               nsXPCWrappedJS* root,
-                               nsISupports* aOuter)
+                               nsXPCWrappedJS* root)
     : mJSObj(aJSObj),
       mClass(aClass),
       mRoot(root ? root : MOZ_THIS_IN_INITIALIZER_LIST()),
-      mNext(nullptr),
-      mOuter(root ? nullptr : aOuter)
+      mNext(nullptr)
 {
     InitStub(GetClass()->GetIID());
 
-    // intentionally do double addref - see Release().
+    // There is an extra AddRef to support weak references to wrappers
+    // that are subject to finalization. See the top of the file for more
+    // details.
     NS_ADDREF_THIS();
     NS_ADDREF_THIS();
-    NS_ADDREF(aClass);
-    NS_IF_ADDREF(mOuter);
 
-    if (!IsRootWrapper())
+    if (!IsRootWrapper()) {
         NS_ADDREF(mRoot);
-
+        mNext = mRoot->mNext;
+        mRoot->mNext = this;
+    }
 }
 
 nsXPCWrappedJS::~nsXPCWrappedJS()
 {
-    NS_PRECONDITION(0 == mRefCnt, "refcounting error");
+    Destroy();
+}
+
+void
+nsXPCWrappedJS::Destroy()
+{
+    MOZ_ASSERT(1 == int32_t(mRefCnt), "should be stabilized for deletion");
 
     if (IsRootWrapper()) {
         XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
@@ -405,14 +477,13 @@ nsXPCWrappedJS::Unlink()
         NS_RELEASE(mRoot);
     }
 
-    NS_IF_RELEASE(mClass);
+    mClass = nullptr;
     if (mOuter) {
         XPCJSRuntime* rt = nsXPConnect::GetRuntimeInstance();
         if (rt->GCIsRunning()) {
-            nsContentUtils::DeferredFinalize(mOuter);
-            mOuter = nullptr;
+            nsContentUtils::DeferredFinalize(mOuter.forget().get());
         } else {
-            NS_RELEASE(mOuter);
+            mOuter = nullptr;
         }
     }
 }
@@ -515,7 +586,8 @@ nsXPCWrappedJS::SystemIsBeingShutDown()
 NS_IMETHODIMP
 nsXPCWrappedJS::GetEnumerator(nsISimpleEnumerator * *aEnumerate)
 {
-    XPCCallContext ccx(NATIVE_CALLER);
+    AutoJSContext cx;
+    XPCCallContext ccx(NATIVE_CALLER, cx);
     if (!ccx.IsValid())
         return NS_ERROR_UNEXPECTED;
 
@@ -527,7 +599,8 @@ nsXPCWrappedJS::GetEnumerator(nsISimpleEnumerator * *aEnumerate)
 NS_IMETHODIMP
 nsXPCWrappedJS::GetProperty(const nsAString & name, nsIVariant **_retval)
 {
-    XPCCallContext ccx(NATIVE_CALLER);
+    AutoJSContext cx;
+    XPCCallContext ccx(NATIVE_CALLER, cx);
     if (!ccx.IsValid())
         return NS_ERROR_UNEXPECTED;
 
@@ -555,7 +628,7 @@ nsXPCWrappedJS::DebugDump(int16_t depth)
         XPC_LOG_ALWAYS(("IID number is %s", iid ? iid : "invalid"));
         if (iid)
             NS_Free(iid);
-        XPC_LOG_ALWAYS(("nsXPCWrappedJSClass @ %x", mClass));
+        XPC_LOG_ALWAYS(("nsXPCWrappedJSClass @ %x", mClass.get()));
 
         if (!IsRootWrapper())
             XPC_LOG_OUTDENT();

@@ -230,10 +230,10 @@ xpc::SystemErrorReporter(JSContext *cx, const char *message, JSErrorReport *rep)
     if (consoleService && errorObject) {
         uint32_t column = rep->uctokenptr - rep->uclinebuf;
 
-        const PRUnichar* ucmessage =
-            static_cast<const PRUnichar*>(rep->ucmessage);
-        const PRUnichar* uclinebuf =
-            static_cast<const PRUnichar*>(rep->uclinebuf);
+        const char16_t* ucmessage =
+            static_cast<const char16_t*>(rep->ucmessage);
+        const char16_t* uclinebuf =
+            static_cast<const char16_t*>(rep->uclinebuf);
 
         rv = errorObject->Init(
               ucmessage ? nsDependentString(ucmessage) : EmptyString(),
@@ -874,13 +874,6 @@ nsXPConnect::SetFunctionThisTranslator(const nsIID & aIID,
     IID2ThisTranslatorMap* map = rt->GetThisTranslatorMap();
     map->Add(aIID, aTranslator);
     return NS_OK;
-}
-
-/* void clearAllWrappedNativeSecurityPolicies (); */
-NS_IMETHODIMP
-nsXPConnect::ClearAllWrappedNativeSecurityPolicies()
-{
-    return XPCWrappedNativeScope::ClearAllWrappedNativeSecurityPolicies();
 }
 
 NS_IMETHODIMP

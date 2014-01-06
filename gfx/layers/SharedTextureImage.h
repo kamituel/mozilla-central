@@ -9,9 +9,8 @@
 #include "GLContextProvider.h"          // for GLContextProvider
 #include "ImageContainer.h"             // for Image
 #include "ImageTypes.h"                 // for ImageFormat::SHARED_TEXTURE
-#include "gfxPoint.h"                   // for gfxIntSize
 #include "nsCOMPtr.h"                   // for already_AddRefed
-#include "nsSize.h"                     // for nsIntSize
+#include "mozilla/gfx/Point.h"          // for IntSize
 
 class gfxASurface;
 
@@ -27,14 +26,14 @@ public:
   struct Data {
     gl::SharedTextureHandle mHandle;
     gl::SharedTextureShareType mShareType;
-    gfxIntSize mSize;
+    gfx::IntSize mSize;
     bool mInverted;
   };
 
   void SetData(const Data& aData) { mData = aData; }
   const Data* GetData() { return &mData; }
 
-  gfxIntSize GetSize() { return mData.mSize; }
+  gfx::IntSize GetSize() { return mData.mSize; }
 
   virtual already_AddRefed<gfxASurface> GetAsSurface() {
     return nullptr;

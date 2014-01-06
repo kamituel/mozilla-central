@@ -42,15 +42,12 @@
 #include "nsString.h"                   // for nsString, nsAutoCString, etc
 #include "DecomposeIntoNoRepeatTriangles.h"
 #include "ScopedGLHelpers.h"
+#include "GLReadTexImageHelper.h"
 
 #if MOZ_ANDROID_OMTC
 #include "TexturePoolOGL.h"
 #endif
 #include "GeckoProfiler.h"
-
-#ifdef MOZ_WIDGET_ANDROID
-#include "GfxInfo.h"
-#endif
 
 #define BUFFER_OFFSET(i) ((char *)nullptr + (i))
 
@@ -393,10 +390,6 @@ CompositorOGL::Initialize()
 #ifdef MOZ_WIDGET_ANDROID
   if (!mGLContext)
     NS_RUNTIMEABORT("We need a context on Android");
-
-  // on Android, the compositor's GLContext is used to get GL strings for GfxInfo
-  nsCOMPtr<nsIGfxInfo> gfxInfo = do_GetService("@mozilla.org/gfx/info;1");
-  static_cast<widget::GfxInfo*>(gfxInfo.get())->InitializeGLStrings(mGLContext);
 #endif
 
   if (!mGLContext)
@@ -1493,11 +1486,19 @@ CompositorOGL::CopyToTarget(DrawTarget *aTarget, const gfxMatrix& aTransform)
     mGLContext->fReadBuffer(LOCAL_GL_BACK);
   }
 
-  RefPtr<SourceSurface> source =
-    mGLContext->ReadPixelsToSourceSurface(IntSize(width, height));
+  RefPtr<DataSourceSurface> source =
+        Factory::CreateDataSourceSurface(rect.Size(), gfx::FORMAT_B8G8R8A8);
+  // XXX we should do this properly one day without using the gfxImageSurface
+  nsRefPtr<gfxImageSurface> surf =
+    new gfxImageSurface(source->GetData(),
+                        gfxIntSize(width, height),
+                        source->Stride(),
+                        gfxImageFormatARGB32);
+  ReadPixelsIntoImageSurface(mGLContext, surf);
+  source->MarkDirty();
 
   // Map from GL space to Cairo space and reverse the world transform.
-  Matrix glToCairoTransform = MatrixForThebesMatrix(aTransform);
+  Matrix glToCairoTransform = ToMatrix(aTransform);
   glToCairoTransform.Invert();
   glToCairoTransform.Scale(1.0, -1.0);
   glToCairoTransform.Translate(0.0, -height);

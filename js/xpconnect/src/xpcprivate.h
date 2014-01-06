@@ -406,7 +406,7 @@ class XPCReadableJSStringWrapper : public nsDependentString
 public:
     typedef nsDependentString::char_traits char_traits;
 
-    XPCReadableJSStringWrapper(const PRUnichar *chars, size_t length) :
+    XPCReadableJSStringWrapper(const char16_t *chars, size_t length) :
         nsDependentString(chars, length)
     { }
 
@@ -584,7 +584,7 @@ public:
 
     ~XPCJSRuntime();
 
-    XPCReadableJSStringWrapper *NewStringWrapper(const PRUnichar *str, uint32_t len);
+    XPCReadableJSStringWrapper *NewStringWrapper(const char16_t *str, uint32_t len);
     void DeleteString(nsAString *string);
 
     void AddGCCallback(xpcGCCallback cb);
@@ -801,7 +801,7 @@ public:
     static JSContext* GetDefaultJSContext();
 
     XPCCallContext(XPCContext::LangType callerLanguage,
-                   JSContext* cx           = GetDefaultJSContext(),
+                   JSContext* cx,
                    JS::HandleObject obj    = JS::NullPtr(),
                    JS::HandleObject funobj = JS::NullPtr(),
                    JS::HandleId id         = JSID_VOIDHANDLE,
@@ -893,7 +893,7 @@ inline void CHECK_STATE(int s) const {MOZ_ASSERT(mState >= s, "bad state");}
 #endif
 
 private:
-    mozilla::AutoPushJSContext      mPusher;
+    JSAutoRequest                   mAr;
     State                           mState;
 
     nsRefPtr<nsXPConnect>           mXPC;
@@ -1119,9 +1119,6 @@ public:
 
     static void
     MarkAllWrappedNativesAndProtos();
-
-    static nsresult
-    ClearAllWrappedNativeSecurityPolicies();
 
 #ifdef DEBUG
     static void
@@ -1836,9 +1833,6 @@ public:
     XPCNativeScriptableInfo*
     GetScriptableInfo()   {return mScriptableInfo;}
 
-    void**
-    GetSecurityInfoAddr() {return &mSecurityInfo;}
-
     uint32_t
     GetClassInfoFlags() const {return mClassInfoFlags;}
 
@@ -1929,7 +1923,6 @@ private:
     nsCOMPtr<nsIClassInfo>   mClassInfo;
     uint32_t                 mClassInfoFlags;
     XPCNativeSet*            mSet;
-    void*                    mSecurityInfo;
     XPCNativeScriptableInfo* mScriptableInfo;
 };
 
@@ -2112,10 +2105,6 @@ public:
 
     nsIXPCScriptable*      // call this wrong and you deserve to crash
     GetScriptableCallback() const  {return mScriptableInfo->GetCallback();}
-
-    void**
-    GetSecurityInfoAddr() {return HasProto() ?
-                                   GetProto()->GetSecurityInfoAddr() : nullptr;}
 
     nsIClassInfo*
     GetClassInfo() const {return IsValid() && HasProto() ?
@@ -2464,14 +2453,13 @@ class nsXPCWrappedJS : protected nsAutoXPTCStub,
                        public XPCRootSetElem
 {
 public:
-    NS_DECL_THREADSAFE_ISUPPORTS
+    NS_DECL_CYCLE_COLLECTING_ISUPPORTS
     NS_DECL_NSIXPCONNECTJSOBJECTHOLDER
     NS_DECL_NSIXPCONNECTWRAPPEDJS
     NS_DECL_NSISUPPORTSWEAKREFERENCE
     NS_DECL_NSIPROPERTYBAG
 
-    NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsXPCWrappedJS, nsIXPConnectWrappedJS)
-    void DeleteCycleCollectable() {}
+    NS_DECL_CYCLE_COLLECTION_SKIPPABLE_CLASS_AMBIGUOUS(nsXPCWrappedJS, nsIXPConnectWrappedJS)
 
     NS_IMETHOD CallMethod(uint16_t methodIndex,
                           const XPTMethodDescriptor *info,
@@ -2486,7 +2474,6 @@ public:
     static nsresult
     GetNewOrUsed(JS::HandleObject aJSObj,
                  REFNSIID aIID,
-                 nsISupports* aOuter,
                  nsXPCWrappedJS** wrapper);
 
     nsISomeInterface* GetXPTCStub() { return mXPTCStub; }
@@ -2508,22 +2495,34 @@ public:
 
     nsXPCWrappedJS* Find(REFNSIID aIID);
     nsXPCWrappedJS* FindInherited(REFNSIID aIID);
+    nsXPCWrappedJS* FindOrFindInherited(REFNSIID aIID) {
+        nsXPCWrappedJS* wrapper = Find(aIID);
+        if (wrapper)
+            return wrapper;
+        return FindInherited(aIID);
+    }
 
     bool IsRootWrapper() const {return mRoot == this;}
     bool IsValid() const {return mJSObj != nullptr;}
     void SystemIsBeingShutDown();
 
-    // This is used by XPCJSRuntime::GCCallback to find wrappers that no
-    // longer root their JSObject and are only still alive because they
-    // were being used via nsSupportsWeakReference at the time when their
-    // last (outside) reference was released. Wrappers that fit into that
-    // category are only deleted when we see that their corresponding JSObject
-    // is to be finalized.
+    // These two methods are used by JSObject2WrappedJSMap::FindDyingJSObjects
+    // to find non-rooting wrappers for dying JS objects. See the top of
+    // XPCWrappedJS.cpp for more details.
     bool IsSubjectToFinalization() const {return IsValid() && mRefCnt == 1;}
     bool IsObjectAboutToBeFinalized() {return JS_IsAboutToBeFinalized(&mJSObj);}
 
     bool IsAggregatedToNative() const {return mRoot->mOuter != nullptr;}
     nsISupports* GetAggregatedNativeObject() const {return mRoot->mOuter;}
+    void SetAggregatedNativeObject(nsISupports *aNative) {
+        MOZ_ASSERT(aNative);
+        if (mRoot->mOuter) {
+            MOZ_ASSERT(mRoot->mOuter == aNative,
+                       "Only one aggregated native can be set");
+            return;
+        }
+        mRoot->mOuter = aNative;
+    }
 
     void TraceJS(JSTracer* trc);
     static void GetTraceName(JSTracer* trc, char *buf, size_t bufsize);
@@ -2534,17 +2533,18 @@ protected:
     nsXPCWrappedJS(JSContext* cx,
                    JSObject* aJSObj,
                    nsXPCWrappedJSClass* aClass,
-                   nsXPCWrappedJS* root,
-                   nsISupports* aOuter);
+                   nsXPCWrappedJS* root);
 
-   void Unlink();
+    bool CanSkip();
+    void Destroy();
+    void Unlink();
 
 private:
     JS::Heap<JSObject*> mJSObj;
-    nsXPCWrappedJSClass* mClass;
-    nsXPCWrappedJS* mRoot;
+    nsRefPtr<nsXPCWrappedJSClass> mClass;
+    nsXPCWrappedJS* mRoot;    // If mRoot != this, it is an owning pointer.
     nsXPCWrappedJS* mNext;
-    nsISupports* mOuter;    // only set in root
+    nsCOMPtr<nsISupports> mOuter;    // only set in root
 };
 
 /***************************************************************************/
@@ -2588,7 +2588,7 @@ public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIPROPERTY
 
-  xpcProperty(const PRUnichar* aName, uint32_t aNameLen, nsIVariant* aValue);
+  xpcProperty(const char16_t* aName, uint32_t aNameLen, nsIVariant* aValue);
   virtual ~xpcProperty() {}
 
 private:
@@ -3234,7 +3234,7 @@ CloneAllAccess();
 
 // Returns access if wideName is in list
 char *
-CheckAccessList(const PRUnichar *wideName, const char *const list[]);
+CheckAccessList(const char16_t *wideName, const char *const list[]);
 } /* namespace xpc */
 
 /***************************************************************************/
@@ -3438,6 +3438,7 @@ public:
         , wantExportHelpers(false)
         , proto(cx)
         , sameZoneAs(cx)
+        , invisibleToDebugger(false)
         , metadata(cx)
     { }
 
@@ -3449,6 +3450,7 @@ public:
     JS::RootedObject proto;
     nsCString sandboxName;
     JS::RootedObject sameZoneAs;
+    bool invisibleToDebugger;
     GlobalProperties globalProperties;
     JS::RootedValue metadata;
 

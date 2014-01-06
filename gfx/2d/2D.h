@@ -523,7 +523,7 @@ public:
    * implementation in some backends, and more efficient implementation in
    * others.
    */
-  virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, const Matrix *aTransformHint = nullptr) = 0;
+  virtual void CopyGlyphsToBuilder(const GlyphBuffer &aBuffer, PathBuilder *aBuilder, BackendType aBackendType, const Matrix *aTransformHint = nullptr) = 0;
 
   virtual bool GetFontFileData(FontFileDataOutput, void *) { return false; }
 
@@ -1014,6 +1014,15 @@ public:
    */
   static TemporaryRef<DataSourceSurface>
     CreateDataSourceSurface(const IntSize &aSize, SurfaceFormat aFormat);
+
+  /*
+   * This creates a simple data source surface for a certain size with a
+   * specific stride, which must be large enough to fit all pixels.
+   * It allocates new memory for the surface. This memory is freed when
+   * the surface is destroyed.
+   */
+  static TemporaryRef<DataSourceSurface>
+    CreateDataSourceSurfaceWithStride(const IntSize &aSize, SurfaceFormat aFormat, int32_t aStride);
 
   /*
    * This creates a simple data source surface for some existing data. It will

@@ -21,9 +21,10 @@ Cu.import('resource://gre/modules/ErrorPage.jsm');
 Cu.import('resource://gre/modules/NetworkStatsService.jsm');
 #endif
 
-// identity
+// Identity
 Cu.import('resource://gre/modules/SignInToWebsite.jsm');
 SignInToWebsiteController.init();
+Cu.import('resource://gre/modules/FxAccountsMgmtService.jsm');
 
 Cu.import('resource://gre/modules/DownloadsAPI.jsm');
 
@@ -510,6 +511,9 @@ var shell = {
           Services.perms.addFromPrincipal(principal, 'offline-app',
                                           Ci.nsIPermissionManager.ALLOW_ACTION);
 
+          let documentURI = Services.io.newURI(contentWindow.document.documentURI,
+                                               null,
+                                               null);
           let manifestURI = Services.io.newURI(manifest, null, documentURI);
           let updateService = Cc['@mozilla.org/offlinecacheupdate-service;1']
                               .getService(Ci.nsIOfflineCacheUpdateService);
@@ -613,6 +617,8 @@ var shell = {
     DOMApplicationRegistry.allAppsLaunchable = true;
 
     this.sendEvent(window, 'ContentStart');
+
+    Services.obs.notifyObservers(null, 'content-start', null);
 
 #ifdef MOZ_WIDGET_GONK
     Cu.import('resource://gre/modules/OperatorApps.jsm');
@@ -1062,13 +1068,14 @@ let RemoteDebugger = {
         if ("nsIProfiler" in Ci) {
           DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/profiler.js");
         }
-        DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
+        DebuggerServer.registerModule("devtools/server/actors/inspector");
+        DebuggerServer.registerModule("devtools/server/actors/styleeditor");
+        DebuggerServer.registerModule("devtools/server/actors/stylesheets");
         DebuggerServer.enableWebappsContentActor = true;
       }
       DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
       DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
       DebuggerServer.registerModule("devtools/server/actors/device");
-      DebuggerServer.registerModule("devtools/server/actors/inspector")
 
 #ifdef MOZ_WIDGET_GONK
       DebuggerServer.onConnectionChange = function(what) {

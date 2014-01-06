@@ -16,6 +16,7 @@
 #include "ReadbackLayer.h"              // for ReadbackLayer
 #include "gfxPlatform.h"                // for gfxPlatform
 #include "gfxUtils.h"                   // for gfxUtils, etc
+#include "gfx2DGlue.h"
 #include "mozilla/DebugOnly.h"          // for DebugOnly
 #include "mozilla/Telemetry.h"          // for Accumulate
 #include "mozilla/TelemetryHistogramEnums.h"
@@ -112,15 +113,15 @@ LayerManager::GetScrollableLayers(nsTArray<Layer*>& aArray)
 }
 
 already_AddRefed<gfxASurface>
-LayerManager::CreateOptimalSurface(const gfxIntSize &aSize,
+LayerManager::CreateOptimalSurface(const gfx::IntSize &aSize,
                                    gfxImageFormat aFormat)
 {
   return gfxPlatform::GetPlatform()->
-    CreateOffscreenSurface(aSize, gfxASurface::ContentFromFormat(aFormat));
+    CreateOffscreenSurface(gfx::ThebesIntSize(aSize), gfxASurface::ContentFromFormat(aFormat));
 }
 
 already_AddRefed<gfxASurface>
-LayerManager::CreateOptimalMaskSurface(const gfxIntSize &aSize)
+LayerManager::CreateOptimalMaskSurface(const gfx::IntSize &aSize)
 {
   return CreateOptimalSurface(aSize, gfxImageFormatA8);
 }
@@ -175,7 +176,8 @@ Layer::Layer(LayerManager* aManager, void* aImplData) :
   mIsFixedPosition(false),
   mMargins(0, 0, 0, 0),
   mStickyPositionData(nullptr),
-  mIsScrollbar(false),
+  mScrollbarTargetId(FrameMetrics::NULL_SCROLL_ID),
+  mScrollbarDirection(ScrollDirection::NONE),
   mDebugColorIndex(0),
   mAnimationGeneration(0)
 {}
@@ -508,7 +510,7 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
   gfx3DMatrix result;
   if (mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
-      gfxSize(1.0, 1.0) <= aSnapRect.Size() &&
+      gfx::Size(1.0, 1.0) <= ToSize(aSnapRect.Size()) &&
       matrix2D.PreservesAxisAlignedRectangles()) {
     gfxPoint transformedTopLeft = matrix2D.Transform(aSnapRect.TopLeft());
     transformedTopLeft.Round();
@@ -1259,6 +1261,12 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
   } else {
     aTo += " [not visible]";
   }
+  if (!mEventRegions.mHitRegion.IsEmpty()) {
+    AppendToString(aTo, mEventRegions.mHitRegion, " [hitregion=", "]");
+  }
+  if (!mEventRegions.mDispatchToContentHitRegion.IsEmpty()) {
+    AppendToString(aTo, mEventRegions.mDispatchToContentHitRegion, " [dispatchtocontentregion=", "]");
+  }
   if (1.0 != mOpacity) {
     aTo.AppendPrintf(" [opacity=%g]", mOpacity);
   }
@@ -1268,15 +1276,15 @@ Layer::PrintInfo(nsACString& aTo, const char* aPrefix)
   if (GetContentFlags() & CONTENT_COMPONENT_ALPHA) {
     aTo += " [componentAlpha]";
   }
-  if (GetIsScrollbar()) {
-    if (GetScrollbarDirection() == VERTICAL) {
-      aTo.AppendPrintf(" [vscrollbar=%lld]", GetScrollbarTargetContainerId());
-    } else {
-      aTo.AppendPrintf(" [hscrollbar=%lld]", GetScrollbarTargetContainerId());
-    }
+  if (GetScrollbarDirection() == VERTICAL) {
+    aTo.AppendPrintf(" [vscrollbar=%lld]", GetScrollbarTargetContainerId());
+  }
+  if (GetScrollbarDirection() == HORIZONTAL) {
+    aTo.AppendPrintf(" [hscrollbar=%lld]", GetScrollbarTargetContainerId());
   }
   if (GetIsFixedPosition()) {
-    aTo.AppendPrintf(" [isFixedPosition anchor=%f,%f]", mAnchor.x, mAnchor.y);
+    aTo.AppendPrintf(" [isFixedPosition anchor=%f,%f margin=%f,%f,%f,%f]", mAnchor.x, mAnchor.y,
+                     mMargins.top, mMargins.right, mMargins.bottom, mMargins.left);
   }
   if (GetIsStickyPosition()) {
     aTo.AppendPrintf(" [isStickyPosition scrollId=%d outer=%f,%f %fx%f "
@@ -1492,10 +1500,12 @@ PrintInfo(nsACString& aTo, LayerComposite* aLayerComposite)
 void
 SetAntialiasingFlags(Layer* aLayer, gfxContext* aTarget)
 {
+  bool permitSubpixelAA = !(aLayer->GetContentFlags() & Layer::CONTENT_DISABLE_SUBPIXEL_AA);
   if (!aTarget->IsCairo()) {
     RefPtr<DrawTarget> dt = aTarget->GetDrawTarget();
 
     if (dt->GetFormat() != FORMAT_B8G8R8A8) {
+      dt->SetPermitSubpixelAA(permitSubpixelAA);
       return;
     }
 
@@ -1505,20 +1515,22 @@ SetAntialiasingFlags(Layer* aLayer, gfxContext* aTarget)
     transformedBounds.RoundOut();
     IntRect intTransformedBounds;
     transformedBounds.ToIntRect(&intTransformedBounds);
-    dt->SetPermitSubpixelAA(!(aLayer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA) ||
-                            dt->GetOpaqueRect().Contains(intTransformedBounds));
+    permitSubpixelAA &= !(aLayer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA) ||
+                        dt->GetOpaqueRect().Contains(intTransformedBounds);
+    dt->SetPermitSubpixelAA(permitSubpixelAA);
   } else {
     nsRefPtr<gfxASurface> surface = aTarget->CurrentSurface();
     if (surface->GetContentType() != GFX_CONTENT_COLOR_ALPHA) {
       // Destination doesn't have alpha channel; no need to set any special flags
+      surface->SetSubpixelAntialiasingEnabled(permitSubpixelAA);
       return;
     }
 
     const nsIntRect& bounds = aLayer->GetVisibleRegion().GetBounds();
-    surface->SetSubpixelAntialiasingEnabled(
-        !(aLayer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA) ||
+    permitSubpixelAA &= !(aLayer->GetContentFlags() & Layer::CONTENT_COMPONENT_ALPHA) ||
         surface->GetOpaqueRect().Contains(
-          aTarget->UserToDevice(gfxRect(bounds.x, bounds.y, bounds.width, bounds.height))));
+        aTarget->UserToDevice(gfxRect(bounds.x, bounds.y, bounds.width, bounds.height)));
+    surface->SetSubpixelAntialiasingEnabled(permitSubpixelAA);
   }
 }
 

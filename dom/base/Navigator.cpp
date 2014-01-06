@@ -356,8 +356,8 @@ Navigator::GetLanguage(nsAString& aLanguage)
 
   // Checks and fixups:
   // replace "_" with "-" to avoid POSIX/Windows "en_US" notation.
-  if (aLanguage.Length() > 2 && aLanguage[2] == PRUnichar('_')) {
-    aLanguage.Replace(2, 1, PRUnichar('-')); // TODO replace all
+  if (aLanguage.Length() > 2 && aLanguage[2] == char16_t('_')) {
+    aLanguage.Replace(2, 1, char16_t('-')); // TODO replace all
   }
 
   // Use uppercase for country part, e.g. "en-US", not "en-us", see BCP47
@@ -1703,14 +1703,16 @@ Navigator::HasMobileMessageSupport(JSContext* /* unused */, JSObject* aGlobal)
 
 /* static */
 bool
-Navigator::HasTelephonySupport(JSContext* /* unused */, JSObject* aGlobal)
+Navigator::HasTelephonySupport(JSContext* cx, JSObject* aGlobal)
 {
+  JS::Rooted<JSObject*> global(cx, aGlobal);
+
   // First of all, the general pref has to be turned on.
   bool enabled = false;
   Preferences::GetBool("dom.telephony.enabled", &enabled);
   NS_ENSURE_TRUE(enabled, false);
 
-  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
+  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(global);
   return win && CheckPermission(win, "telephony");
 }
 
@@ -1806,6 +1808,12 @@ Navigator::HasFMRadioSupport(JSContext* /* unused */, JSObject* aGlobal)
 bool
 Navigator::HasNfcSupport(JSContext* /* unused */, JSObject* aGlobal)
 {
+  // Do not support NFC if NFC content helper does not exist.
+  nsCOMPtr<nsISupports> contentHelper = do_GetService("@mozilla.org/nfc/content-helper;1");
+  if (!contentHelper) {
+    return false;
+  }
+
   nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
   return win && (CheckPermission(win, "nfc-read") ||
                  CheckPermission(win, "nfc-write"));
@@ -1854,8 +1862,10 @@ bool Navigator::HasInputMethodSupport(JSContext* /* unused */,
 
 /* static */
 bool
-Navigator::HasDataStoreSupport(JSContext* /* unused */, JSObject* aGlobal)
+Navigator::HasDataStoreSupport(JSContext* cx, JSObject* aGlobal)
 {
+  JS::Rooted<JSObject*> global(cx, aGlobal);
+
   // First of all, the general pref has to be turned on.
   bool enabled = false;
   Preferences::GetBool("dom.datastore.enabled", &enabled);
@@ -1866,7 +1876,7 @@ Navigator::HasDataStoreSupport(JSContext* /* unused */, JSObject* aGlobal)
     return true;
   }
 
-  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
+  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(global);
   if (!win) {
     return false;
   }
@@ -1987,7 +1997,7 @@ NS_GetNavigatorAppVersion(nsAString& aAppVersion)
   NS_ENSURE_SUCCESS(rv, rv);
 
   AppendASCIItoUTF16(str, aAppVersion);
-  aAppVersion.Append(PRUnichar(')'));
+  aAppVersion.Append(char16_t(')'));
 
   return rv;
 }

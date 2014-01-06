@@ -6,7 +6,6 @@
 /* Generic pane helpers */
 
 .generic-toggled-side-pane {
-  min-width: 50px;
   -moz-margin-start: 0px !important;
   /* Unfortunately, transitions don't work properly with locale-aware properties,
      so both the left and right margins are set via js, while the start margin
@@ -267,7 +266,29 @@
   border-left-width: 0;
 }
 
+/* SimpleListWidget */
+
+.simple-list-widget-item:not(.selected):hover {
+  background: linear-gradient(rgba(255,255,255,0.9), rgba(255,255,255,0.85)), Highlight;
+}
+
+.simple-list-widget-item.selected {
+  background: linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.8)), Highlight;
+  color: #000;
+}
+
+.simple-list-widget-perma-text,
+.simple-list-widget-empty-text {
+  color: GrayText;
+  padding: 4px 8px;
+}
+
 /* SideMenuWidget */
+
+.side-menu-widget-container {
+  /* Hack: force hardware acceleration */
+  transform: translateZ(1px);
+}
 
 .side-menu-widget-container[theme="dark"] {
   background: url(background-noise-toolbar.png), hsl(208,11%,27%);
@@ -282,12 +303,12 @@
 /* SideMenuWidget container */
 
 .side-menu-widget-container:-moz-locale-dir(ltr),
-.side-menu-widget-empty-notice-container:-moz-locale-dir(ltr) {
+.side-menu-widget-empty-text:-moz-locale-dir(ltr) {
   box-shadow: inset -1px 0 0 #222426;
 }
 
 .side-menu-widget-container:-moz-locale-dir(rtl),
-.side-menu-widget-empty-notice-container:-moz-locale-dir(rtl) {
+.side-menu-widget-empty-text:-moz-locale-dir(rtl) {
   box-shadow: inset 1px 0 0 #222426;
 }
 
@@ -365,7 +386,7 @@
 
 /* SideMenuWidget items contents */
 
-.side-menu-widget-item-label {
+.side-menu-widget-item-contents {
   padding: 4px 0px;
 }
 
@@ -385,7 +406,12 @@
 }
 
 .side-menu-widget-item-other:first-of-type {
+  margin-bottom: 4px;
   border-top-left-radius: 4px;
+}
+
+.side-menu-widget-item-other:last-of-type {
+  margin-bottom: -4px;
 }
 
 .side-menu-widget-item-other > label {
@@ -414,23 +440,25 @@
 
 /* SideMenuWidget misc */
 
-.side-menu-widget-empty-notice-container {
-  padding: 12px;
-}
-
-.side-menu-widget-empty-notice-container[theme="dark"] {
+.side-menu-widget-empty-text[theme="dark"] {
   background: url(background-noise-toolbar.png), hsl(208,11%,27%);
+  padding: 12px;
   font-weight: 600;
   color: #fff;
 }
 
-.side-menu-widget-empty-notice-container[theme="light"] {
+.side-menu-widget-empty-text[theme="light"] {
   background: #fff;
   padding: 4px 8px;
   color: GrayText;
 }
 
 /* VariablesView */
+
+.variables-view-container {
+  /* Hack: force hardware acceleration */
+  transform: translateZ(1px);
+}
 
 .variables-view-empty-notice {
   color: GrayText;
@@ -441,42 +469,7 @@
   color: #fff;
 }
 
-.variables-view-scope > .variables-view-element-details:not(:empty) {
-  -moz-margin-start: 2px;
-  -moz-margin-end: 1px;
-}
-
-/* Generic traits applied to both variables and properties */
-
-.variable-or-property {
-  transition: background 1s ease-in-out, color 1s ease-in-out;
-}
-
-.variable-or-property[changed] {
-  color: black;
-  transition-duration: .4s;
-}
-
-.variable-or-property > .title > .value {
-  -moz-box-flex: 1;
-  -moz-padding-start: 6px;
-  -moz-padding-end: 4px;
-}
-
-.variable-or-property[editable] > .title > .value {
-  cursor: text;
-}
-
-.variable-or-property:not([untitled]) > .variables-view-element-details {
-  -moz-margin-start: 10px;
-}
-
-/* Custom variables and properties traits */
-
-.variables-view-variable {
-  -moz-margin-start: 1px;
-  -moz-margin-end: 1px;
-}
+/* Generic variables traits */
 
 .variables-view-variable:not(:last-child) {
   border-bottom: 1px solid rgba(128, 128, 128, .15);
@@ -486,26 +479,74 @@
   font-weight: 600;
 }
 
+/* Generic variables *and* properties traits */
+
 .variable-or-property:focus > .title > label {
   color: inherit !important;
+}
+
+.variable-or-property > .title > .value {
+  -moz-box-flex: 1;
+}
+
+.variable-or-property > .title > .arrow {
+  -moz-margin-start: 3px;
+}
+
+.variable-or-property:not([untitled]) > .variables-view-element-details {
+  -moz-margin-start: 7px;
+}
+
+/* Traits applied when variables or properties are changed or overridden */
+
+.variable-or-property:not([overridden]) {
+  transition: background 1s ease-in-out;
+}
+
+.variable-or-property:not([overridden])[changed] {
+  transition-duration: .4s;
+}
+
+.variable-or-property[overridden] {
+  background: rgba(128,128,128,0.05);
+}
+
+.variable-or-property[overridden] .title > label {
+  /* Cross out the title for this variable and all child properties. */
+  font-style: italic;
+  text-decoration: line-through;
+  border-bottom: none !important;
+  color: rgba(128,128,128,0.9);
+  opacity: 0.7;
+}
+
+/* Traits applied when variables or properties are editable */
+
+.variable-or-property[editable] > .title > .value {
+  cursor: text;
+}
+
+.variable-or-property[overridden] .title > .value {
+  /* Disallow editing this variable and all child properties. */
+  pointer-events: none;
 }
 
 /* Custom configurable/enumerable/writable or frozen/sealed/extensible
  * variables and properties */
 
-.variable-or-property[non-enumerable]:not([self]):not([exception]):not([return]):not([scope]) > .title > .name {
+.variable-or-property[non-enumerable]:not([self]):not([pseudo-item]) > .title > .name {
   opacity: 0.6;
 }
 
-.variable-or-property[non-configurable] > .title > .name {
+.variable-or-property[non-configurable]:not([pseudo-item]) > .title > .name {
   border-bottom: 1px dashed #99f;
 }
 
-.variable-or-property[non-writable] > .title > .name {
+.variable-or-property[non-writable]:not([pseudo-item]) > .title > .name {
   border-bottom: 1px dashed #f99;
 }
 
-.variable-or-property[safe-getter] > .title > .name {
+.variable-or-property[safe-getter]:not([pseudo-item]) > .title > .name {
   border-bottom: 1px dashed #8b0;
 }
 
@@ -567,15 +608,20 @@
   margin: 0 2px 0 2px;
 }
 
-.variable-or-property[non-enumerable] > tooltip > label[value=enumerable],
-.variable-or-property[non-configurable] > tooltip > label[value=configurable],
-.variable-or-property[non-writable] > tooltip > label[value=writable],
-.variable-or-property[non-extensible] > tooltip > label[value=extensible] {
+.variable-or-property[non-enumerable] > tooltip > label.enumerable,
+.variable-or-property[non-configurable] > tooltip > label.configurable,
+.variable-or-property[non-writable] > tooltip > label.writable,
+.variable-or-property[non-extensible] > tooltip > label.extensible {
   color: #800;
   text-decoration: line-through;
 }
 
-.variable-or-property[safe-getter] > tooltip > label[value=WebIDL] {
+.variable-or-property[overridden] > tooltip > label.overridden {
+  -moz-padding-start: 4px;
+  -moz-border-start: 1px dotted #000;
+}
+
+.variable-or-property[safe-getter] > tooltip > label.WebIDL {
   -moz-padding-start: 4px;
   -moz-border-start: 1px dotted #000;
   color: #080;
@@ -610,7 +656,7 @@
 }
 
 .element-value-input {
-  -moz-margin-start: 4px !important;
+  -moz-margin-start: -2px !important;
   -moz-margin-end: 2px !important;
 }
 
@@ -623,6 +669,7 @@
 .element-value-input,
 .element-name-input {
   border: 1px solid rgba(128, 128, 128, .5) !important;
+  border-radius: 0;
   color: inherit;
 }
 

@@ -12,7 +12,7 @@ interface nsIFetchTelemetryDataCallback : nsISupports
   void complete();
 };
 
-[scriptable, uuid(e70ba4cc-7ccd-41fe-a75c-e4042233a8cb)]
+[scriptable, uuid(3bdb3c83-1ac0-482a-9c3d-b15141174af4)]
 interface nsITelemetry : nsISupports
 {
   /**
@@ -129,17 +129,17 @@ interface nsITelemetry : nsISupports
   readonly attribute jsval lateWrites;
 
   /**
-   * An object whose properties are the names of histograms defined in
-   * TelemetryHistograms.h and whose corresponding values are the textual
-   * comments associated with said histograms.
+   * Returns an array whose values are the names of histograms defined
+   * in Histograms.json.
    */
-  [implicit_jscontext]
-  readonly attribute jsval registeredHistograms;
+  void registeredHistograms(out uint32_t count,
+                            [retval, array, size_is(count)] out string histograms);
 
   /** 
    * Create and return a histogram.  Parameters:
    *
    * @param name Unique histogram name
+   * @param expiration Expiration version
    * @param min - Minimal bucket size
    * @param max - Maximum bucket size
    * @param bucket_count - number of buckets in the histogram.
@@ -150,7 +150,7 @@ interface nsITelemetry : nsISupports
    *   clear() - Zeros out the histogram's buckets and sum
    */
   [implicit_jscontext]
-  jsval newHistogram(in ACString name, in uint32_t min, in uint32_t max, in uint32_t bucket_count, in unsigned long histogram_type);
+  jsval newHistogram(in ACString name, in ACString expiration, in uint32_t min, in uint32_t max, in uint32_t bucket_count, in unsigned long histogram_type);
 
   /**
    * Create a histogram using the current state of an existing histogram.  The

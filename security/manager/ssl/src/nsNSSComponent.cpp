@@ -403,7 +403,7 @@ nsNSSComponent::DispatchEventToWindow(nsIDOMWindow *domWin,
 
 NS_IMETHODIMP
 nsNSSComponent::PIPBundleFormatStringFromName(const char *name,
-                                              const PRUnichar **params,
+                                              const char16_t **params,
                                               uint32_t numParams,
                                               nsAString &outString)
 {
@@ -443,7 +443,7 @@ nsNSSComponent::GetPIPNSSBundleString(const char *name,
 
 NS_IMETHODIMP
 nsNSSComponent::NSSBundleFormatStringFromName(const char *name,
-                                              const PRUnichar **params,
+                                              const char16_t **params,
                                               uint32_t numParams,
                                               nsAString &outString)
 {
@@ -972,7 +972,7 @@ CipherSuiteChangeObserver::StopObserve()
 nsresult
 CipherSuiteChangeObserver::Observe(nsISupports *aSubject,
                                    const char *aTopic,
-                                   const PRUnichar *someData)
+                                   const char16_t *someData)
 {
   NS_ASSERTION(NS_IsMainThread(), "CipherSuiteChangeObserver::Observe can only be accessed in main thread");
   if (nsCRT::strcmp(aTopic, NS_PREFBRANCH_PREFCHANGE_TOPIC_ID) == 0) {
@@ -1005,8 +1005,6 @@ void nsNSSComponent::setValidationOptions()
                                             OCSP_ENABLED_DEFAULT);
 
   bool ocspRequired = Preferences::GetBool("security.OCSP.require", false);
-  bool anyFreshRequired = Preferences::GetBool("security.fresh_revocation_info.require",
-                                               false);
   bool aiaDownloadEnabled = Preferences::GetBool("security.missing_cert_download.enabled",
                                                  false);
 
@@ -1025,7 +1023,7 @@ void nsNSSComponent::setValidationOptions()
                            : ocspMode_FailureIsNotAVerificationFailure);
 
   int OCSPTimeoutSeconds = 3;
-  if (ocspRequired || anyFreshRequired) {
+  if (ocspRequired) {
     OCSPTimeoutSeconds = 10;
   }
   CERT_SetOCSPTimeout(OCSPTimeoutSeconds);
@@ -1043,8 +1041,6 @@ void nsNSSComponent::setValidationOptions()
         CertVerifier::ocsp_on : CertVerifier::ocsp_off,
       ocspRequired ? 
         CertVerifier::ocsp_strict : CertVerifier::ocsp_relaxed,
-      anyFreshRequired ?
-        CertVerifier::any_revo_strict : CertVerifier::any_revo_relaxed,
       ocspGetEnabled ?
         CertVerifier::ocsp_get_enabled : CertVerifier::ocsp_get_disabled);
 
@@ -1577,7 +1573,7 @@ static const char* const PROFILE_DO_CHANGE_TOPIC = "profile-do-change";
 
 NS_IMETHODIMP
 nsNSSComponent::Observe(nsISupports *aSubject, const char *aTopic, 
-                        const PRUnichar *someData)
+                        const char16_t *someData)
 {
   if (nsCRT::strcmp(aTopic, PROFILE_CHANGE_TEARDOWN_TOPIC) == 0) {
     PR_LOG(gPIPNSSLog, PR_LOG_DEBUG, ("in PSM code, receiving change-teardown\n"));

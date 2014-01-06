@@ -64,7 +64,7 @@
 #include "nsFontFaceList.h"
 #include "nsFontInflationData.h"
 #include "nsSVGUtils.h"
-#include "nsSVGTextFrame2.h"
+#include "SVGTextFrame.h"
 #include "nsStyleStructInlines.h"
 #include "nsStyleTransformMatrix.h"
 #include "nsIFrameInlines.h"
@@ -72,6 +72,7 @@
 #include "nsComputedDOMStyle.h"
 #include "ActiveLayerTracker.h"
 #include "mozilla/gfx/2D.h"
+#include "gfx2DGlue.h"
 
 #include "mozilla/Preferences.h"
 
@@ -1204,14 +1205,13 @@ nsLayoutUtils::SetFixedPositionLayerData(Layer* aLayer,
                                          const nsIFrame* aViewportFrame,
                                          nsSize aViewportSize,
                                          const nsIFrame* aFixedPosFrame,
-                                         const nsIFrame* aReferenceFrame,
                                          nsPresContext* aPresContext,
                                          const ContainerLayerParameters& aContainerParameters) {
   // Find out the rect of the viewport frame relative to the reference frame.
   // This, in conjunction with the container scale, will correspond to the
   // coordinate-space of the built layer.
   float factor = aPresContext->AppUnitsPerDevPixel();
-  nsPoint origin = aViewportFrame->GetOffsetToCrossDoc(aReferenceFrame);
+  nsPoint origin = aViewportFrame->GetOffsetToCrossDoc(aFixedPosFrame);
   LayerRect anchorRect(NSAppUnitsToFloatPixels(origin.x, factor) *
                          aContainerParameters.mXScale,
                        NSAppUnitsToFloatPixels(origin.y, factor) *
@@ -1853,16 +1853,16 @@ TransformGfxRectToAncestor(nsIFrame *aFrame,
   return ctm.TransformBounds(aRect);
 }
 
-static nsSVGTextFrame2*
+static SVGTextFrame*
 GetContainingSVGTextFrame(nsIFrame* aFrame)
 {
   if (!aFrame->IsSVGText()) {
     return nullptr;
   }
 
-  return static_cast<nsSVGTextFrame2*>
+  return static_cast<SVGTextFrame*>
     (nsLayoutUtils::GetClosestFrameOfType(aFrame->GetParent(),
-                                          nsGkAtoms::svgTextFrame2));
+                                          nsGkAtoms::svgTextFrame));
 }
 
 nsPoint
@@ -1870,7 +1870,7 @@ nsLayoutUtils::TransformAncestorPointToFrame(nsIFrame* aFrame,
                                              const nsPoint& aPoint,
                                              nsIFrame* aAncestor)
 {
-    nsSVGTextFrame2* text = GetContainingSVGTextFrame(aFrame);
+    SVGTextFrame* text = GetContainingSVGTextFrame(aFrame);
 
     float factor = aFrame->PresContext()->AppUnitsPerDevPixel();
     gfxPoint result(NSAppUnitsToFloatPixels(aPoint.x, factor),
@@ -1892,7 +1892,7 @@ nsLayoutUtils::TransformAncestorRectToFrame(nsIFrame* aFrame,
                                             const nsRect &aRect,
                                             const nsIFrame* aAncestor)
 {
-    nsSVGTextFrame2* text = GetContainingSVGTextFrame(aFrame);
+    SVGTextFrame* text = GetContainingSVGTextFrame(aFrame);
 
     float srcAppUnitsPerDevPixel = aAncestor->PresContext()->AppUnitsPerDevPixel();
     gfxRect result(NSAppUnitsToFloatPixels(aRect.x, srcAppUnitsPerDevPixel),
@@ -1920,7 +1920,7 @@ nsLayoutUtils::TransformFrameRectToAncestor(nsIFrame* aFrame,
                                             const nsIFrame* aAncestor,
                                             bool* aPreservesAxisAlignedRectangles /* = nullptr */)
 {
-  nsSVGTextFrame2* text = GetContainingSVGTextFrame(aFrame);
+  SVGTextFrame* text = GetContainingSVGTextFrame(aFrame);
 
   float srcAppUnitsPerDevPixel = aFrame->PresContext()->AppUnitsPerDevPixel();
   gfxRect result;
@@ -2089,6 +2089,9 @@ nsLayoutUtils::GetFramesForArea(nsIFrame* aFrame, const nsRect& aRect,
     if (rootScrollFrame) {
       builder.SetIgnoreScrollFrame(rootScrollFrame);
     }
+  }
+  if (aFlags & IGNORE_CROSS_DOC) {
+    builder.SetDescendIntoSubdocuments(false);
   }
 
   builder.EnterPresShell(aFrame, target);
@@ -2376,8 +2379,29 @@ nsLayoutUtils::PaintFrame(nsRenderingContext* aRenderingContext, nsIFrame* aFram
   }
 
   if (builder.WillComputePluginGeometry()) {
+    nsRefPtr<LayerManager> layerManager;
+    nsIWidget* widget = aFrame->GetNearestWidget();
+    if (widget) {
+      layerManager = widget->GetLayerManager();
+    }
+
     rootPresContext->ComputePluginGeometryUpdates(aFrame, &builder, &list);
+
+    // We're not going to get a WillPaintWindow event here if we didn't do
+    // widget invalidation, so just apply the plugin geometry update here instead.
+    // We could instead have the compositor send back an equivalent to WillPaintWindow,
+    // but it should be close enough to now not to matter.
+    if (layerManager && !layerManager->NeedsWidgetInvalidation()) {
+      rootPresContext->ApplyPluginGeometryUpdates();
+    }
+
+    // We told the compositor thread not to composite when it received the transaction because
+    // we wanted to update plugins first. Schedule the composite now.
+    if (layerManager) {
+      layerManager->Composite();
+    }
   }
+
 
   // Flush the list so we don't trigger the IsEmpty-on-destruction assertion
   list.DeleteAll();
@@ -2412,7 +2436,7 @@ nsLayoutUtils::GetZIndex(nsIFrame* aFrame) {
  */
 bool
 nsLayoutUtils::BinarySearchForPosition(nsRenderingContext* aRendContext,
-                        const PRUnichar* aText,
+                        const char16_t* aText,
                         int32_t    aBaseWidth,
                         int32_t    aBaseInx,
                         int32_t    aStartInx,
@@ -3737,7 +3761,7 @@ nsLayoutUtils::GetSnappedBaselineY(nsIFrame* aFrame, gfxContext* aContext,
 void
 nsLayoutUtils::DrawString(const nsIFrame*       aFrame,
                           nsRenderingContext*   aContext,
-                          const PRUnichar*      aString,
+                          const char16_t*      aString,
                           int32_t               aLength,
                           nsPoint               aPoint,
                           nsStyleContext*       aStyleContext)
@@ -3764,7 +3788,7 @@ nsLayoutUtils::DrawString(const nsIFrame*       aFrame,
 nscoord
 nsLayoutUtils::GetStringWidth(const nsIFrame*      aFrame,
                               nsRenderingContext* aContext,
-                              const PRUnichar*     aString,
+                              const char16_t*     aString,
                               int32_t              aLength)
 {
 #ifdef IBMBIDI
@@ -4817,11 +4841,9 @@ nsLayoutUtils::SurfaceFromElement(nsIImageLoadingContent* aElement,
     frameFlags |= imgIContainer::FLAG_DECODE_NO_COLORSPACE_CONVERSION;
   if (aSurfaceFlags & SFE_NO_PREMULTIPLY_ALPHA)
     frameFlags |= imgIContainer::FLAG_DECODE_NO_PREMULTIPLY_ALPHA;
-  nsRefPtr<gfxASurface> framesurf;
-  rv = imgContainer->GetFrame(whichFrame,
-                              frameFlags,
-                              getter_AddRefs(framesurf));
-  if (NS_FAILED(rv))
+  nsRefPtr<gfxASurface> framesurf =
+    imgContainer->GetFrame(whichFrame, frameFlags);
+  if (!framesurf)
     return result;
 
   int32_t imgWidth, imgHeight;
@@ -4964,14 +4986,14 @@ nsLayoutUtils::SurfaceFromElement(HTMLVideoElement* aElement,
   if (!container)
     return result;
 
-  gfxIntSize size;
+  mozilla::gfx::IntSize size;
   nsRefPtr<gfxASurface> surf = container->GetCurrentAsSurface(&size);
   if (!surf)
     return result;
 
   result.mSourceSurface = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(aTarget, surf);
   result.mCORSUsed = aElement->GetCORSMode() != CORS_NONE;
-  result.mSize = size;
+  result.mSize = ThebesIntSize(size);
   result.mPrincipal = principal.forget();
   result.mIsWriteOnly = false;
 
@@ -5099,6 +5121,31 @@ nsLayoutUtils::AssertTreeOnlyEmptyNextInFlows(nsIFrame *aSubtreeRoot)
 }
 #endif
 
+static void
+GetFontFacesForFramesInner(nsIFrame* aFrame, nsFontFaceList* aFontFaceList)
+{
+  NS_PRECONDITION(aFrame, "NULL frame pointer");
+
+  if (aFrame->GetType() == nsGkAtoms::textFrame) {
+    if (!aFrame->GetPrevContinuation()) {
+      nsLayoutUtils::GetFontFacesForText(aFrame, 0, INT32_MAX, true,
+                                         aFontFaceList);
+    }
+    return;
+  }
+
+  nsIFrame::ChildListID childLists[] = { nsIFrame::kPrincipalList,
+                                         nsIFrame::kPopupList };
+  for (size_t i = 0; i < ArrayLength(childLists); ++i) {
+    nsFrameList children(aFrame->GetChildList(childLists[i]));
+    for (nsFrameList::Enumerator e(children); !e.AtEnd(); e.Next()) {
+      nsIFrame* child = e.get();
+      child = nsPlaceholderFrame::GetRealFrameFor(child);
+      GetFontFacesForFramesInner(child, aFontFaceList);
+    }
+  }
+}
+
 /* static */
 nsresult
 nsLayoutUtils::GetFontFacesForFrames(nsIFrame* aFrame,
@@ -5106,26 +5153,8 @@ nsLayoutUtils::GetFontFacesForFrames(nsIFrame* aFrame,
 {
   NS_PRECONDITION(aFrame, "NULL frame pointer");
 
-  if (aFrame->GetType() == nsGkAtoms::textFrame) {
-    return GetFontFacesForText(aFrame, 0, INT32_MAX, false,
-                               aFontFaceList);
-  }
-
   while (aFrame) {
-    nsIFrame::ChildListID childLists[] = { nsIFrame::kPrincipalList,
-                                           nsIFrame::kPopupList };
-    for (size_t i = 0; i < ArrayLength(childLists); ++i) {
-      nsFrameList children(aFrame->GetChildList(childLists[i]));
-      for (nsFrameList::Enumerator e(children); !e.AtEnd(); e.Next()) {
-        nsIFrame* child = e.get();
-        if (child->GetPrevContinuation()) {
-          continue;
-        }
-        child = nsPlaceholderFrame::GetRealFrameFor(child);
-        nsresult rv = GetFontFacesForFrames(child, aFontFaceList);
-        NS_ENSURE_SUCCESS(rv, rv);
-      }
-    }
+    GetFontFacesForFramesInner(aFrame, aFontFaceList);
     aFrame = GetNextContinuationOrSpecialSibling(aFrame);
   }
 
@@ -5150,22 +5179,31 @@ nsLayoutUtils::GetFontFacesForText(nsIFrame* aFrame,
     int32_t fstart = std::max(curr->GetContentOffset(), aStartOffset);
     int32_t fend = std::min(curr->GetContentEnd(), aEndOffset);
     if (fstart >= fend) {
+      curr = static_cast<nsTextFrame*>(curr->GetNextContinuation());
       continue;
     }
 
-    // overlapping with the offset we want
+    // curr is overlapping with the offset we want
     gfxSkipCharsIterator iter = curr->EnsureTextRun(nsTextFrame::eInflated);
     gfxTextRun* textRun = curr->GetTextRun(nsTextFrame::eInflated);
     NS_ENSURE_TRUE(textRun, NS_ERROR_OUT_OF_MEMORY);
 
+    // include continuations in the range that share the same textrun
+    nsTextFrame* next = nullptr;
+    if (aFollowContinuations && fend < aEndOffset) {
+      next = static_cast<nsTextFrame*>(curr->GetNextContinuation());
+      while (next && next->GetTextRun(nsTextFrame::eInflated) == textRun) {
+        fend = std::min(next->GetContentEnd(), aEndOffset);
+        next = fend < aEndOffset ?
+          static_cast<nsTextFrame*>(next->GetNextContinuation()) : nullptr;
+      }
+    }
+
     uint32_t skipStart = iter.ConvertOriginalToSkipped(fstart);
     uint32_t skipEnd = iter.ConvertOriginalToSkipped(fend);
-    aFontFaceList->AddFontsFromTextRun(textRun,
-                                       skipStart,
-                                       skipEnd - skipStart,
-                                       curr);
-  } while (aFollowContinuations &&
-           (curr = static_cast<nsTextFrame*>(curr->GetNextContinuation())));
+    aFontFaceList->AddFontsFromTextRun(textRun, skipStart, skipEnd - skipStart);
+    curr = next;
+  } while (aFollowContinuations && curr);
 
   return NS_OK;
 }
@@ -5584,12 +5622,12 @@ nsLayoutUtils::FontSizeInflationFor(const nsIFrame *aFrame)
 {
   if (aFrame->IsSVGText()) {
     const nsIFrame* container = aFrame;
-    while (container->GetType() != nsGkAtoms::svgTextFrame2) {
+    while (container->GetType() != nsGkAtoms::svgTextFrame) {
       container = container->GetParent();
     }
-    NS_ASSERTION(container, "expected to find an ancestor nsSVGTextFrame2");
+    NS_ASSERTION(container, "expected to find an ancestor SVGTextFrame");
     return
-      static_cast<const nsSVGTextFrame2*>(container)->GetFontSizeScaleFactor();
+      static_cast<const SVGTextFrame*>(container)->GetFontSizeScaleFactor();
   }
 
   if (!FontSizeInflationEnabled(aFrame->PresContext())) {

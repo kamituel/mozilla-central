@@ -80,7 +80,7 @@
 #include "pldhash.h"
 #include "mozilla/dom/Touch.h"
 #include "nsIObserverService.h"
-#include "nsIDocShell.h"        // for reflow observation
+#include "nsDocShell.h"        // for reflow observation
 #include "nsIBaseWindow.h"
 #include "nsError.h"
 #include "nsLayoutUtils.h"
@@ -724,6 +724,8 @@ PresShell::PresShell()
                                  "layout.reflow.synthMouseMove", true);
     addedSynthMouseMove = true;
   }
+
+  mPaintingIsFrozen = false;
 }
 
 NS_IMPL_ISUPPORTS7(PresShell, nsIPresShell, nsIDocumentObserver,
@@ -743,6 +745,13 @@ PresShell::~PresShell()
   NS_ASSERTION(mFirstCallbackEventRequest == nullptr &&
                mLastCallbackEventRequest == nullptr,
                "post-reflow queues not empty.  This means we're leaking");
+
+  // Verify that if painting was frozen, but we're being removed from the tree,
+  // that we now re-enable painting on our refresh driver, since it may need to
+  // be re-used by another presentation.
+  if (mPaintingIsFrozen) {
+    mPresContext->RefreshDriver()->Thaw();
+  }
 
 #ifdef DEBUG
   MOZ_ASSERT(mPresArenaAllocCount == 0,
@@ -1369,8 +1378,7 @@ nsresult PresShell::SetPrefNoFramesRule(void)
   NS_ASSERTION(mPrefStyleSheet, "prefstylesheet should not be null");
   
   bool allowSubframes = true;
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();     
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+  nsCOMPtr<nsIDocShell> docShell(mPresContext->GetDocShell());
   if (docShell) {
     docShell->GetAllowSubframes(&allowSubframes);
   }
@@ -3645,11 +3653,7 @@ PresShell::CaptureHistoryState(nsILayoutHistoryState** aState)
   // content viewer's Hide() method...  by that point the docshell's
   // state could be wrong.  We should sort out a better ownership
   // model for the layout history state.
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
-  if (!container)
-    return NS_ERROR_FAILURE;
-
-  nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(container));
+  nsCOMPtr<nsIDocShell> docShell(mPresContext->GetDocShell());
   if (!docShell)
     return NS_ERROR_FAILURE;
 
@@ -5081,8 +5085,7 @@ PresShell::AddCanvasBackgroundColorItem(nsDisplayListBuilder& aBuilder,
 
 static bool IsTransparentContainerElement(nsPresContext* aPresContext)
 {
-  nsCOMPtr<nsISupports> container = aPresContext->GetContainerInternal();
-  nsCOMPtr<nsIDocShellTreeItem> docShellItem = do_QueryInterface(container);
+  nsCOMPtr<nsIDocShellTreeItem> docShellItem = aPresContext->GetDocShell();
   nsCOMPtr<nsPIDOMWindow> pwin(do_GetInterface(docShellItem));
   if (!pwin)
     return false;
@@ -5567,8 +5570,7 @@ PresShell::AssumeAllImagesVisible()
 
   if (!sImageVisibilityEnabled &&
       sImageVisibilityEnabledForBrowserElementsOnly) {
-    nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
-    nsCOMPtr<nsIDocShell> docshell(do_QueryInterface(container));
+    nsCOMPtr<nsIDocShell> docshell(mPresContext->GetDocShell());
     if (!docshell || !docshell->GetIsInBrowserElement()) {
       return true;
     }
@@ -6006,13 +6008,13 @@ already_AddRefed<nsIPresShell>
 PresShell::GetParentPresShell()
 {
   NS_ENSURE_TRUE(mPresContext, nullptr);
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
-  if (!container) {
-    container = do_QueryReferent(mForwardingContainer);
-  }
 
   // Now, find the parent pres shell and send the event there
-  nsCOMPtr<nsIDocShellTreeItem> treeItem = do_QueryInterface(container);
+  nsCOMPtr<nsIDocShellTreeItem> treeItem = mPresContext->GetDocShell();
+  if (!treeItem) {
+    treeItem = mForwardingContainer.get();
+  }
+
   // Might have gone away, or never been around to start with
   NS_ENSURE_TRUE(treeItem, nullptr);
 
@@ -6327,8 +6329,8 @@ PresShell::HandleEvent(nsIFrame* aFrame,
       // would occur if the mouse button is held down while a tab change occurs.
       // If the docshell is visible, look for a scrolling container.
       bool vis;
-      nsCOMPtr<nsISupports> supports = mPresContext->GetContainer();
-      nsCOMPtr<nsIBaseWindow> baseWin(do_QueryInterface(supports));
+      nsCOMPtr<nsIBaseWindow> baseWin =
+        do_QueryInterface(mPresContext->GetContainerWeak());
       if (baseWin && NS_SUCCEEDED(baseWin->GetVisibility(&vis)) && vis) {
         captureRetarget = gCaptureInfo.mRetargetToElement;
         if (!captureRetarget) {
@@ -6702,8 +6704,7 @@ PresShell::GetTouchEventTargetDocument()
     return nullptr;
   }
 
-  nsCOMPtr<nsISupports> container = context->GetContainer();
-  nsCOMPtr<nsIDocShellTreeItem> shellAsTreeItem = do_QueryInterface(container);
+  nsCOMPtr<nsIDocShellTreeItem> shellAsTreeItem = context->GetDocShell();
   if (!shellAsTreeItem) {
     return nullptr;
   }
@@ -7183,7 +7184,7 @@ PresShell::HandleDOMEventWithTarget(nsIContent* aTargetContent,
   // and the js context is out of date. This check detects the case
   // that caused a crash in bug 41013, but there may be a better way
   // to handle this situation!
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
+  nsCOMPtr<nsISupports> container = mPresContext->GetContainerWeak();
   if (container) {
 
     // Dispatch event to content
@@ -7204,7 +7205,7 @@ PresShell::HandleDOMEventWithTarget(nsIContent* aTargetContent,
   nsresult rv = NS_OK;
 
   PushCurrentEventInfo(nullptr, aTargetContent);
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
+  nsCOMPtr<nsISupports> container = mPresContext->GetContainerWeak();
   if (container) {
     rv = nsEventDispatcher::DispatchDOMEvent(aTargetContent, nullptr, aEvent,
                                              mPresContext, aStatus);
@@ -7877,13 +7878,10 @@ PresShell::DidDoReflow(bool aInterruptible, bool aWasInterrupted)
   
   HandlePostedReflowCallbacks(aInterruptible);
 
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
-  if (container) {
-    nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
-    if (docShell) {
-      DOMHighResTimeStamp now = GetPerformanceNow();
-      docShell->NotifyReflowObservers(aInterruptible, mLastReflowStart, now);
-    }
+  nsCOMPtr<nsIDocShell> docShell = mPresContext->GetDocShell();
+  if (docShell) {
+    DOMHighResTimeStamp now = GetPerformanceNow();
+    docShell->NotifyReflowObservers(aInterruptible, mLastReflowStart, now);
   }
 
   if (sSynthMouseMove) {
@@ -8045,34 +8043,34 @@ PresShell::DoReflow(nsIFrame* target, bool aInterruptible)
   }
 
   // fix the computed height
-  NS_ASSERTION(reflowState.mComputedMargin == nsMargin(0, 0, 0, 0),
+  NS_ASSERTION(reflowState.ComputedPhysicalMargin() == nsMargin(0, 0, 0, 0),
                "reflow state should not set margin for reflow roots");
   if (size.height != NS_UNCONSTRAINEDSIZE) {
     nscoord computedHeight =
-      size.height - reflowState.mComputedBorderPadding.TopBottom();
+      size.height - reflowState.ComputedPhysicalBorderPadding().TopBottom();
     computedHeight = std::max(computedHeight, 0);
     reflowState.SetComputedHeight(computedHeight);
   }
   NS_ASSERTION(reflowState.ComputedWidth() ==
                  size.width -
-                   reflowState.mComputedBorderPadding.LeftRight(),
+                   reflowState.ComputedPhysicalBorderPadding().LeftRight(),
                "reflow state computed incorrect width");
 
   mPresContext->ReflowStarted(aInterruptible);
   mIsReflowing = true;
 
   nsReflowStatus status;
-  nsHTMLReflowMetrics desiredSize;
+  nsHTMLReflowMetrics desiredSize(reflowState.GetWritingMode());
   target->Reflow(mPresContext, desiredSize, reflowState, status);
 
   // If an incremental reflow is initiated at a frame other than the
   // root frame, then its desired size had better not change!  If it's
   // initiated at the root, then the size better not change unless its
   // height was unconstrained to start with.
-  nsRect boundsRelativeToTarget = nsRect(0, 0, desiredSize.width, desiredSize.height);
+  nsRect boundsRelativeToTarget = nsRect(0, 0, desiredSize.Width(), desiredSize.Height());
   NS_ASSERTION((target == rootFrame && size.height == NS_UNCONSTRAINEDSIZE) ||
-               (desiredSize.width == size.width &&
-                desiredSize.height == size.height),
+               (desiredSize.Width() == size.width &&
+                desiredSize.Height() == size.height),
                "non-root frame's desired size changed during an "
                "incremental reflow");
   NS_ASSERTION(target == rootFrame ||
@@ -8369,7 +8367,7 @@ WalkFramesThroughPlaceholders(nsPresContext *aPresContext, nsIFrame *aFrame,
 NS_IMETHODIMP
 PresShell::Observe(nsISupports* aSubject, 
                    const char* aTopic,
-                   const PRUnichar* aData)
+                   const char16_t* aData)
 {
 #ifdef MOZ_XUL
   if (!nsCRT::strcmp(aTopic, "chrome-flush-skin-caches")) {
@@ -9628,7 +9626,7 @@ void nsIPresShell::ReleaseStatics()
 // Asks our docshell whether we're active.
 void PresShell::QueryIsActive()
 {
-  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
+  nsCOMPtr<nsISupports> container = mPresContext->GetContainerWeak();
   if (mDocument) {
     nsIDocument* displayDoc = mDocument->GetDisplayDocument();
     if (displayDoc) {
@@ -9641,7 +9639,7 @@ void PresShell::QueryIsActive()
 
       nsIPresShell* displayPresShell = displayDoc->GetShell();
       if (displayPresShell) {
-        container = displayPresShell->GetPresContext()->GetContainer();
+        container = displayPresShell->GetPresContext()->GetContainerWeak();
       }
     }
   }
@@ -9941,4 +9939,24 @@ nsIPresShell::SetMaxLineBoxWidth(nscoord aMaxLineBoxWidth)
     mReflowOnZoomPending = true;
     FrameNeedsReflow(GetRootFrame(), eResize, NS_FRAME_HAS_DIRTY_CHILDREN);
   }
+}
+
+void
+PresShell::PausePainting()
+{
+  if (GetPresContext()->RefreshDriver()->PresContext() != GetPresContext())
+    return;
+
+  mPaintingIsFrozen = true;
+  GetPresContext()->RefreshDriver()->Freeze();
+}
+
+void
+PresShell::ResumePainting()
+{
+  if (GetPresContext()->RefreshDriver()->PresContext() != GetPresContext())
+    return;
+
+  mPaintingIsFrozen = false;
+  GetPresContext()->RefreshDriver()->Thaw();
 }

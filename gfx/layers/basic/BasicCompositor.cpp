@@ -13,6 +13,7 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Helpers.h"
 #include "gfxUtils.h"
+#include "YCbCrUtils.h"
 #include <algorithm>
 #include "ImageContainer.h"
 #define PIXMAN_DONT_DEFINE_STDINT
@@ -175,24 +176,20 @@ public:
     PlanarYCbCrData data;
     DeserializerToPlanarYCbCrImageData(deserializer, data);
 
-    gfxImageFormat format = gfxImageFormatRGB24;
-    gfxIntSize size;
-    gfxUtils::GetYCbCrToRGBDestFormatAndSize(data, format, size);
+    gfx::SurfaceFormat format = FORMAT_B8G8R8X8;
+    gfx::IntSize size;
+    gfx::GetYCbCrToRGBDestFormatAndSize(data, format, size);
     if (size.width > PlanarYCbCrImage::MAX_DIMENSION ||
         size.height > PlanarYCbCrImage::MAX_DIMENSION) {
       NS_ERROR("Illegal image dest width or height");
       return false;
     }
 
-    mSize = ToIntSize(size);
-    mFormat = (format == gfxImageFormatRGB24)
-              ? FORMAT_B8G8R8X8
-              : FORMAT_B8G8R8A8;
+    mSize = size;
+    mFormat = format;
 
     RefPtr<DataSourceSurface> surface = Factory::CreateDataSourceSurface(mSize, mFormat);
-    gfxUtils::ConvertYCbCrToRGB(data, format, size,
-                                surface->GetData(),
-                                surface->Stride());
+    gfx::ConvertYCbCrToRGB(data, format, size, surface->GetData(), surface->Stride());
 
     mSurface = surface;
     return true;
@@ -305,13 +302,16 @@ DrawSurfaceWithTextureCoords(DrawTarget *aDest,
                                   gfxPoint(aDestRect.XMost(), aDestRect.YMost()));
   Matrix matrix = ToMatrix(transform);
   if (aMask) {
-    NS_ASSERTION(matrix._11 == 1.0f && matrix._12 == 0.0f &&
-                 matrix._21 == 0.0f && matrix._22 == 1.0f,
-                 "Can only handle translations for mask transform");
-    aDest->MaskSurface(SurfacePattern(aSource, EXTEND_CLAMP, matrix),
-                       aMask,
-                       Point(matrix._31, matrix._32),
-                       DrawOptions(aOpacity));
+    aDest->PushClipRect(aDestRect);
+    Matrix maskTransformInverse = aMaskTransform;
+    maskTransformInverse.Invert();
+    Matrix dtTransform = aDest->GetTransform();
+    aDest->SetTransform(aMaskTransform);
+    Matrix patternMatrix = maskTransformInverse * dtTransform * matrix;
+    aDest->MaskSurface(SurfacePattern(aSource, EXTEND_REPEAT, patternMatrix),
+                       aMask, Point(), DrawOptions(aOpacity));
+    aDest->SetTransform(dtTransform);
+    aDest->PopClip();
   } else {
     aDest->FillRect(aDestRect,
                     SurfacePattern(aSource, EXTEND_REPEAT, matrix),

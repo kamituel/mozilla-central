@@ -121,12 +121,7 @@ static const char sPrintOptionsContractID[]         = "@mozilla.org/gfx/printset
 using namespace mozilla;
 using namespace mozilla::dom;
 
-#ifdef DEBUG
-
-#undef NOISY_VIEWER
-#else
-#undef NOISY_VIEWER
-#endif
+#define BEFOREUNLOAD_DISABLED_PREFNAME "dom.disable_beforeunload"
 
 //-----------------------------------------------------
 // PR LOGGING
@@ -559,10 +554,6 @@ nsDocumentViewer::~nsDocumentViewer()
 NS_IMETHODIMP
 nsDocumentViewer::LoadStart(nsISupports *aDoc)
 {
-#ifdef NOISY_VIEWER
-  printf("nsDocumentViewer::LoadStart\n");
-#endif
-
   nsresult rv = NS_OK;
   if (!mDocument) {
     mDocument = do_QueryInterface(aDoc, &rv);
@@ -617,7 +608,7 @@ nsDocumentViewer::SetContainer(nsIDocShell* aContainer)
 {
   mContainer = static_cast<nsDocShell*>(aContainer)->asWeakPtr();
   if (mPresContext) {
-    mPresContext->SetContainer(aContainer);
+    mPresContext->SetContainer(mContainer);
   }
 
   // We're loading a new document into the window where this document
@@ -887,7 +878,7 @@ nsDocumentViewer::InitInternal(nsIWidget* aParentWidget,
       requestor->GetInterface(NS_GET_IID(nsILinkHandler),
                               getter_AddRefs(linkHandler));
 
-      mPresContext->SetContainer(requestor);
+      mPresContext->SetContainer(mContainer);
       mPresContext->SetLinkHandler(linkHandler);
     }
 
@@ -1071,6 +1062,20 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
    || mInPermitUnload
    || mCallerIsClosingWindow
    || mInPermitUnloadPrompt) {
+    return NS_OK;
+  }
+
+  static bool sIsBeforeUnloadDisabled;
+  static bool sBeforeUnloadPrefCached = false;
+
+  if (!sBeforeUnloadPrefCached ) {
+    sBeforeUnloadPrefCached = true;
+    Preferences::AddBoolVarCache(&sIsBeforeUnloadDisabled,
+                                 BEFOREUNLOAD_DISABLED_PREFNAME);
+  }
+
+  // If the user has turned off onbeforeunload warnings, no need to check.
+  if (sIsBeforeUnloadDisabled) {
     return NS_OK;
   }
 
@@ -1309,13 +1314,13 @@ AttachContainerRecurse(nsIDocShell* aShell)
     nsRefPtr<nsPresContext> pc;
     viewer->GetPresContext(getter_AddRefs(pc));
     if (pc) {
-      pc->SetContainer(aShell);
+      pc->SetContainer(static_cast<nsDocShell*>(aShell));
       pc->SetLinkHandler(nsCOMPtr<nsILinkHandler>(do_QueryInterface(aShell)));
     }
     nsCOMPtr<nsIPresShell> presShell;
     viewer->GetPresShell(getter_AddRefs(presShell));
     if (presShell) {
-      presShell->SetForwardingContainer(nullptr);
+      presShell->SetForwardingContainer(WeakPtr<nsDocShell>());
     }
   }
 
@@ -1343,7 +1348,7 @@ nsDocumentViewer::Open(nsISupports *aState, nsISHEntry *aSHEntry)
   mHidden = false;
 
   if (mPresShell)
-    mPresShell->SetForwardingContainer(nullptr);
+    mPresShell->SetForwardingContainer(WeakPtr<nsDocShell>());
 
   // Rehook the child presentations.  The child shells are still in
   // session history, so get them from there.
@@ -1469,7 +1474,8 @@ DetachContainerRecurse(nsIDocShell *aShell)
     nsCOMPtr<nsIPresShell> presShell;
     viewer->GetPresShell(getter_AddRefs(presShell));
     if (presShell) {
-      presShell->SetForwardingContainer(nsWeakPtr(do_GetWeakReference(aShell)));
+      auto weakShell = static_cast<nsDocShell*>(aShell)->asWeakPtr();
+      presShell->SetForwardingContainer(weakShell);
     }
   }
 
@@ -1590,9 +1596,7 @@ nsDocumentViewer::Destroy()
       mPresContext->SetContainer(nullptr);
     }
     if (mPresShell) {
-      nsWeakPtr container =
-        do_GetWeakReference(static_cast<nsIDocShell*>(mContainer));
-      mPresShell->SetForwardingContainer(container);
+      mPresShell->SetForwardingContainer(mContainer);
     }
 
     // Do the same for our children.  Note that we need to get the child
@@ -1993,7 +1997,7 @@ nsDocumentViewer::Show(void)
         mPresContext->SetLinkHandler(linkHandler);
       }
 
-      mPresContext->SetContainer(base_win);
+      mPresContext->SetContainer(mContainer);
     }
 
     if (mPresContext) {
@@ -2697,6 +2701,17 @@ struct LineBoxInfo
 };
 
 static void
+ChangeChildPaintingEnabled(nsIMarkupDocumentViewer* aChild, void* aClosure)
+{
+  bool* enablePainting = (bool*) aClosure;
+  if (*enablePainting) {
+    aChild->ResumePainting();
+  } else {
+    aChild->PausePainting();
+  }
+}
+
+static void
 ChangeChildMaxLineBoxWidth(nsIMarkupDocumentViewer* aChild, void* aClosure)
 {
   struct LineBoxInfo* lbi = (struct LineBoxInfo*) aClosure;
@@ -3122,7 +3137,36 @@ NS_IMETHODIMP nsDocumentViewer::AppendSubtree(nsTArray<nsCOMPtr<nsIMarkupDocumen
   return NS_OK;
 }
 
-NS_IMETHODIMP nsDocumentViewer::ChangeMaxLineBoxWidth(int32_t aMaxLineBoxWidth)
+NS_IMETHODIMP
+nsDocumentViewer::PausePainting()
+{
+  bool enablePaint = false;
+  CallChildren(ChangeChildPaintingEnabled, &enablePaint);
+
+  nsIPresShell* presShell = GetPresShell();
+  if (presShell) {
+    presShell->PausePainting();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::ResumePainting()
+{
+  bool enablePaint = true;
+  CallChildren(ChangeChildPaintingEnabled, &enablePaint);
+
+  nsIPresShell* presShell = GetPresShell();
+  if (presShell) {
+    presShell->ResumePainting();
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::ChangeMaxLineBoxWidth(int32_t aMaxLineBoxWidth)
 {
   // Change the max line box width for all children.
   struct LineBoxInfo lbi = { aMaxLineBoxWidth };
@@ -3804,7 +3848,7 @@ nsDocumentViewer::ExitPrintPreview()
 // Enumerate all the documents for their titles
 NS_IMETHODIMP
 nsDocumentViewer::EnumerateDocumentNames(uint32_t* aCount,
-                                           PRUnichar*** aResult)
+                                           char16_t*** aResult)
 {
 #ifdef NS_PRINTING
   NS_ENSURE_ARG(aCount);

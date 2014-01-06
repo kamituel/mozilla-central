@@ -506,11 +506,19 @@ class MOZ_STACK_CLASS MutableHandle : public js::MutableHandleBase<T>
   public:
     inline MutableHandle(Rooted<T> *root);
     inline MutableHandle(PersistentRooted<T> *root);
-    MutableHandle(int) MOZ_DELETE;
-#ifdef MOZ_HAVE_CXX11_NULLPTR
-    MutableHandle(decltype(nullptr)) MOZ_DELETE;
-#endif
 
+  private:
+    // Disallow true nullptr and emulated nullptr (gcc 4.4/4.5, __null, appears
+    // as int/long [32/64-bit]) for overloading purposes.
+    template<typename N>
+    MutableHandle(N,
+                  typename mozilla::EnableIf<mozilla::IsNullPointer<N>::value ||
+                                             mozilla::IsSame<N, int>::value ||
+                                             mozilla::IsSame<N, long>::value,
+                                             int>::Type dummy = 0)
+    MOZ_DELETE;
+
+  public:
     void set(T v) {
         JS_ASSERT(!js::GCMethods<T>::poisoned(v));
         *ptr = v;
@@ -648,7 +656,7 @@ struct GCMethods<T *>
 #endif
 };
 
-#if defined(JS_DEBUG)
+#ifdef JS_DEBUG
 /* This helper allows us to assert that Rooted<T> is scoped within a request. */
 extern JS_PUBLIC_API(bool)
 IsInRequest(JSContext *cx);
@@ -688,7 +696,9 @@ class MOZ_STACK_CLASS Rooted : public js::RootedBase<T>
       : ptr(js::GCMethods<T>::initial())
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+#ifdef JS_DEBUG
         MOZ_ASSERT(js::IsInRequest(cx));
+#endif
         init(js::ContextFriendFields::get(cx));
     }
 
@@ -697,7 +707,9 @@ class MOZ_STACK_CLASS Rooted : public js::RootedBase<T>
       : ptr(initial)
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+#ifdef JS_DEBUG
         MOZ_ASSERT(js::IsInRequest(cx));
+#endif
         init(js::ContextFriendFields::get(cx));
     }
 

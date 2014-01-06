@@ -212,7 +212,6 @@ class TestRecursiveMakeBackend(BackendTester):
 
         lines = [l.strip() for l in open(p, 'rt').readlines()[2:]]
         self.assertEqual(lines, [
-            'MOZBUILD_DERIVED := 1',
             'DIRS := dir1',
             'PARALLEL_DIRS := dir2',
             'TEST_DIRS := dir3',
@@ -235,20 +234,6 @@ class TestRecursiveMakeBackend(BackendTester):
 
         self.assertEqual(os.path.getmtime(makefile_path), makefile_mtime)
         self.assertEqual(os.path.getmtime(backend_path), backend_mtime)
-
-    def test_external_make_dirs(self):
-        """Ensure we have make recursion into external make directories."""
-        env = self._consume('external_make_dirs', RecursiveMakeBackend)
-
-        backend_path = mozpath.join(env.topobjdir, 'backend.mk')
-        lines = [l.strip() for l in open(backend_path, 'rt').readlines()[2:]]
-        self.assertEqual(lines, [
-            'MOZBUILD_DERIVED := 1',
-            'DIRS := dir',
-            'PARALLEL_DIRS := p_dir',
-            'DIRS += external',
-            'PARALLEL_DIRS += p_external',
-        ])
 
     def test_substitute_config_files(self):
         """Ensure substituted config files are produced."""
@@ -529,7 +514,6 @@ class TestRecursiveMakeBackend(BackendTester):
         env = self._consume('final_target', RecursiveMakeBackend)
 
         final_target_rule = "FINAL_TARGET = $(if $(XPI_NAME),$(DIST)/xpi-stage/$(XPI_NAME),$(DIST)/bin)$(DIST_SUBDIR:%=/%)"
-        print([x for x in os.walk(env.topobjdir)])
         expected = dict()
         expected[env.topobjdir] = []
         expected[mozpath.join(env.topobjdir, 'both')] = [
@@ -586,6 +570,17 @@ class TestRecursiveMakeBackend(BackendTester):
                 '  #     define   foo   baz qux   \n',
                 '#endif\n',
             ])
+
+    def test_jar_manifests(self):
+        env = self._consume('jar-manifests', RecursiveMakeBackend)
+
+        with open(os.path.join(env.topobjdir, 'backend.mk'), 'rb') as fh:
+            lines = fh.readlines()
+
+        lines = [line.rstrip() for line in lines]
+
+        self.assertIn('JAR_MANIFEST := %s/jar.mn' % env.topsrcdir, lines)
+
 
 if __name__ == '__main__':
     main()

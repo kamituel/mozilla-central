@@ -68,6 +68,7 @@
 #include "nsIDOMWindow.h"
 #include "nsIExternalProtocolService.h"
 #include "nsIFilePicker.h"
+#include "nsIIdleService.h"
 #include "nsIMemoryReporter.h"
 #include "nsIMozBrowserFrame.h"
 #include "nsIMutable.h"
@@ -79,6 +80,7 @@
 #include "nsISupportsPrimitives.h"
 #include "nsIURIFixup.h"
 #include "nsIWindowWatcher.h"
+#include "nsIXULRuntime.h"
 #include "nsMemoryReporterManager.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStyleSheetService.h"
@@ -94,6 +96,7 @@
 #include "nsIWebBrowserChrome.h"
 #include "nsIDocShell.h"
 #include "mozilla/net/NeckoMessageUtils.h"
+#include "gfxPlatform.h"
 
 #if defined(ANDROID) || defined(LINUX)
 #include "nsSystemInfo.h"
@@ -243,8 +246,8 @@ ContentParentsMemoryReporter::CollectReports(nsIMemoryReporterCallback* cb,
 
         nsresult rv = cb->Callback(/* process */ EmptyCString(),
                                    path,
-                                   nsIMemoryReporter::KIND_OTHER,
-                                   nsIMemoryReporter::UNITS_COUNT,
+                                   KIND_OTHER,
+                                   UNITS_COUNT,
                                    numQueuedMessages,
                                    desc,
                                    aClosure);
@@ -485,6 +488,24 @@ ContentParent::GetInitialProcessPriority(Element* aFrameElement)
                PROCESS_PRIORITY_FOREGROUND;
 }
 
+bool
+ContentParent::PreallocatedProcessReady()
+{
+#ifdef MOZ_NUWA_PROCESS
+    return PreallocatedProcessManager::PreallocatedProcessReady();
+#else
+    return true;
+#endif
+}
+
+void
+ContentParent::RunAfterPreallocatedProcessReady(nsIRunnable* aRequest)
+{
+#ifdef MOZ_NUWA_PROCESS
+    PreallocatedProcessManager::RunAfterPreallocatedProcessReady(aRequest);
+#endif
+}
+
 /*static*/ TabParent*
 ContentParent::CreateBrowserOrApp(const TabContext& aContext,
                                   Element* aFrameElement)
@@ -559,6 +580,14 @@ ContentParent::CreateBrowserOrApp(const TabContext& aContext,
         p = MaybeTakePreallocatedAppProcess(manifestURL, privs,
                                             initialPriority);
         if (!p) {
+#ifdef MOZ_NUWA_PROCESS
+            if (Preferences::GetBool("dom.ipc.processPrelaunch.enabled",
+                                     false)) {
+                // Returning nullptr from here so the frame loader will retry
+                // later when we have a spare process.
+                return nullptr;
+            }
+#endif
             NS_WARNING("Unable to use pre-allocated app process");
             p = new ContentParent(ownApp,
                                   /* isForBrowserElement = */ false,
@@ -1081,6 +1110,8 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
         obs->NotifyObservers((nsIPropertyBag2*) props, "ipc:content-shutdown", nullptr);
     }
 
+    mIdleListeners.Clear();
+
     // If the child process was terminated due to a SIGKIL, ShutDownProcess
     // might not have been called yet.  We must call it to ensure that our
     // channel is closed, etc.
@@ -1381,7 +1412,7 @@ ContentParent::InitInternal(ProcessPriority aInitialPriority,
             DebugOnly<bool> opened = PCompositor::Open(this);
             MOZ_ASSERT(opened);
 
-            if (Preferences::GetBool("layers.async-video.enabled",false)) {
+            if (gfxPlatform::AsyncVideoEnabled()) {
                 opened = PImageBridge::Open(this);
                 MOZ_ASSERT(opened);
             }
@@ -1566,7 +1597,7 @@ ContentParent::RecvSetClipboardText(const nsString& text,
         do_QueryInterface(dataWrapper);
     
     rv = trans->SetTransferData(kUnicodeMime, nsisupportsDataWrapper,
-                                text.Length() * sizeof(PRUnichar));
+                                text.Length() * sizeof(char16_t));
     NS_ENSURE_SUCCESS(rv, true);
     
     clipboard->SetData(trans, nullptr, whichClipboard);
@@ -1804,7 +1835,7 @@ NS_IMPL_ISUPPORTS3(ContentParent,
 NS_IMETHODIMP
 ContentParent::Observe(nsISupports* aSubject,
                        const char* aTopic,
-                       const PRUnichar* aData)
+                       const char16_t* aData)
 {
     if (!strcmp(aTopic, "xpcom-shutdown") && mSubprocess) {
         ShutDownProcess(/* closeWithError */ false);
@@ -3113,7 +3144,7 @@ ContentParent::ShouldContinueFromReplyTimeout()
 {
   // The only time ContentParent sends blocking messages is for CPOWs, so
   // timeouts should only ever occur in electrolysis-enabled sessions.
-  MOZ_ASSERT(Preferences::GetBool("browser.tabs.remote", false));
+  MOZ_ASSERT(BrowserTabsRemote());
   return false;
 }
 
@@ -3154,5 +3185,47 @@ ContentParent::RecvRecordingDeviceEvents(const nsString& aRecordingStatus,
     return true;
 }
 
+bool
+ContentParent::RecvAddIdleObserver(const uint64_t& aObserver, const uint32_t& aIdleTimeInS)
+{
+  nsresult rv;
+  nsCOMPtr<nsIIdleService> idleService =
+    do_GetService("@mozilla.org/widget/idleservice;1", &rv);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  nsCOMPtr<ParentIdleListener> listener = new ParentIdleListener(this, aObserver);
+  mIdleListeners.Put(aObserver, listener);
+  idleService->AddIdleObserver(listener, aIdleTimeInS);
+  return true;
+}
+
+bool
+ContentParent::RecvRemoveIdleObserver(const uint64_t& aObserver, const uint32_t& aIdleTimeInS)
+{
+  nsresult rv;
+  nsCOMPtr<nsIIdleService> idleService =
+    do_GetService("@mozilla.org/widget/idleservice;1", &rv);
+  NS_ENSURE_SUCCESS(rv, false);
+
+  nsCOMPtr<ParentIdleListener> listener;
+  bool found = mIdleListeners.Get(aObserver, &listener);
+  if (found) {
+    mIdleListeners.Remove(aObserver);
+    idleService->RemoveIdleObserver(listener, aIdleTimeInS);
+  }
+
+  return true;
+}
+
 } // namespace dom
 } // namespace mozilla
+
+NS_IMPL_ISUPPORTS1(ParentIdleListener, nsIObserver)
+
+NS_IMETHODIMP
+ParentIdleListener::Observe(nsISupports*, const char* aTopic, const char16_t* aData) {
+  mozilla::unused << mParent->SendNotifyIdleObserver(mObserver,
+                                                     nsDependentCString(aTopic),
+                                                     nsDependentString(aData));
+  return NS_OK;
+}

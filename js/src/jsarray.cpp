@@ -137,7 +137,7 @@ static bool
 ToId(JSContext *cx, double index, MutableHandleId id)
 {
     if (index == uint32_t(index))
-        return IndexToId(cx, uint32_t(index), id.address());
+        return IndexToId(cx, uint32_t(index), id);
 
     Value tmp = DoubleValue(index);
     return ValueToId<CanGC>(cx, HandleValue::fromMarkedLocation(&tmp), id);
@@ -146,7 +146,7 @@ ToId(JSContext *cx, double index, MutableHandleId id)
 static bool
 ToId(JSContext *cx, uint32_t index, MutableHandleId id)
 {
-    return IndexToId(cx, index, id.address());
+    return IndexToId(cx, index, id);
 }
 
 /*
@@ -161,7 +161,6 @@ DoGetElement(JSContext *cx, HandleObject obj, HandleObject receiver,
              IndexType index, bool *hole, MutableHandleValue vp)
 {
     RootedId id(cx);
-
     if (!ToId(cx, index, &id))
         return false;
 
@@ -677,7 +676,6 @@ js::ArraySetLength(typename ExecutionModeTraits<mode>::ContextType cxArg,
         return false;
     }
 
-    RootedValue v(cxArg, NumberValue(newLen));
     if (mode == ParallelExecution) {
         // Overflowing int32 requires changing TI state.
         if (newLen > INT32_MAX)
@@ -718,7 +716,7 @@ js::ArraySetLength(typename ExecutionModeTraits<mode>::ContextType cxArg,
         // returned from the function before step 15 above.
         JSContext *cx = cxArg->asJSContext();
         RootedId elementId(cx);
-        if (!IndexToId(cx, newLen - 1, elementId.address()))
+        if (!IndexToId(cx, newLen - 1, &elementId))
             return false;
         return arr->reportNotConfigurable(cx, elementId);
     }
@@ -3291,6 +3289,38 @@ js::NewDenseCopiedArray(JSContext *cx, uint32_t length, const Value *values,
 
     if (values)
         arr->initDenseElements(0, values, length);
+
+    return arr;
+}
+
+ArrayObject *
+js::NewDenseCopiedArrayWithTemplate(JSContext *cx, uint32_t length, const Value *values,
+                                    JSObject *templateObject)
+{
+    gc::AllocKind allocKind = GuessArrayGCKind(length);
+    JS_ASSERT(CanBeFinalizedInBackground(allocKind, &ArrayObject::class_));
+    allocKind = GetBackgroundAllocKind(allocKind);
+
+    RootedTypeObject type(cx, templateObject->type());
+    if (!type)
+        return nullptr;
+
+    RootedShape shape(cx, templateObject->lastProperty());
+    if (!shape)
+        return nullptr;
+
+    gc::InitialHeap heap = GetInitialHeap(GenericObject, &ArrayObject::class_);
+    Rooted<ArrayObject *> arr(cx, JSObject::createArray(cx, allocKind, heap, shape, type, length));
+    if (!arr)
+        return nullptr;
+
+    if (!EnsureNewArrayElements(cx, arr, length))
+        return nullptr;
+
+    arr->setDenseInitializedLength(length);
+    arr->initDenseElements(0, values, length);
+
+    probes::CreateObject(cx, arr);
 
     return arr;
 }

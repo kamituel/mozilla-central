@@ -14,11 +14,13 @@
 #include "Layers.h"                     // for Layer
 #include "RenderTrace.h"                // for RenderTraceScope
 #include "ShadowLayerChild.h"           // for ShadowLayerChild
+#include "gfx2DGlue.h"                  // for Moz2D transition helpers
 #include "gfxImageSurface.h"            // for gfxImageSurface
 #include "gfxPlatform.h"                // for gfxImageFormat, gfxPlatform
 #include "gfxSharedImageSurface.h"      // for gfxSharedImageSurface
 #include "ipc/IPCMessageUtils.h"        // for gfxContentType, null_t
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT, etc
+#include "mozilla/gfx/Point.h"          // for IntSize
 #include "mozilla/layers/CompositableClient.h"  // for CompositableClient, etc
 #include "mozilla/layers/LayersMessages.h"  // for Edit, etc
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor, etc
@@ -440,7 +442,7 @@ ShadowLayerForwarder::RemoveTexture(TextureClient* aTexture)
 }
 
 bool
-ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies, bool* aSent)
+ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies, bool aScheduleComposite, bool* aSent)
 {
   *aSent = false;
 
@@ -484,6 +486,7 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies, bool
     LayerAttributes attrs;
     CommonLayerAttributes& common = attrs.common();
     common.visibleRegion() = mutant->GetVisibleRegion();
+    common.eventRegions() = mutant->GetEventRegions();
     common.postXScale() = mutant->GetPostXScale();
     common.postYScale() = mutant->GetPostYScale();
     common.transform() = mutant->GetBaseTransform();
@@ -501,11 +504,8 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies, bool
       common.stickyScrollRangeOuter() = mutant->GetStickyScrollRangeOuter();
       common.stickyScrollRangeInner() = mutant->GetStickyScrollRangeInner();
     }
-    common.isScrollbar() = mutant->GetIsScrollbar();
-    if (mutant->GetIsScrollbar()) {
-      common.scrollbarTargetContainerId() = mutant->GetScrollbarTargetContainerId();
-      common.scrollbarDirection() = mutant->GetScrollbarDirection();
-    }
+    common.scrollbarTargetContainerId() = mutant->GetScrollbarTargetContainerId();
+    common.scrollbarDirection() = mutant->GetScrollbarDirection();
     if (Layer* maskLayer = mutant->GetMaskLayer()) {
       common.maskLayerChild() = Shadow(maskLayer->AsShadowableLayer());
     } else {
@@ -549,7 +549,7 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies, bool
     RenderTraceScope rendertrace3("Forward Transaction", "000093");
     if (!HasShadowManager() ||
         !mShadowManager->SendUpdate(cset, targetConfig, mIsFirstPaint,
-                                    aReplies)) {
+                                    aScheduleComposite, aReplies)) {
       MOZ_LAYERS_LOG(("[LayersForwarder] WARNING: sending transaction failed!"));
       return false;
     }
@@ -559,7 +559,7 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies, bool
     MOZ_LAYERS_LOG(("[LayersForwarder] sending no swap transaction..."));
     RenderTraceScope rendertrace3("Forward NoSwap Transaction", "000093");
     if (!HasShadowManager() ||
-        !mShadowManager->SendUpdateNoSwap(cset, targetConfig, mIsFirstPaint)) {
+        !mShadowManager->SendUpdateNoSwap(cset, targetConfig, mIsFirstPaint, aScheduleComposite)) {
       MOZ_LAYERS_LOG(("[LayersForwarder] WARNING: sending transaction failed!"));
       return false;
     }
@@ -630,7 +630,7 @@ ShadowLayerForwarder::OpenDescriptor(OpenMode aMode,
     gfxImageFormat format
       = static_cast<gfxImageFormat>(image.format());
     surf = new gfxImageSurface((unsigned char *)image.data(),
-                               image.size(),
+                               gfx::ThebesIntSize(image.size()),
                                image.stride(),
                                format);
     return surf.forget();
@@ -658,19 +658,19 @@ ShadowLayerForwarder::GetDescriptorSurfaceContentType(
   return content;
 }
 
-/*static*/ gfxIntSize
+/*static*/ gfx::IntSize
 ShadowLayerForwarder::GetDescriptorSurfaceSize(
   const SurfaceDescriptor& aDescriptor, OpenMode aMode,
   gfxASurface** aSurface)
 {
-  gfxIntSize size;
+  gfx::IntSize size;
   if (PlatformGetDescriptorSurfaceSize(aDescriptor, aMode, &size, aSurface)) {
     return size;
   }
 
   nsRefPtr<gfxASurface> surface = OpenDescriptor(aMode, aDescriptor);
-  size = surface->GetSize();
-  *aSurface = surface.forget().get();
+  size = surface->GetSize().ToIntSize();
+  surface.forget(aSurface);
   return size;
 }
 
@@ -746,7 +746,7 @@ ShadowLayerForwarder::PlatformGetDescriptorSurfaceContentType(
 ShadowLayerForwarder::PlatformGetDescriptorSurfaceSize(
   const SurfaceDescriptor&,
   OpenMode,
-  gfxIntSize*,
+  gfx::IntSize*,
   gfxASurface**)
 {
   return false;
@@ -825,11 +825,11 @@ AutoOpenSurface::ImageFormat()
     mDescriptor, mMode, getter_AddRefs(mSurface));
 }
 
-gfxIntSize
+gfx::IntSize
 AutoOpenSurface::Size()
 {
   if (mSurface) {
-    return mSurface->GetSize();
+    return mSurface->GetSize().ToIntSize();
   }
   return ShadowLayerForwarder::GetDescriptorSurfaceSize(
     mDescriptor, mMode, getter_AddRefs(mSurface));

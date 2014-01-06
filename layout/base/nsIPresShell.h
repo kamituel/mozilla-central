@@ -22,6 +22,7 @@
 
 #include "mozilla/EventForwards.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/WeakPtr.h"
 #include "gfxPoint.h"
 #include "nsTHashtable.h"
 #include "nsHashKeys.h"
@@ -42,6 +43,7 @@
 #include "nsMargin.h"
 
 class nsIContent;
+class nsDocShell;
 class nsIDocument;
 class nsIFrame;
 class nsPresContext;
@@ -127,10 +129,10 @@ typedef struct CapturingContentInfo {
 } CapturingContentInfo;
 
 
-// f5b542a9-eaf0-4560-a656-37a9d379864c
+// 0e4f2b36-7ab8-43c5-b912-5c311566297c
 #define NS_IPRESSHELL_IID \
-{ 0xf5b542a9, 0xeaf0, 0x4560, \
-  { 0x37, 0xa9, 0xd3, 0x79, 0x86, 0x4c } }
+{ 0xde498c49, 0xf83f, 0x47bf, \
+  {0x8c, 0xc6, 0x8f, 0xf8, 0x74, 0x62, 0x22, 0x23 } }
 
 // debug VerifyReflow flags
 #define VERIFY_REFLOW_ON                    0x01
@@ -835,6 +837,20 @@ public:
   bool IsPaintingSuppressed() const { return mPaintingSuppressed; }
 
   /**
+   * Pause painting by freezing the refresh driver of this and all parent
+   * presentations. This may not have the desired effect if this pres shell
+   * has its own refresh driver.
+   */
+  virtual void PausePainting() = 0;
+
+  /**
+   * Resume painting by thawing the refresh driver of this and all parent
+   * presentations. This may not have the desired effect if this pres shell
+   * has its own refresh driver.
+   */
+  virtual void ResumePainting() = 0;
+
+  /**
    * Unsuppress painting.
    */
   virtual NS_HIDDEN_(void) UnsuppressPainting() = 0;
@@ -956,7 +972,7 @@ public:
    * user events at the docshell's parent.  This pointer allows us to do that.
    * It should not be used for any other purpose.
    */
-  void SetForwardingContainer(nsWeakPtr aContainer)
+  void SetForwardingContainer(const mozilla::WeakPtr<nsDocShell> &aContainer)
   {
     mForwardingContainer = aContainer;
   }
@@ -1508,7 +1524,7 @@ protected:
   // Pointer into mFrameConstructor - this is purely so that FrameManager() and
   // GetRootFrame() can be inlined:
   nsFrameManagerBase*       mFrameManager;
-  nsWeakPtr                 mForwardingContainer;
+  mozilla::WeakPtr<nsDocShell>                 mForwardingContainer;
   nsRefreshDriver*          mHiddenInvalidationObserverRefreshDriver;
 #ifdef ACCESSIBILITY
   mozilla::a11y::DocAccessible* mDocAccessible;
@@ -1599,6 +1615,7 @@ protected:
   bool mFontSizeInflationForceEnabled;
   bool mFontSizeInflationDisabledInMasterProcess;
   bool mFontSizeInflationEnabled;
+  bool mPaintingIsFrozen;
 
   // Dirty bit indicating that mFontSizeInflationEnabled needs to be recomputed.
   bool mFontSizeInflationEnabledIsDirty;

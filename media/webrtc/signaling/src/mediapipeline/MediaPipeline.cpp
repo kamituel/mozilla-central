@@ -39,8 +39,10 @@
 #include "runnable_utils.h"
 #include "gfxImageSurface.h"
 #include "libyuv/convert.h"
+#include "mozilla/gfx/Point.h"
 
 using namespace mozilla;
+using namespace mozilla::gfx;
 
 // Logging context
 MOZ_MTLOG_MODULE("mediapipeline")
@@ -50,6 +52,7 @@ namespace mozilla {
 static char kDTLSExporterLabel[] = "EXTRACTOR-dtls_srtp";
 
 MediaPipeline::~MediaPipeline() {
+  ASSERT_ON_THREAD(main_thread_);
   MOZ_ASSERT(!stream_);  // Check that we have shut down already.
   MOZ_MTLOG(ML_INFO, "Destroying MediaPipeline: " << description_);
 }
@@ -857,7 +860,7 @@ void MediaPipelineTransmit::PipelineListener::ProcessVideoChunk(
     return;
   }
 
-  gfxIntSize size = img->GetSize();
+  gfx::IntSize size = img->GetSize();
   if ((size.width & 1) != 0 || (size.height & 1) != 0) {
     MOZ_ASSERT(false, "Can't handle odd-sized images");
     return;
@@ -947,7 +950,7 @@ void MediaPipelineTransmit::PipelineListener::ProcessVideoChunk(
     const_cast<layers::CairoImage *>(
           static_cast<const layers::CairoImage *>(img));
 
-    gfxIntSize size = rgb->GetSize();
+    gfx::IntSize size = rgb->GetSize();
     int half_width = (size.width + 1) >> 1;
     int half_height = (size.height + 1) >> 1;
     int c_size = half_width * half_height;
@@ -1210,15 +1213,15 @@ void MediaPipelineReceiveVideo::PipelineListener::RenderVideoFrame(
 
   layers::PlanarYCbCrData data;
   data.mYChannel = frame;
-  data.mYSize = gfxIntSize(width_, height_);
+  data.mYSize = IntSize(width_, height_);
   data.mYStride = width_ * lumaBpp/ 8;
   data.mCbCrStride = width_ * chromaBpp / 8;
   data.mCbChannel = frame + height_ * data.mYStride;
   data.mCrChannel = data.mCbChannel + height_ * data.mCbCrStride / 2;
-  data.mCbCrSize = gfxIntSize(width_/ 2, height_/ 2);
+  data.mCbCrSize = IntSize(width_/ 2, height_/ 2);
   data.mPicX = 0;
   data.mPicY = 0;
-  data.mPicSize = gfxIntSize(width_, height_);
+  data.mPicSize = IntSize(width_, height_);
   data.mStereoMode = STEREO_MODE_MONO;
 
   videoImage->SetData(data);

@@ -5,16 +5,12 @@
 
 /* Sources and breakpoints pane */
 
-#sources-pane {
-  min-width: 50px;
-}
-
 #sources-pane > tabs {
   -moz-border-end: 1px solid #222426; /* Match the sources list's dark margin. */
 }
 
-#sources-and-editor-splitter {
-  -moz-border-start-color: transparent;
+#sources-pane[selectedIndex="0"] + #sources-and-editor-splitter {
+  border-color: transparent;
 }
 
 /* Sources toolbar */
@@ -72,7 +68,8 @@
 #black-boxed-message,
 #source-progress-container {
   background: url(background-noise-toolbar.png) rgb(61,69,76);
-  /* Prevent the container deck from aquiring the height from this message. */
+  /* Prevent the container deck from aquiring the size from this message. */
+  min-width: 1px;
   min-height: 1px;
   color: white;
 }
@@ -93,37 +90,118 @@
   padding: .25em;
 }
 
-/* ListWidget items */
+/* Tracer */
 
-.list-widget-item {
-  padding: 2px;
+#trace {
+  list-style-image: url(tracer-icon.png);
+  -moz-image-region: rect(0px,16px,16px,0px);
 }
 
-.theme-light .list-widget-item:not(.selected):not(.empty):hover {
-  background: linear-gradient(rgba(255,255,255,0.9), rgba(255,255,255,0.85)), Highlight;
+#trace[checked] {
+  -moz-image-region: rect(0px,32px,16px,16px);
 }
 
-.theme-light .list-widget-item.selected.light {
-  background: linear-gradient(rgba(255,255,255,0.85), rgba(255,255,255,0.8)), Highlight;
-  color: #000;
+#start-tracing {
+  padding: 4px;
+  margin: 4px;
 }
 
-.theme-dark .list-widget-item:not(.selected):not(.empty):hover {
-  background: linear-gradient(rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+#clear-tracer {
+  /* Make this button as narrow as the text inside it. */
+  min-width: 1px;
 }
 
-.theme-dark .list-widget-item.selected.light {
-  background: linear-gradient(rgba(255,255,255,0.05), rgba(255,255,255,0.025));
+#tracer-message {
+  /* Prevent the container deck from aquiring the height from this message. */
+  min-height: 1px;
 }
 
-.list-widget-item.selected {
-  background: Highlight;
-  color: HighlightText;
+.trace-name {
+  -moz-padding-start: 4px !important;
 }
 
-.list-widget-item.empty {
-  color: GrayText;
-  padding: 2px;
+#tracer-traces > scrollbox {
+  overflow: scroll;
+  /* Hack to enable hardware acceleration */
+  transform: translateZ(0);
+}
+
+/* Tracer dark theme */
+
+.theme-dark #tracer-message {
+  color: #f5f7fa; /* Light foreground text */
+}
+
+.theme-dark .trace-item {
+  color: #f5f7fa; /* Light foreground text */
+}
+
+.theme-dark .trace-item.selected-matching {
+  background-color: rgba(29, 79, 115, .4); /* Select highlight blue at 40% alpha */
+}
+
+.theme-dark .selected > .trace-item {
+  background-color: rgba(29, 79, 115, .75); /* Select highlight blue at 75% alpha */
+}
+
+.theme-dark .trace-call {
+  color: #46afe3; /* highlight blue */
+}
+
+.theme-dark .trace-return,
+.theme-dark .trace-yield {
+  color: #70bf53; /* highlight green */
+}
+
+.theme-dark .trace-throw {
+  color: #eb5368; /* highlight red */
+}
+
+.theme-dark .trace-param {
+  color: #b8c8d9; /* Content text light */
+}
+
+.theme-dark .trace-syntax {
+  color: #8fa1b2; /* Content text grey */
+}
+
+/* Tracer light theme */
+
+.theme-light #tracer-message {
+  color: #292e33; /* Dark foreground text */
+}
+
+.theme-light .trace-item {
+  color: #292e33; /* Dark foreground text */
+}
+
+.theme-light .trace-item.selected-matching {
+  background-color: rgba(76, 158, 217, .4); /* Select highlight blue at 40% alpha */
+}
+
+.theme-light .selected > .trace-item {
+  background-color: rgba(76, 158, 217, .75); /* Select highlight blue at 75% alpha */
+}
+
+.theme-light .trace-call {
+  color: #0088cc; /* highlight blue */
+}
+
+.theme-light .trace-return,
+.theme-light .trace-yield {
+  color: #2cbb0f; /* highlight green */
+}
+
+.theme-light .trace-throw {
+  color: #ed2655; /* highlight red */
+}
+
+.theme-light .trace-param {
+  color: #667380; /* Content text dark grey  */
+}
+
+.theme-light .trace-syntax {
+  color: #8fa1b2; /* Content text grey */
 }
 
 /* Breadcrumbs stack frames view */
@@ -140,7 +218,7 @@
 
 .dbg-classic-stackframe {
   display: block;
-  padding: 4px;
+  padding: 0px 4px;
 }
 
 .dbg-classic-stackframe-title {
@@ -226,13 +304,8 @@
 
 /* Instruments pane (watch expressions, variables, event listeners...) */
 
-#instruments-pane > tabs > tab {
-  min-height: 25px !important;
-  padding: 0 !important;
-}
-
 #instruments-pane .side-menu-widget-container,
-#instruments-pane .side-menu-widget-empty-notice-container {
+#instruments-pane .side-menu-widget-empty-text {
   box-shadow: none !important;
 }
 
@@ -250,18 +323,18 @@
 .dbg-expression-arrow {
   width: 16px;
   height: auto;
+  margin: 2px;
   background: -moz-image-rect(url(commandline-icon.png), 0, 32, 16, 16);
 }
 
 .dbg-expression-input {
-  -moz-padding-start: 2px !important;
   color: inherit;
 }
 
 /* Event listeners view */
 
 .dbg-event-listener {
-  padding: 4px 8px;
+  padding: 0px 8px;
 }
 
 .dbg-event-listener-type {
@@ -318,7 +391,6 @@
 
 .results-panel {
   padding: 4px;
-  opacity: 0.9;
 }
 
 .results-panel-item {
@@ -346,19 +418,19 @@
   text-shadow: 0 1px #fff;
 }
 
-.results-panel-item-pre {
+.results-panel-item-label-before {
   -moz-margin-end: 5px !important;
   color: #444;
   cursor: inherit;
 }
 
-.results-panel-item-name {
+.results-panel-item-label {
   color: #111;
   font-weight: 600;
   cursor: inherit;
 }
 
-.results-panel-item-details {
+.results-panel-item-label-below {
   color: #7f7f7f;
   cursor: inherit;
 }
@@ -367,17 +439,13 @@
 
 #globalsearch {
   min-height: 10px;
+  max-height: 125px;
   box-shadow: inset 0 -4px 8px #eee;
   background: url(background-noise-toolbar.png);
 }
 
-#globalsearch > vbox:not(:empty) {
-  min-height: 10px;
-  max-height: 125px;
-}
-
 #globalsearch + .devtools-horizontal-splitter {
-  -moz-border-top-colors: #bfbfbf;
+  border-color: #bfbfbf;
 }
 
 .dbg-source-results {
@@ -540,7 +608,7 @@
 }
 
 #body[layout=vertical] .side-menu-widget-container,
-#body[layout=vertical] .side-menu-widget-empty-notice-container {
+#body[layout=vertical] .side-menu-widget-empty-text {
   box-shadow: none !important;
 }
 

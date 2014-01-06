@@ -11,7 +11,7 @@ let Cr = Components.results;
 Cu.import("resource://gre/modules/PageThumbs.jsm");
 
 // Page for which the start UI is shown
-const kStartURI = "about:start";
+const kStartURI = "about:newtab";
 
 // allow panning after this timeout on pages with registered touch listeners
 const kTouchTimeout = 300;
@@ -68,6 +68,16 @@ var Browser = {
     } catch (e) {
       // XXX whatever is calling startup needs to dump errors!
       dump("###########" + e + "\n");
+    }
+
+    if (!Services.metro) {
+      // Services.metro is only available on Windows Metro. We want to be able
+      // to test metro on other platforms, too, so we provide a minimal shim.
+      Services.metro = {
+        activationURI: "",
+        pinTileAsync: function () {},
+        unpinTileAsync: function () {}
+      };
     }
 
     /* handles dispatching clicks on browser into clicks in content or zooms */
@@ -1208,16 +1218,17 @@ var SessionHistoryObserver = {
     if (aTopic != "browser:purge-session-history")
       return;
 
-    let back = document.getElementById("cmd_back");
-    back.setAttribute("disabled", "true");
-    let forward = document.getElementById("cmd_forward");
-    forward.setAttribute("disabled", "true");
-
-    let urlbar = document.getElementById("urlbar-edit");
-    if (urlbar) {
-      // Clear undo history of the URL bar
-      urlbar.editor.transactionManager.clear();
+    let newTab = Browser.addTab("about:start", true);
+    let tab = Browser._tabs[0];
+    while(tab != newTab) {
+      Browser.closeTab(tab, { forceClose: true } );
+      tab = Browser._tabs[0];
     }
+
+    PlacesUtils.history.removeAllPages();
+
+    // Clear undo history of the URL bar
+    BrowserUI._edit.editor.transactionManager.clear();
   }
 };
 
@@ -1429,7 +1440,7 @@ Tab.prototype = {
 
     browser.setAttribute("type", "content");
 
-    let useRemote = Services.prefs.getBoolPref("browser.tabs.remote");
+    let useRemote = Services.appinfo.browserTabsRemote;
     let useLocal = Util.isLocalScheme(aURI);
     browser.setAttribute("remote", (!useLocal && useRemote) ? "true" : "false");
 

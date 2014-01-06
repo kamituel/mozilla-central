@@ -11,11 +11,12 @@ const Cu = Components.utils;
 const DBG_STRINGS_URI = "chrome://browser/locale/devtools/debugger.properties";
 const LAZY_EMPTY_DELAY = 150; // ms
 const LAZY_EXPAND_DELAY = 50; // ms
-const LAZY_APPEND_DELAY = 100; // ms
-const LAZY_APPEND_BATCH = 100; // nodes
+const SCROLL_PAGE_SIZE_DEFAULT = 0;
+const APPEND_PAGE_SIZE_DEFAULT = 500;
 const PAGE_SIZE_SCROLL_HEIGHT_RATIO = 100;
 const PAGE_SIZE_MAX_JUMPS = 30;
 const SEARCH_ACTION_MAX_DELAY = 300; // ms
+const ITEM_FLASH_DURATION = 300 // ms
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
@@ -25,6 +26,9 @@ Cu.import("resource://gre/modules/devtools/DevToolsUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "devtools",
   "resource://gre/modules/devtools/Loader.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "PluralForm",
+  "resource://gre/modules/PluralForm.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "clipboardHelper",
   "@mozilla.org/widget/clipboardhelper;1",
@@ -117,6 +121,9 @@ VariablesView.prototype = {
   /**
    * Adds a scope to contain any inspected variables.
    *
+   * This new scope will be considered the parent of any other scope
+   * added afterwards.
+   *
    * @param string aName
    *        The scope's name (e.g. "Local", "Global" etc.).
    * @return Scope
@@ -131,6 +138,7 @@ VariablesView.prototype = {
     this._itemsByElement.set(scope._target, scope);
     this._currHierarchy.set(aName, scope);
     scope.header = !!aName;
+
     return scope;
   },
 
@@ -221,21 +229,22 @@ VariablesView.prototype = {
   lazyEmpty: false,
 
   /**
-   * Specifies if nodes in this view may be added lazily.
-   * @see Scope.prototype._lazyAppend
-   */
-  lazyAppend: true,
-
-  /**
-   * Specifies if nodes in this view may be expanded lazily.
-   * @see Scope.prototype.expand
-   */
-  lazyExpand: true,
-
-  /**
    * Specifies if nodes in this view may be searched lazily.
    */
   lazySearch: true,
+
+  /**
+   * The number of elements in this container to jump when Page Up or Page Down
+   * keys are pressed. If falsy, then the page size will be based on the
+   * container height.
+   */
+  scrollPageSize: SCROLL_PAGE_SIZE_DEFAULT,
+
+  /**
+   * The maximum number of elements allowed in a scope, variable or property
+   * that allows pagination when appending children.
+   */
+  appendPageSize: APPEND_PAGE_SIZE_DEFAULT,
 
   /**
    * Function called each time a variable or property's value is changed via
@@ -605,23 +614,6 @@ VariablesView.prototype = {
   },
 
   /**
-   * Searches for the scope in this container displayed by the specified node.
-   *
-   * @param nsIDOMNode aNode
-   *        The node to search for.
-   * @return Scope
-   *         The matched scope, or null if nothing is found.
-   */
-  getScopeForNode: function(aNode) {
-    let item = this._itemsByElement.get(aNode);
-    // Match only Scopes, not Variables or Properties.
-    if (item && !(item instanceof Variable)) {
-      return item;
-    }
-    return null;
-  },
-
-  /**
    * Recursively searches this container for the scope, variable or property
    * displayed by the specified node.
    *
@@ -632,6 +624,43 @@ VariablesView.prototype = {
    */
   getItemForNode: function(aNode) {
     return this._itemsByElement.get(aNode);
+  },
+
+  /**
+   * Gets the scope owning a Variable or Property.
+   *
+   * @param Variable | Property
+   *        The variable or property to retrieven the owner scope for.
+   * @return Scope
+   *         The owner scope.
+   */
+  getOwnerScopeForVariableOrProperty: function(aItem) {
+    if (!aItem) {
+      return null;
+    }
+    // If this is a Scope, return it.
+    if (!(aItem instanceof Variable)) {
+      return aItem;
+    }
+    // If this is a Variable or Property, find its owner scope.
+    if (aItem instanceof Variable && aItem.ownerView) {
+      return this.getOwnerScopeForVariableOrProperty(aItem.ownerView);
+    }
+    return null;
+  },
+
+  /**
+   * Gets the parent scopes for a specified Variable or Property.
+   * The returned list will not include the owner scope.
+   *
+   * @param Variable | Property
+   *        The variable or property for which to find the parent scopes.
+   * @return array
+   *         A list of parent Scopes.
+   */
+  getParentScopesForVariableOrProperty: function(aItem) {
+    let scope = this.getOwnerScopeForVariableOrProperty(aItem);
+    return this._store.slice(0, Math.max(this._store.indexOf(scope), 0));
   },
 
   /**
@@ -796,14 +825,14 @@ VariablesView.prototype = {
 
       case e.DOM_VK_PAGE_UP:
         // Rewind a certain number of elements based on the container height.
-        this.focusItemAtDelta(-(this.pageSize || Math.min(Math.floor(this._list.scrollHeight /
+        this.focusItemAtDelta(-(this.scrollPageSize || Math.min(Math.floor(this._list.scrollHeight /
           PAGE_SIZE_SCROLL_HEIGHT_RATIO),
           PAGE_SIZE_MAX_JUMPS)));
         return;
 
       case e.DOM_VK_PAGE_DOWN:
         // Advance a certain number of elements based on the container height.
-        this.focusItemAtDelta(+(this.pageSize || Math.min(Math.floor(this._list.scrollHeight /
+        this.focusItemAtDelta(+(this.scrollPageSize || Math.min(Math.floor(this._list.scrollHeight /
           PAGE_SIZE_SCROLL_HEIGHT_RATIO),
           PAGE_SIZE_MAX_JUMPS)));
         return;
@@ -856,13 +885,6 @@ VariablesView.prototype = {
       }
     }
   },
-
-  /**
-   * The number of elements in this container to jump when Page Up or Page Down
-   * keys are pressed. If falsy, then the page size will be based on the
-   * container height.
-   */
-  pageSize: 0,
 
   /**
    * Sets the text displayed in this container when there are no available items.
@@ -976,12 +998,15 @@ VariablesView.prototype = {
   _window: null,
 
   _store: null,
+  _itemsByElement: null,
   _prevHierarchy: null,
   _currHierarchy: null,
+
   _enumVisible: true,
   _nonEnumVisible: true,
   _alignedValues: false,
   _actionsFirst: false,
+
   _parent: null,
   _list: null,
   _searchboxNode: null,
@@ -1171,10 +1196,11 @@ function Scope(aView, aName, aFlags = {}) {
   this._onClick = this._onClick.bind(this);
   this._openEnum = this._openEnum.bind(this);
   this._openNonEnum = this._openNonEnum.bind(this);
-  this._batchAppend = this._batchAppend.bind(this);
 
   // Inherit properties and flags from the parent view. You can override
   // each of these directly onto any scope, variable or property instance.
+  this.scrollPageSize = aView.scrollPageSize;
+  this.appendPageSize = aView.appendPageSize;
   this.eval = aView.eval;
   this.switch = aView.switch;
   this.delete = aView.delete;
@@ -1196,6 +1222,16 @@ Scope.prototype = {
    * Whether this Scope should be prefetched when it is remoted.
    */
   shouldPrefetch: true,
+
+  /**
+   * Whether this Scope should paginate its contents.
+   */
+  allowPaginate: false,
+
+  /**
+   * The class name applied to this scope's target element.
+   */
+  targetClassName: "variables-view-scope",
 
   /**
    * Create a new Variable that is a child of this Scope.
@@ -1229,8 +1265,9 @@ Scope.prototype = {
    *             - { value: { type: "object", class: "Object" } }
    *             - { get: { type: "object", class: "Function" },
    *                 set: { type: "undefined" } }
-   * @param boolean aRelaxed
-   *        True if name duplicates should be allowed.
+   * @param boolean aRelaxed [optional]
+   *        Pass true if name duplicates should be allowed.
+   *        You probably shouldn't do it. Use this with caution.
    * @return Variable
    *         The newly created Variable instance, null if it already exists.
    */
@@ -1244,6 +1281,7 @@ Scope.prototype = {
     this._variablesView._itemsByElement.set(child._target, child);
     this._variablesView._currHierarchy.set(child._absoluteName, child);
     child.header = !!aName;
+
     return child;
   },
 
@@ -1267,14 +1305,84 @@ Scope.prototype = {
    *        Additional options for adding the properties. Supported options:
    *        - sorted: true to sort all the properties before adding them
    *        - callback: function invoked after each item is added
+   * @param string aKeysType [optional]
+   *        Helper argument in the case of paginated items. Can be either
+   *        "just-strings" or "just-numbers". Humans shouldn't use this argument.
    */
-  addItems: function(aItems, aOptions = {}) {
+  addItems: function(aItems, aOptions = {}, aKeysType = "") {
     let names = Object.keys(aItems);
 
+    // Building the view when inspecting an object with a very large number of
+    // properties may take a long time. To avoid blocking the UI, group
+    // the items into several lazily populated pseudo-items.
+    let exceedsThreshold = names.length >= this.appendPageSize;
+    let shouldPaginate = exceedsThreshold && aKeysType != "just-strings";
+    if (shouldPaginate && this.allowPaginate) {
+      // Group the items to append into two separate arrays, one containing
+      // number-like keys, the other one containing string keys.
+      if (aKeysType == "just-numbers") {
+        var numberKeys = names;
+        var stringKeys = [];
+      } else {
+        var numberKeys = [];
+        var stringKeys = [];
+        for (let name of names) {
+          // Be very careful. Avoid Infinity, NaN and non Natural number keys.
+          let coerced = +name;
+          if (Number.isInteger(coerced) && coerced > -1) {
+            numberKeys.push(name);
+          } else {
+            stringKeys.push(name);
+          }
+        }
+      }
+
+      // This object contains a very large number of properties, but they're
+      // almost all strings that can't be coerced to numbers. Don't paginate.
+      if (numberKeys.length < this.appendPageSize) {
+        this.addItems(aItems, aOptions, "just-strings");
+        return;
+      }
+
+      // Slices a section of the { name: descriptor } data properties.
+      let paginate = (aArray, aBegin = 0, aEnd = aArray.length) => {
+        let store = {}
+        for (let i = aBegin; i < aEnd; i++) {
+          let name = aArray[i];
+          store[name] = aItems[name];
+        }
+        return store;
+      };
+
+      // Creates a pseudo-item that populates itself with the data properties
+      // from the corresponding page range.
+      let createRangeExpander = (aArray, aBegin, aEnd, aOptions, aKeyTypes) => {
+        let rangeVar = this.addItem(aArray[aBegin] + Scope.ellipsis + aArray[aEnd - 1]);
+        rangeVar.onexpand = () => {
+          let pageItems = paginate(aArray, aBegin, aEnd);
+          rangeVar.addItems(pageItems, aOptions, aKeyTypes);
+        }
+        rangeVar.showArrow();
+        rangeVar.target.setAttribute("pseudo-item", "");
+      };
+
+      // Divide the number keys into quarters.
+      let page = +Math.round(numberKeys.length / 4).toPrecision(1);
+      createRangeExpander(numberKeys, 0, page, aOptions, "just-numbers");
+      createRangeExpander(numberKeys, page, page * 2, aOptions, "just-numbers");
+      createRangeExpander(numberKeys, page * 2, page * 3, aOptions, "just-numbers");
+      createRangeExpander(numberKeys, page * 3, numberKeys.length, aOptions, "just-numbers");
+
+      // Append all the string keys together.
+      this.addItems(paginate(stringKeys), aOptions, "just-strings");
+      return;
+    }
+
     // Sort all of the properties before adding them, if preferred.
-    if (aOptions.sorted) {
+    if (aOptions.sorted && aKeysType != "just-numbers") {
       names.sort();
     }
+
     // Add the properties to the current scope.
     for (let name of names) {
       let descriptor = aItems[name];
@@ -1294,7 +1402,9 @@ Scope.prototype = {
     view._store.splice(view._store.indexOf(this), 1);
     view._itemsByElement.delete(this._target);
     view._currHierarchy.delete(this._nameString);
+
     this._target.remove();
+
     for (let variable of this._store.values()) {
       variable.remove();
     }
@@ -1399,32 +1509,15 @@ Scope.prototype = {
    * Expands the scope, showing all the added details.
    */
   expand: function() {
-    if (this._isExpanded || this._locked) {
+    if (this._isExpanded || this._isLocked) {
       return;
     }
-    // If there's a large number of enumerable or non-enumerable items
-    // contained in this scope, painting them may take several seconds,
-    // even if they were already displayed before. In this case, show a throbber
-    // to suggest that this scope is expanding.
-    if (!this._isExpanding &&
-         this._variablesView.lazyExpand &&
-         this._store.size > LAZY_APPEND_BATCH) {
-      this._isExpanding = true;
-
-      // Start spinning a throbber in this scope's title and allow a few
-      // milliseconds for it to be painted.
-      this._startThrobber();
-      this.window.setTimeout(this.expand.bind(this), LAZY_EXPAND_DELAY);
-      return;
-    }
-
     if (this._variablesView._enumVisible) {
       this._openEnum();
     }
     if (this._variablesView._nonEnumVisible) {
       Services.tm.currentThread.dispatch({ run: this._openNonEnum }, 0);
     }
-    this._isExpanding = false;
     this._isExpanded = true;
 
     if (this.onexpand) {
@@ -1436,7 +1529,7 @@ Scope.prototype = {
    * Collapses the scope, hiding all the added details.
    */
   collapse: function() {
-    if (!this._isExpanded || this._locked) {
+    if (!this._isExpanded || this._isLocked) {
       return;
     }
     this._arrow.removeAttribute("open");
@@ -1543,7 +1636,7 @@ Scope.prototype = {
    * Gets the expand lock state.
    * @return boolean
    */
-  get locked() this._locked,
+  get locked() this._isLocked,
 
   /**
    * Sets the visibility state.
@@ -1573,7 +1666,7 @@ Scope.prototype = {
    * Sets the expand lock state.
    * @param boolean aFlag
    */
-  set locked(aFlag) this._locked = aFlag,
+  set locked(aFlag) this._isLocked = aFlag,
 
   /**
    * Specifies if this target node may be focused.
@@ -1666,7 +1759,7 @@ Scope.prototype = {
    */
   _init: function(aName, aFlags) {
     this._idString = generateId(this._nameString = aName);
-    this._displayScope(aName, "variables-view-scope", "devtools-toolbar");
+    this._displayScope(aName, this.targetClassName, "devtools-toolbar");
     this._addEventListeners();
     this.parentNode.appendChild(this._target);
   },
@@ -1676,17 +1769,17 @@ Scope.prototype = {
    *
    * @param string aName
    *        The scope's name.
-   * @param string aClassName
-   *        A custom class name for this scope.
+   * @param string aTargetClassName
+   *        A custom class name for this scope's target element.
    * @param string aTitleClassName [optional]
-   *        A custom class name for this scope's title.
+   *        A custom class name for this scope's title element.
    */
-  _displayScope: function(aName, aClassName, aTitleClassName) {
+  _displayScope: function(aName, aTargetClassName, aTitleClassName = "") {
     let document = this.document;
 
     let element = this._target = document.createElement("vbox");
     element.id = this._idString;
-    element.className = aClassName;
+    element.className = aTargetClassName;
 
     let arrow = this._arrow = document.createElement("hbox");
     arrow.className = "arrow";
@@ -1696,7 +1789,7 @@ Scope.prototype = {
     name.setAttribute("value", aName);
 
     let title = this._title = document.createElement("hbox");
-    title.className = "title " + (aTitleClassName || "");
+    title.className = "title " + aTitleClassName;
     title.setAttribute("align", "center");
 
     let enumerable = this._enum = document.createElement("vbox");
@@ -1725,97 +1818,12 @@ Scope.prototype = {
   _onClick: function(e) {
     if (e.button != 0 ||
         e.target == this._editNode ||
-        e.target == this._deleteNode) {
+        e.target == this._deleteNode ||
+        e.target == this._addPropertyNode) {
       return;
     }
     this.toggle();
     this.focus();
-  },
-
-  /**
-   * Lazily appends a node to this scope's enumerable or non-enumerable
-   * container. Once a certain number of nodes have been batched, they
-   * will be appended.
-   *
-   * @param boolean aImmediateFlag
-   *        Set to false if append calls should be dispatched synchronously
-   *        on the current thread, to allow for a paint flush.
-   * @param boolean aEnumerableFlag
-   *        Specifies if the node to append is enumerable or non-enumerable.
-   * @param nsIDOMNode aChild
-   *        The child node to append.
-   */
-  _lazyAppend: function(aImmediateFlag, aEnumerableFlag, aChild) {
-    // Append immediately, don't stage items and don't allow for a paint flush.
-    if (aImmediateFlag || !this._variablesView.lazyAppend) {
-      if (aEnumerableFlag) {
-        this._enum.appendChild(aChild);
-      } else {
-        this._nonenum.appendChild(aChild);
-      }
-      return;
-    }
-
-    let window = this.window;
-    let batchItems = this._batchItems;
-
-    window.clearTimeout(this._batchTimeout);
-    batchItems.push({ enumerableFlag: aEnumerableFlag, child: aChild });
-
-    // If a certain number of nodes have been batched, append all the
-    // staged items now.
-    if (batchItems.length > LAZY_APPEND_BATCH) {
-      // Allow for a paint flush.
-      Services.tm.currentThread.dispatch({ run: this._batchAppend }, 1);
-      return;
-    }
-    // Postpone appending the staged items for later, to allow batching
-    // more nodes.
-    this._batchTimeout = window.setTimeout(this._batchAppend, LAZY_APPEND_DELAY);
-  },
-
-  /**
-   * Appends all the batched nodes to this scope's enumerable and non-enumerable
-   * containers.
-   */
-  _batchAppend: function() {
-    let document = this.document;
-    let batchItems = this._batchItems;
-
-    // Create two document fragments, one for enumerable nodes, and one
-    // for non-enumerable nodes.
-    let frags = [document.createDocumentFragment(), document.createDocumentFragment()];
-
-    for (let item of batchItems) {
-      frags[~~item.enumerableFlag].appendChild(item.child);
-    }
-    batchItems.length = 0;
-    this._enum.appendChild(frags[1]);
-    this._nonenum.appendChild(frags[0]);
-  },
-
-  /**
-   * Starts spinning a throbber in this scope's title.
-   */
-  _startThrobber: function() {
-    if (this._throbber) {
-      this._throbber.hidden = false;
-      return;
-    }
-    let throbber = this._throbber = this.document.createElement("hbox");
-    throbber.className = "variables-view-throbber";
-    throbber.setAttribute("optional-visibility", "");
-    this._title.insertBefore(throbber, this._spacer);
-  },
-
-  /**
-   * Stops spinning the throbber in this scope's title.
-   */
-  _stopThrobber: function() {
-    if (!this._throbber) {
-      return;
-    }
-    this._throbber.hidden = true;
   },
 
   /**
@@ -1824,7 +1832,6 @@ Scope.prototype = {
   _openEnum: function() {
     this._arrow.setAttribute("open", "");
     this._enum.setAttribute("open", "");
-    this._stopThrobber();
   },
 
   /**
@@ -1832,7 +1839,6 @@ Scope.prototype = {
    */
   _openNonEnum: function() {
     this._nonenum.setAttribute("open", "");
-    this._stopThrobber();
   },
 
   /**
@@ -1933,25 +1939,6 @@ Scope.prototype = {
       this._isMatch = false;
       this.target.setAttribute("unmatched", "");
     }
-  },
-
-  /**
-   * Gets the first search results match in this scope.
-   * @return Variable | Property
-   */
-  get _firstMatch() {
-    for (let [, variable] of this._store) {
-      let match;
-      if (variable._isMatch) {
-        match = variable;
-      } else {
-        match = variable._firstMatch;
-      }
-      if (match) {
-        return match;
-      }
-    }
-    return null;
   },
 
   /**
@@ -2078,11 +2065,12 @@ Scope.prototype = {
   switch: null,
   delete: null,
   new: null,
-  editableValueTooltip: "",
+  preventDisableOnChange: false,
+  preventDescriptorModifiers: false,
   editableNameTooltip: "",
+  editableValueTooltip: "",
   editButtonTooltip: "",
   deleteButtonTooltip: "",
-  preventDescriptorModifiers: false,
   contextMenuId: "",
   separatorStr: "",
 
@@ -2090,12 +2078,8 @@ Scope.prototype = {
   _enumItems: null,
   _nonEnumItems: null,
   _fetched: false,
-  _retrieved: false,
   _committed: false,
-  _batchItems: null,
-  _batchTimeout: null,
-  _locked: false,
-  _isExpanding: false,
+  _isLocked: false,
   _isExpanded: false,
   _isContentVisible: true,
   _isHeaderVisible: true,
@@ -2109,7 +2093,6 @@ Scope.prototype = {
   _title: null,
   _enum: null,
   _nonenum: null,
-  _throbber: null
 };
 
 // Creating maps and arrays thousands of times for variables or properties
@@ -2118,7 +2101,10 @@ Scope.prototype = {
 DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_store", Map);
 DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_enumItems", Array);
 DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_nonEnumItems", Array);
-DevToolsUtils.defineLazyPrototypeGetter(Scope.prototype, "_batchItems", Array);
+
+// An ellipsis symbol (usually "…") used for localization.
+XPCOMUtils.defineLazyGetter(Scope, "ellipsis", () =>
+  Services.prefs.getComplexValue("intl.ellipsis", Ci.nsIPrefLocalizedString).data);
 
 /**
  * A Variable is a Scope holding Property instances.
@@ -2151,11 +2137,23 @@ function Variable(aScope, aName, aDescriptor) {
 
 Variable.prototype = Heritage.extend(Scope.prototype, {
   /**
-   * Whether this Scope should be prefetched when it is remoted.
+   * Whether this Variable should be prefetched when it is remoted.
    */
-  get shouldPrefetch(){
+  get shouldPrefetch() {
     return this.name == "window" || this.name == "this";
   },
+
+  /**
+   * Whether this Variable should paginate its contents.
+   */
+  get allowPaginate() {
+    return this.name != "window" && this.name != "this";
+  },
+
+  /**
+   * The class name applied to this variable's target element.
+   */
+  targetClassName: "variables-view-variable variable-or-property",
 
   /**
    * Create a new Property that is a child of Variable.
@@ -2178,7 +2176,9 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     this.ownerView._store.delete(this._nameString);
     this._variablesView._itemsByElement.delete(this._target);
     this._variablesView._currHierarchy.delete(this._absoluteName);
+
     this._target.remove();
+
     for (let property of this._store.values()) {
       property.remove();
     }
@@ -2348,11 +2348,46 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
       this._valueLabel.classList.remove(VariablesView.getClass(prevGrip));
     }
     this._valueGrip = aGrip;
-    this._valueString = VariablesView.getString(aGrip, true);
+    this._valueString = VariablesView.getString(aGrip, {
+      concise: true,
+      noEllipsis: true,
+    });
     this._valueClassName = VariablesView.getClass(aGrip);
 
     this._valueLabel.classList.add(this._valueClassName);
     this._valueLabel.setAttribute("value", this._valueString);
+    this._separatorLabel.hidden = false;
+  },
+
+  /**
+   * Marks this variable as overridden.
+   *
+   * @param boolean aFlag
+   *        Whether this variable is overridden or not.
+   */
+  setOverridden: function(aFlag) {
+    if (aFlag) {
+      this._target.setAttribute("overridden", "");
+    } else {
+      this._target.removeAttribute("overridden");
+    }
+  },
+
+  /**
+   * Briefly flashes this variable.
+   *
+   * @param number aDuration [optional]
+   *        An optional flash animation duration.
+   */
+  flash: function(aDuration = ITEM_FLASH_DURATION) {
+    let fadeInDelay = this._variablesView.lazyEmptyDelay + 1;
+    let fadeOutDelay = fadeInDelay + aDuration;
+
+    setNamedTimeout("vview-flash-in" + this._absoluteName,
+      fadeInDelay, () => this._target.setAttribute("changed", ""));
+
+    setNamedTimeout("vview-flash-out" + this._absoluteName,
+      fadeOutDelay, () => this._target.removeAttribute("changed"));
   },
 
   /**
@@ -2365,33 +2400,21 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
    */
   _init: function(aName, aDescriptor) {
     this._idString = generateId(this._nameString = aName);
-    this._displayScope(aName, "variables-view-variable variable-or-property");
-
+    this._displayScope(aName, this.targetClassName);
     this._displayVariable();
     this._customizeVariable();
     this._prepareTooltips();
     this._setAttributes();
     this._addEventListeners();
 
-    this._onInit(this.ownerView._store.size < LAZY_APPEND_BATCH);
-  },
-
-  /**
-   * Called when this variable has finished initializing, and is ready to
-   * be attached to the owner view.
-   *
-   * @param boolean aImmediateFlag
-   *        @see Scope.prototype._lazyAppend
-   */
-  _onInit: function(aImmediateFlag) {
     if (this._initialDescriptor.enumerable ||
         this._nameString == "this" ||
         this._nameString == "<return>" ||
         this._nameString == "<exception>") {
-      this.ownerView._lazyAppend(aImmediateFlag, true, this._target);
+      this.ownerView._enum.appendChild(this._target);
       this.ownerView._enumItems.push(this);
     } else {
-      this.ownerView._lazyAppend(aImmediateFlag, false, this._target);
+      this.ownerView._nonenum.appendChild(this._target);
       this.ownerView._nonEnumItems.push(this);
     }
   },
@@ -2405,7 +2428,7 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
 
     let separatorLabel = this._separatorLabel = document.createElement("label");
     separatorLabel.className = "plain separator";
-    separatorLabel.setAttribute("value", this.ownerView.separatorStr);
+    separatorLabel.setAttribute("value", this.separatorStr + " ");
 
     let valueLabel = this._valueLabel = document.createElement("label");
     valueLabel.className = "plain value";
@@ -2428,6 +2451,8 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
       separatorLabel.hidden = true;
     }
 
+    // If this is a getter/setter property, create two child pseudo-properties
+    // called "get" and "set" that display the corresponding functions.
     if (descriptor.get || descriptor.set) {
       separatorLabel.hidden = true;
       valueLabel.hidden = true;
@@ -2480,15 +2505,16 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
       this._title.appendChild(deleteNode);
     }
 
-    let { actionsFirst } = this._variablesView;
-    if (ownerView.new || actionsFirst) {
+    if (ownerView.new) {
       let addPropertyNode = this._addPropertyNode = this.document.createElement("toolbarbutton");
       addPropertyNode.className = "plain variables-view-add-property";
       addPropertyNode.addEventListener("mousedown", this._onAddProperty.bind(this), false);
-      if (actionsFirst && VariablesView.isPrimitive(descriptor)) {
+      this._title.appendChild(addPropertyNode);
+
+      // Can't add properties to primitive values, hide the node in those cases.
+      if (VariablesView.isPrimitive(descriptor)) {
         addPropertyNode.setAttribute("invisible", "");
       }
-      this._title.appendChild(addPropertyNode);
     }
 
     if (ownerView.contextMenuId) {
@@ -2554,11 +2580,12 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
 
     let labels = [
       "configurable", "enumerable", "writable",
-      "frozen", "sealed", "extensible", "WebIDL"];
+      "frozen", "sealed", "extensible", "overridden", "WebIDL"];
 
-    for (let label of labels) {
+    for (let type of labels) {
       let labelElement = this.document.createElement("label");
-      labelElement.setAttribute("value", label);
+      labelElement.className = type;
+      labelElement.setAttribute("value", STR.GetStringFromName(type + "Tooltip"));
       tooltip.appendChild(labelElement);
     }
 
@@ -2623,17 +2650,25 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
     if (descriptor && "getterValue" in descriptor) {
       target.setAttribute("safe-getter", "");
     }
+
     if (name == "this") {
       target.setAttribute("self", "");
     }
     else if (name == "<exception>") {
       target.setAttribute("exception", "");
+      target.setAttribute("pseudo-item", "");
     }
     else if (name == "<return>") {
       target.setAttribute("return", "");
+      target.setAttribute("pseudo-item", "");
     }
     else if (name == "__proto__") {
       target.setAttribute("proto", "");
+      target.setAttribute("pseudo-item", "");
+    }
+
+    if (Object.keys(descriptor).length == 0) {
+      target.setAttribute("pseudo-item", "");
     }
   },
 
@@ -2774,8 +2809,8 @@ Variable.prototype = Heritage.extend(Scope.prototype, {
   _absoluteName: "",
   _initialDescriptor: null,
   _separatorLabel: null,
-  _spacer: null,
   _valueLabel: null,
+  _spacer: null,
   _editNode: null,
   _deleteNode: null,
   _addPropertyNode: null,
@@ -2806,42 +2841,9 @@ function Property(aVar, aName, aDescriptor) {
 
 Property.prototype = Heritage.extend(Variable.prototype, {
   /**
-   * Initializes this property's id, view and binds event listeners.
-   *
-   * @param string aName
-   *        The property's name.
-   * @param object aDescriptor
-   *        The property's descriptor.
+   * The class name applied to this property's target element.
    */
-  _init: function(aName = "", aDescriptor) {
-    this._idString = generateId(this._nameString = aName);
-    this._displayScope(aName, "variables-view-property variable-or-property");
-
-    this._displayVariable();
-    this._customizeVariable();
-    this._prepareTooltips();
-    this._setAttributes();
-    this._addEventListeners();
-
-    this._onInit(this.ownerView._store.size < LAZY_APPEND_BATCH);
-  },
-
-  /**
-   * Called when this property has finished initializing, and is ready to
-   * be attached to the owner view.
-   *
-   * @param boolean aImmediateFlag
-   *        @see Scope.prototype._lazyAppend
-   */
-  _onInit: function(aImmediateFlag) {
-    if (this._initialDescriptor.enumerable) {
-      this.ownerView._lazyAppend(aImmediateFlag, true, this._target);
-      this.ownerView._enumItems.push(this);
-    } else {
-      this.ownerView._lazyAppend(aImmediateFlag, false, this._target);
-      this.ownerView._nonEnumItems.push(this);
-    }
-  }
+  targetClassName: "variables-view-property variable-or-property"
 });
 
 /**
@@ -2877,68 +2879,100 @@ VariablesView.prototype.createHierarchy = function() {
  * scope/variable/property hierarchies and reopen previously expanded nodes.
  */
 VariablesView.prototype.commitHierarchy = function() {
-  let prevHierarchy = this._prevHierarchy;
-  let currHierarchy = this._currHierarchy;
-
-  for (let [absoluteName, currVariable] of currHierarchy) {
-    // Ignore variables which were already commmitted.
-    if (currVariable._committed) {
-      continue;
-    }
+  for (let [, currItem] of this._currHierarchy) {
     // Avoid performing expensive operations.
-    if (this.commitHierarchyIgnoredItems[currVariable._nameString]) {
+    if (this.commitHierarchyIgnoredItems[currItem._nameString]) {
       continue;
     }
-
-    // Try to get the previous instance of the inspected variable to
-    // determine the difference in state.
-    let prevVariable = prevHierarchy.get(absoluteName);
-    let expanded = false;
-    let changed = false;
-
-    // If the inspected variable existed in a previous hierarchy, check if
-    // the displayed value (a representation of the grip) has changed and if
-    // it was previously expanded.
-    if (prevVariable) {
-      expanded = prevVariable._isExpanded;
-
-      // Only analyze Variables and Properties for displayed value changes.
-      if (currVariable instanceof Variable) {
-        changed = prevVariable._valueString != currVariable._valueString;
-      }
+    let overridden = this.isOverridden(currItem);
+    if (overridden) {
+      currItem.setOverridden(true);
     }
-
-    // Make sure this variable is not handled in ulteror commits for the
-    // same hierarchy.
-    currVariable._committed = true;
-
-    // Re-expand the variable if not previously collapsed.
+    let expanded = !currItem._committed && this.wasExpanded(currItem);
     if (expanded) {
-      currVariable.expand();
+      currItem.expand();
     }
-    // This variable was either not changed or removed, no need to continue.
-    if (!changed) {
-      continue;
+    let changed = !currItem._committed && this.hasChanged(currItem);
+    if (changed) {
+      currItem.flash();
     }
-
-    // Apply an attribute determining the flash type and duration.
-    // Dispatch this action after all the nodes have been drawn, so that
-    // the transition efects can take place.
-    this.window.setTimeout(function(aTarget) {
-      aTarget.addEventListener("transitionend", function onEvent() {
-        aTarget.removeEventListener("transitionend", onEvent, false);
-        aTarget.removeAttribute("changed");
-      }, false);
-      aTarget.setAttribute("changed", "");
-    }.bind(this, currVariable.target), this.lazyEmptyDelay + 1);
+    currItem._committed = true;
+  }
+  if (this.oncommit) {
+    this.oncommit(this);
   }
 };
 
 // Some variables are likely to contain a very large number of properties.
 // It would be a bad idea to re-expand them or perform expensive operations.
-VariablesView.prototype.commitHierarchyIgnoredItems = Object.create(null, {
-  "window": { value: true }
+VariablesView.prototype.commitHierarchyIgnoredItems = Heritage.extend(null, {
+  "window": true,
+  "this": true
 });
+
+/**
+ * Checks if the an item was previously expanded, if it existed in a
+ * previous hierarchy.
+ *
+ * @param Scope | Variable | Property aItem
+ *        The item to verify.
+ * @return boolean
+ *         Whether the item was expanded.
+ */
+VariablesView.prototype.wasExpanded = function(aItem) {
+  if (!(aItem instanceof Scope)) {
+    return false;
+  }
+  let prevItem = this._prevHierarchy.get(aItem._absoluteName || aItem._nameString);
+  return prevItem ? prevItem._isExpanded : false;
+};
+
+/**
+ * Checks if the an item's displayed value (a representation of the grip)
+ * has changed, if it existed in a previous hierarchy.
+ *
+ * @param Variable | Property aItem
+ *        The item to verify.
+ * @return boolean
+ *         Whether the item has changed.
+ */
+VariablesView.prototype.hasChanged = function(aItem) {
+  // Only analyze Variables and Properties for displayed value changes.
+  // Scopes are just collections of Variables and Properties and
+  // don't have a "value", so they can't change.
+  if (!(aItem instanceof Variable)) {
+    return false;
+  }
+  let prevItem = this._prevHierarchy.get(aItem._absoluteName);
+  return prevItem ? prevItem._valueString != aItem._valueString : false;
+};
+
+/**
+ * Checks if the an item was previously expanded, if it existed in a
+ * previous hierarchy.
+ *
+ * @param Scope | Variable | Property aItem
+ *        The item to verify.
+ * @return boolean
+ *         Whether the item was expanded.
+ */
+VariablesView.prototype.isOverridden = function(aItem) {
+  // Only analyze Variables for being overridden in different Scopes.
+  if (!(aItem instanceof Variable) || aItem instanceof Property) {
+    return false;
+  }
+  let currVariableName = aItem._nameString;
+  let parentScopes = this.getParentScopesForVariableOrProperty(aItem);
+
+  for (let otherScope of parentScopes) {
+    for (let [otherVariableName] of otherScope) {
+      if (otherVariableName == currVariableName) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
 
 /**
  * Returns true if the descriptor represents an undefined, null or
@@ -3089,12 +3123,16 @@ VariablesView.getGrip = function(aValue) {
  *
  * @param any aGrip
  *        @see Variable.setGrip
- * @param boolean aConciseFlag
- *        Return a concisely formatted property string.
+ * @param object aOptions
+ *        Options:
+ *        - concise: boolean that tells you want a concisely formatted string.
+ *        - noStringQuotes: boolean that tells to not quote strings.
+ *        - noEllipsis: boolean that tells to not add an ellipsis after the
+ *        initial text of a longString.
  * @return string
  *         The formatted property string.
  */
-VariablesView.getString = function(aGrip, aConciseFlag) {
+VariablesView.getString = function(aGrip, aOptions = {}) {
   if (aGrip && typeof aGrip == "object") {
     switch (aGrip.type) {
       case "undefined":
@@ -3104,18 +3142,30 @@ VariablesView.getString = function(aGrip, aConciseFlag) {
       case "-Infinity":
       case "-0":
         return aGrip.type;
-      case "longString":
-        return "\"" + aGrip.initial + "\"";
       default:
-        if (!aConciseFlag) {
-          return "[" + aGrip.type + " " + aGrip.class + "]";
+        let stringifier = VariablesView.stringifiers.byType[aGrip.type];
+        if (stringifier) {
+          let result = stringifier(aGrip, aOptions);
+          if (result != null) {
+            return result;
+          }
         }
-        return aGrip.class;
+
+        if (aGrip.displayString) {
+          return VariablesView.getString(aGrip.displayString, aOptions);
+        }
+
+        if (aGrip.type == "object" && aOptions.concise) {
+          return aGrip.class;
+        }
+
+        return "[" + aGrip.type + " " + aGrip.class + "]";
     }
   }
+
   switch (typeof aGrip) {
     case "string":
-      return "\"" + aGrip + "\"";
+      return VariablesView.stringifiers.byType.string(aGrip, aOptions);
     case "boolean":
       return aGrip ? "true" : "false";
     case "number":
@@ -3125,6 +3175,367 @@ VariablesView.getString = function(aGrip, aConciseFlag) {
     default:
       return aGrip + "";
   }
+};
+
+/**
+ * The VariablesView stringifiers are used by VariablesView.getString(). These
+ * are organized by object type, object class and by object actor preview kind.
+ * Some objects share identical ways for previews, for example Arrays, Sets and
+ * NodeLists.
+ *
+ * Any stringifier function must return a string. If null is returned, * then
+ * the default stringifier will be used. When invoked, the stringifier is
+ * given the same two arguments as those given to VariablesView.getString().
+ */
+VariablesView.stringifiers = {};
+
+VariablesView.stringifiers.byType = {
+  string: function(aGrip, {noStringQuotes}) {
+    if (noStringQuotes) {
+      return aGrip;
+    }
+    return uneval(aGrip);
+  },
+
+  longString: function({initial}, {noStringQuotes, noEllipsis}) {
+    let ellipsis = noEllipsis ? "" : Scope.ellipsis;
+    if (noStringQuotes) {
+      return initial + ellipsis;
+    }
+    let result = uneval(initial);
+    if (!ellipsis) {
+      return result;
+    }
+    return result.substr(0, result.length - 1) + ellipsis + '"';
+  },
+
+  object: function(aGrip, aOptions) {
+    let {preview} = aGrip;
+    let stringifier;
+    if (preview && preview.kind) {
+      stringifier = VariablesView.stringifiers.byObjectKind[preview.kind];
+    }
+    if (!stringifier && aGrip.class) {
+      stringifier = VariablesView.stringifiers.byObjectClass[aGrip.class];
+    }
+    if (stringifier) {
+      return stringifier(aGrip, aOptions);
+    }
+    return null;
+  },
+}; // VariablesView.stringifiers.byType
+
+VariablesView.stringifiers.byObjectClass = {
+  Function: function(aGrip, {concise}) {
+    // TODO: Bug 948484 - support arrow functions and ES6 generators
+
+    let name = aGrip.userDisplayName || aGrip.displayName || aGrip.name || "";
+    name = VariablesView.getString(name, { noStringQuotes: true });
+
+    // TODO: Bug 948489 - Support functions with destructured parameters and
+    // rest parameters
+    let params = aGrip.parameterNames || "";
+    if (!concise) {
+      return "function " + name + "(" + params + ")";
+    }
+    return (name || "function ") + "(" + params + ")";
+  },
+
+  RegExp: function({displayString}) {
+    return VariablesView.getString(displayString, { noStringQuotes: true });
+  },
+
+  Date: function({preview}) {
+    if (!preview || !("timestamp" in preview)) {
+      return null;
+    }
+
+    if (typeof preview.timestamp != "number") {
+      return new Date(preview.timestamp).toString(); // invalid date
+    }
+
+    return "Date " + new Date(preview.timestamp).toISOString();
+  },
+}; // VariablesView.stringifiers.byObjectClass
+
+VariablesView.stringifiers.byObjectKind = {
+  ArrayLike: function(aGrip, {concise}) {
+    let {preview} = aGrip;
+    if (concise) {
+      return aGrip.class + "[" + preview.length + "]";
+    }
+
+    if (!preview.items) {
+      return null;
+    }
+
+    let shown = 0, result = [], lastHole = null;
+    for (let item of preview.items) {
+      if (item === null) {
+        if (lastHole !== null) {
+          result[lastHole] += ",";
+        } else {
+          result.push("");
+        }
+        lastHole = result.length - 1;
+      } else {
+        lastHole = null;
+        result.push(VariablesView.getString(item, { concise: true }));
+      }
+      shown++;
+    }
+
+    if (shown < preview.length) {
+      let n = preview.length - shown;
+      result.push(VariablesView.stringifiers._getNMoreString(n));
+    } else if (lastHole !== null) {
+      // make sure we have the right number of commas...
+      result[lastHole] += ",";
+    }
+
+    let prefix = aGrip.class == "Array" ? "" : aGrip.class + " ";
+    return prefix + "[" + result.join(", ") + "]";
+  },
+
+  MapLike: function(aGrip, {concise}) {
+    let {preview} = aGrip;
+    if (concise || !preview.entries) {
+      let size = typeof preview.size == "number" ?
+                   "[" + preview.size + "]" : "";
+      return aGrip.class + size;
+    }
+
+    let entries = [];
+    for (let [key, value] of preview.entries) {
+      let keyString = VariablesView.getString(key, {
+        concise: true,
+        noStringQuotes: true,
+      });
+      let valueString = VariablesView.getString(value, { concise: true });
+      entries.push(keyString + ": " + valueString);
+    }
+
+    if (typeof preview.size == "number" && preview.size > entries.length) {
+      let n = preview.size - entries.length;
+      entries.push(VariablesView.stringifiers._getNMoreString(n));
+    }
+
+    return aGrip.class + " {" + entries.join(", ") + "}";
+  },
+
+  ObjectWithText: function(aGrip, {concise}) {
+    if (concise) {
+      return aGrip.class;
+    }
+
+    return aGrip.class + " " + VariablesView.getString(aGrip.preview.text);
+  },
+
+  ObjectWithURL: function(aGrip, {concise}) {
+    let result = aGrip.class;
+    let url = aGrip.preview.url;
+    if (!VariablesView.isFalsy({ value: url })) {
+      result += " \u2192 " + WebConsoleUtils.abbreviateSourceURL(url,
+                             { onlyCropQuery: !concise });
+    }
+    return result;
+  },
+
+  // Stringifier for any kind of object.
+  Object: function(aGrip, {concise}) {
+    if (concise) {
+      return aGrip.class;
+    }
+
+    let {preview} = aGrip;
+    let props = [];
+    for (let key of Object.keys(preview.ownProperties || {})) {
+      let value = preview.ownProperties[key];
+      let valueString = "";
+      if (value.get) {
+        valueString = "Getter";
+      } else if (value.set) {
+        valueString = "Setter";
+      } else {
+        valueString = VariablesView.getString(value.value, { concise: true });
+      }
+      props.push(key + ": " + valueString);
+    }
+
+    for (let key of Object.keys(preview.safeGetterValues || {})) {
+      let value = preview.safeGetterValues[key];
+      let valueString = VariablesView.getString(value.getterValue,
+                                                { concise: true });
+      props.push(key + ": " + valueString);
+    }
+
+    if (!props.length) {
+      return null;
+    }
+
+    if (preview.ownPropertiesLength) {
+      let previewLength = Object.keys(preview.ownProperties).length;
+      let diff = preview.ownPropertiesLength - previewLength;
+      if (diff > 0) {
+        props.push(VariablesView.stringifiers._getNMoreString(diff));
+      }
+    }
+
+    let prefix = aGrip.class != "Object" ? aGrip.class + " " : "";
+    return prefix + "{" + props.join(", ") + "}";
+  }, // Object
+
+  Error: function(aGrip, {concise}) {
+    let {preview} = aGrip;
+    let name = VariablesView.getString(preview.name, { noStringQuotes: true });
+    if (concise) {
+      return name || aGrip.class;
+    }
+
+    let msg = name + ": " +
+              VariablesView.getString(preview.message, { noStringQuotes: true });
+
+    if (!VariablesView.isFalsy({ value: preview.stack })) {
+      msg += "\n" + STR.GetStringFromName("variablesViewErrorStacktrace") +
+             "\n" + preview.stack;
+    }
+
+    return msg;
+  },
+
+  DOMException: function(aGrip, {concise}) {
+    let {preview} = aGrip;
+    if (concise) {
+      return preview.name || aGrip.class;
+    }
+
+    let msg = aGrip.class + " [" + preview.name + ": " +
+              VariablesView.getString(preview.message) + "\n" +
+              "code: " + preview.code + "\n" +
+              "nsresult: 0x" + (+preview.result).toString(16);
+
+    if (preview.filename) {
+      msg += "\nlocation: " + preview.filename;
+      if (preview.lineNumber) {
+        msg += ":" + preview.lineNumber;
+      }
+    }
+
+    return msg + "]";
+  },
+
+  DOMEvent: function(aGrip, {concise}) {
+    let {preview} = aGrip;
+    if (!preview.type) {
+      return null;
+    }
+
+    if (concise) {
+      return aGrip.class + " " + preview.type;
+    }
+
+    let result = preview.type;
+
+    if (preview.eventKind == "key" && preview.modifiers &&
+        preview.modifiers.length) {
+      result += " " + preview.modifiers.join("-");
+    }
+
+    let props = [];
+    if (preview.target) {
+      let target = VariablesView.getString(preview.target, { concise: true });
+      props.push("target: " + target);
+    }
+
+    for (let prop in preview.properties) {
+      let value = preview.properties[prop];
+      props.push(prop + ": " + VariablesView.getString(value, { concise: true }));
+    }
+
+    return result + " {" + props.join(", ") + "}";
+  }, // DOMEvent
+
+  DOMNode: function(aGrip, {concise}) {
+    let {preview} = aGrip;
+
+    switch (preview.nodeType) {
+      case Ci.nsIDOMNode.DOCUMENT_NODE: {
+        let location = WebConsoleUtils.abbreviateSourceURL(preview.location,
+                                                           { onlyCropQuery: !concise });
+        return aGrip.class + " \u2192 " + location;
+      }
+
+      case Ci.nsIDOMNode.ATTRIBUTE_NODE: {
+        let value = VariablesView.getString(preview.value, { noStringQuotes: true });
+        return preview.nodeName + '="' + escapeHTML(value) + '"';
+      }
+
+      case Ci.nsIDOMNode.TEXT_NODE:
+        return preview.nodeName + " " +
+               VariablesView.getString(preview.textContent);
+
+      case Ci.nsIDOMNode.COMMENT_NODE: {
+        let comment = VariablesView.getString(preview.textContent,
+                                              { noStringQuotes: true });
+        return "<!--" + comment + "-->";
+      }
+
+      case Ci.nsIDOMNode.DOCUMENT_FRAGMENT_NODE: {
+        if (concise || !preview.childNodes) {
+          return aGrip.class + "[" + preview.childNodesLength + "]";
+        }
+        let nodes = [];
+        for (let node of preview.childNodes) {
+          nodes.push(VariablesView.getString(node));
+        }
+        if (nodes.length < preview.childNodesLength) {
+          let n = preview.childNodesLength - nodes.length;
+          nodes.push(VariablesView.stringifiers._getNMoreString(n));
+        }
+        return aGrip.class + " [" + nodes.join(", ") + "]";
+      }
+
+      case Ci.nsIDOMNode.ELEMENT_NODE: {
+        let attrs = preview.attributes;
+        if (!concise) {
+          let n = 0, result = "<" + preview.nodeName;
+          for (let name in attrs) {
+            let value = VariablesView.getString(attrs[name],
+                                                { noStringQuotes: true });
+            result += " " + name + '="' + escapeHTML(value) + '"';
+            n++;
+          }
+          if (preview.attributesLength > n) {
+            result += " " + Scope.ellipsis;
+          }
+          return result + ">";
+        }
+
+        let result = "<" + preview.nodeName;
+        if (attrs.id) {
+          result += "#" + attrs.id;
+        }
+        return result + ">";
+      }
+
+      default:
+        return null;
+    }
+  }, // DOMNode
+}; // VariablesView.stringifiers.byObjectKind
+
+
+/**
+ * Get the "N more…" formatted string, given an N. This is used for displaying
+ * how many elements are not displayed in an object preview (eg. an array).
+ *
+ * @private
+ * @param number aNumber
+ * @return string
+ */
+VariablesView.stringifiers._getNMoreString = function(aNumber) {
+  let str = STR.GetStringFromName("variablesViewMoreObjects");
+  return PluralForm.get(aNumber, str).replace("#1", aNumber);
 };
 
 /**
@@ -3178,6 +3589,21 @@ let generateId = (function() {
     return aName.toLowerCase().trim().replace(/\s+/g, "-") + (++count);
   };
 })();
+
+/**
+ * Escape some HTML special characters. We do not need full HTML serialization
+ * here, we just want to make strings safe to display in HTML attributes, for
+ * the stringifiers.
+ *
+ * @param string aString
+ * @return string
+ */
+function escapeHTML(aString) {
+  return aString.replace(/&/g, "&amp;")
+                .replace(/"/g, "&quot;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;");
+}
 
 
 /**
@@ -3247,9 +3673,6 @@ Editable.prototype = {
     let input = this._input = this._variable.document.createElement("textbox");
     input.className = "plain " + this.className;
     input.setAttribute("value", initialString);
-    if (!this._variable._variablesView.alignedValues) {
-      input.setAttribute("flex", "1");
-    }
 
     // Replace the specified label with a textbox input element.
     label.parentNode.replaceChild(input, label);
@@ -3274,7 +3697,6 @@ Editable.prototype = {
     this._variable.collapse();
     this._variable.hideArrow();
     this._variable.locked = true;
-    this._variable._stopThrobber();
   },
 
   /**
@@ -3292,7 +3714,6 @@ Editable.prototype = {
     this._variable.locked = false;
     this._variable.twisty = this._prevExpandable;
     this._variable.expanded = this._prevExpanded;
-    this._variable._stopThrobber();
   },
 
   /**
@@ -3408,7 +3829,7 @@ EditableNameAndValue.create = Editable.create;
 
 EditableNameAndValue.prototype = Heritage.extend(EditableName.prototype, {
   _reset: function(e) {
-    // Hide the Varible or Property if the user presses escape.
+    // Hide the Variable or Property if the user presses escape.
     this._variable.remove();
     this.deactivate();
   },

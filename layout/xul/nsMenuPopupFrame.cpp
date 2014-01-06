@@ -29,7 +29,7 @@
 #include "nsBoxLayoutState.h"
 #include "nsIScrollableFrame.h"
 #include "nsIRootBox.h"
-#include "nsIDocShellTreeItem.h"
+#include "nsIDocShell.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
 #include "nsLayoutUtils.h"
@@ -147,8 +147,7 @@ nsMenuPopupFrame::Init(nsIContent*      aContent,
     mIsDragPopup = true;
   }
 
-  nsCOMPtr<nsISupports> cont = PresContext()->GetContainer();
-  nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
+  nsCOMPtr<nsIDocShellTreeItem> dsti = PresContext()->GetDocShell();
   int32_t type = -1;
   if (dsti && NS_SUCCEEDED(dsti->GetItemType(&type)) &&
       type == nsIDocShellTreeItem::typeChrome)
@@ -280,8 +279,7 @@ nsMenuPopupFrame::CreateWidgetForView(nsView* aView)
   // should be in front of it.
   nsCOMPtr<nsIWidget> parentWidget;
   if (widgetData.mPopupLevel != ePopupLevelTop) {
-    nsCOMPtr<nsISupports> cont = PresContext()->GetContainer();
-    nsCOMPtr<nsIDocShellTreeItem> dsti = do_QueryInterface(cont);
+    nsCOMPtr<nsIDocShellTreeItem> dsti = PresContext()->GetDocShell();
     if (!dsti)
       return NS_ERROR_FAILURE;
 
@@ -1667,7 +1665,7 @@ nsMenuPopupFrame::FindMenuWithShortcut(nsIDOMKeyEvent* aKeyEvent, bool& doAction
     return nullptr;
   }
   else {
-    PRUnichar uniChar = ToLowerCase(static_cast<PRUnichar>(charCode));
+    char16_t uniChar = ToLowerCase(static_cast<char16_t>(charCode));
     if (isMenu || // Menu supports only first-letter navigation
         keyTime - lastKeyTime > INC_TYP_INTERVAL) // Interval too long, treat as new typing
       mIncrementalString = uniChar;

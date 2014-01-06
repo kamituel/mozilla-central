@@ -703,7 +703,7 @@ nsGeolocationService::~nsGeolocationService()
 }
 
 void
-nsGeolocationService::HandleMozsettingChanged(const PRUnichar* aData)
+nsGeolocationService::HandleMozsettingChanged(const char16_t* aData)
 {
     // The string that we're interested in will be a JSON string that looks like:
     //  {"key":"gelocation.enabled","value":true}
@@ -759,7 +759,7 @@ nsGeolocationService::HandleMozsettingValue(const bool aValue)
 NS_IMETHODIMP
 nsGeolocationService::Observe(nsISupports* aSubject,
                               const char* aTopic,
-                              const PRUnichar* aData)
+                              const char16_t* aData)
 {
   if (!strcmp("quit-application", aTopic)) {
     nsCOMPtr<nsIObserverService> obs = services::GetObserverService();
@@ -871,7 +871,7 @@ nsGeolocationService::StartDevice(nsIPrincipal *aPrincipal)
 
   obs->NotifyObservers(mProvider,
                        "geolocation-device-events",
-                       NS_LITERAL_STRING("starting").get());
+                       MOZ_UTF16("starting"));
 
   return NS_OK;
 }
@@ -951,7 +951,7 @@ nsGeolocationService::StopDevice()
   mProvider->Shutdown();
   obs->NotifyObservers(mProvider,
                        "geolocation-device-events",
-                       NS_LITERAL_STRING("shutdown").get());
+                       MOZ_UTF16("shutdown"));
 }
 
 StaticRefPtr<nsGeolocationService> nsGeolocationService::sService;

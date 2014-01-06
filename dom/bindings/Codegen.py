@@ -29,27 +29,6 @@ INSTANCE_RESERVED_SLOTS = 3
 def memberReservedSlot(member):
     return "(DOM_INSTANCE_RESERVED_SLOTS + %d)" % member.slotIndex
 
-def replaceFileIfChanged(filename, newContents):
-    """
-    Read a copy of the old file, so that we don't touch it if it hasn't changed.
-    Returns True if the file was updated, false otherwise.
-    """
-    oldFileContents = ""
-    try:
-        oldFile = open(filename, 'rb')
-        oldFileContents = ''.join(oldFile.readlines())
-        oldFile.close()
-    except:
-        pass
-
-    if newContents == oldFileContents:
-        return False
-
-    f = open(filename, 'wb')
-    f.write(newContents)
-    f.close()
-    return True
-
 def toStringBool(arg):
     return str(not not arg).lower()
 
@@ -860,8 +839,8 @@ def UnionTypes(descriptors, dictionaries, callbacks, config):
                     # And if it needs rooting, we need RootedDictionary too
                     if typeNeedsRooting(f):
                         headers.add("mozilla/dom/RootedDictionary.h")
-                elif t.isPrimitive():
-                    implheaders.add("mozilla/dom/PrimitiveConversions.h")
+                elif f.isEnum():
+                    headers.add(CGHeaders.getDeclarationFilename(f))
 
     map(addInfoForType, getAllTypes(descriptors, dictionaries, callbacks))
 
@@ -897,7 +876,15 @@ def UnionConversions(descriptors, dictionaries, callbacks, config):
                     if f.isSpiderMonkeyInterface():
                         headers.add("jsfriendapi.h")
                         headers.add("mozilla/dom/TypedArray.h")
-                    elif not f.inner.isExternal():
+                    elif f.inner.isExternal():
+                        providers = getRelevantProviders(descriptor, config)
+                        for p in providers:
+                            try:
+                                typeDesc = p.getDescriptor(f.inner.identifier.name)
+                            except NoSuchDescriptorError:
+                                continue
+                            headers.add(typeDesc.headerFile)
+                    else:
                         headers.add(CGHeaders.getDeclarationFilename(f.inner))
                     # Check for whether we have a possibly-XPConnect-implemented
                     # interface.  If we do, the right descriptor will come from
@@ -2155,18 +2142,9 @@ class CGConstructorEnabledViaFunc(CGAbstractMethod):
         return "  return %s(cx, obj);" % func[0]
 
 def CreateBindingJSObject(descriptor, properties, parent):
-    # When we have unforgeable properties, we're going to define them
-    # on our object, so we have to root it when we create it, so it
-    # won't suddenly die while defining the unforgeables.  Similarly,
-    # if we have members in slots we'll have to call the getters which
-    # could also GC.
-    needRoot = (properties.unforgeableAttrs.hasNonChromeOnly() or
-                properties.unforgeableAttrs.hasChromeOnly() or
-                descriptor.interface.hasMembersInSlots())
-    if needRoot:
-        objDecl = "  JS::Rooted<JSObject*> obj(aCx);\n"
-    else:
-        objDecl = "  JSObject *obj;\n"
+    # We don't always need to root obj, but there are a variety
+    # of cases where we do, so for simplicity, just always root it.
+    objDecl = "  JS::Rooted<JSObject*> obj(aCx);\n"
     if descriptor.proxy:
         create = """  JS::Rooted<JS::Value> proxyPrivateVal(aCx, JS::PrivateValue(aObject));
   obj = NewProxyObject(aCx, DOMProxyHandler::getInstance(),
@@ -2616,17 +2594,36 @@ class CastableObjectUnwrapper():
     If isCallbackReturnValue is "JSImpl" and our descriptor is also
     JS-implemented, fall back to just creating the right object if what we
     have isn't one already.
+
+    If allowCrossOriginObj is True, then we'll first do an
+    UncheckedUnwrap and then operate on the result.
     """
     def __init__(self, descriptor, source, target, codeOnFailure,
-                 exceptionCode=None, isCallbackReturnValue=False):
+                 exceptionCode=None, isCallbackReturnValue=False,
+                 allowCrossOriginObj=False):
         if not exceptionCode:
             exceptionCode = codeOnFailure
         self.substitution = { "type" : descriptor.nativeType,
                               "protoID" : "prototypes::id::" + descriptor.name,
-                              "source" : source,
                               "target" : target,
                               "codeOnFailure" : CGIndenter(CGGeneric(codeOnFailure)).define(),
                               "exceptionCode" : CGIndenter(CGGeneric(exceptionCode), 4).define() }
+        if allowCrossOriginObj:
+            self.substitution["uncheckedObjDecl"] = (
+                "\n  JS::Rooted<JSObject*> uncheckedObj(cx, js::UncheckedUnwrap(%s));" % source)
+            self.substitution["source"] = "uncheckedObj"
+            xpconnectUnwrap = (
+                "nsresult rv;\n"
+                "{ // Scope for the JSAutoCompartment, because we only\n"
+                "  // want to be in that compartment for the UnwrapArg call.\n"
+                "  JSAutoCompartment ac(cx, ${source});\n"
+                "  rv = UnwrapArg<${type}>(cx, val, &objPtr, &objRef.ptr, &val);\n"
+                "}\n")
+        else:
+            self.substitution["uncheckedObjDecl"] = ""
+            self.substitution["source"] = source
+            xpconnectUnwrap = "nsresult rv = UnwrapArg<${type}>(cx, val, &objPtr, &objRef.ptr, &val);\n"
+
         if descriptor.hasXPConnectImpls:
             # We don't use xpc_qsUnwrapThis because it will always throw on
             # unwrap failure, whereas we want to control whether we throw or
@@ -2634,8 +2631,8 @@ class CastableObjectUnwrapper():
             self.substitution["codeOnFailure"] = CGIndenter(CGGeneric(string.Template(
                 "${type} *objPtr;\n"
                 "SelfRef objRef;\n"
-                "JS::Rooted<JS::Value> val(cx, JS::ObjectValue(*${source}));\n"
-                "nsresult rv = UnwrapArg<${type}>(cx, val, &objPtr, &objRef.ptr, &val);\n"
+                "JS::Rooted<JS::Value> val(cx, JS::ObjectValue(*${source}));\n" +
+                xpconnectUnwrap +
                 "if (NS_FAILED(rv)) {\n"
                 "${codeOnFailure}\n"
                 "}\n"
@@ -2668,7 +2665,7 @@ class CastableObjectUnwrapper():
     def __str__(self):
         codeOnFailure = self.substitution["codeOnFailure"] % {'securityError': 'rv == NS_ERROR_XPC_SECURITY_MANAGER_VETO'}
         return string.Template(
-"""{
+"""{${uncheckedObjDecl}
   nsresult rv = UnwrapObject<${protoID}, ${type}>(${source}, ${target});
   if (NS_FAILED(rv)) {
 ${codeOnFailure}
@@ -2763,13 +2760,13 @@ def getHandleDefault(defaultValue):
 
 def handleDefaultStringValue(defaultValue, method):
     """
-    Returns a string which ends up calling 'method' with a (PRUnichar*, length)
+    Returns a string which ends up calling 'method' with a (char16_t*, length)
     pair that sets this string default value.  This string is suitable for
     passing as the second argument of handleDefault; in particular it does not
     end with a ';'
     """
     assert defaultValue.type.isDOMString()
-    return ("static const PRUnichar data[] = { %s };\n"
+    return ("static const char16_t data[] = { %s };\n"
             "%s(data, ArrayLength(data) - 1)" %
             (", ".join(["'" + char + "'" for char in
                         defaultValue.value] + ["0"]),
@@ -3110,7 +3107,9 @@ for (uint32_t i = 0; i < length; ++i) {
 
         unionArgumentObj = "${declName}" if isMember else "${holderName}"
         if nullable:
-            unionArgumentObj += ".ref()"
+            # If we're a member, we're a Nullable, which hasn't been told it has
+            # a value.  Otherwise we're an already-constructed Maybe.
+            unionArgumentObj += ".SetValue()" if isMember else ".ref()"
 
         memberTypes = type.flatMemberTypes
         names = []
@@ -3277,7 +3276,7 @@ for (uint32_t i = 0; i < length; ++i) {
                                  exceptionCodeIndented.define()))
         templateBody = CGWrapper(CGIndenter(CGList([templateBody, throw], "\n")), pre="{\n", post="\n}")
 
-        typeName = ("Owning" if isMember else "") + type.name
+        typeName = CGUnionStruct.unionTypeDecl(type, isMember)
         argumentTypeName = typeName + "Argument"
         if nullable:
             typeName = "Nullable<" + typeName + " >"
@@ -3300,24 +3299,32 @@ for (uint32_t i = 0; i < length; ++i) {
                                       extraConditionForNull=extraConditionForNull)
 
         declType = CGGeneric(typeName)
-        holderType = CGGeneric(argumentTypeName) if not isMember else None
+        if isMember:
+            holderType = None
+        else:
+            holderType = CGGeneric(argumentTypeName)
+            if nullable:
+                holderType = CGTemplatedType("Maybe", holderType)
 
         # If we're isOptional and not nullable the normal optional handling will
-        # handle lazy construction of our holder.  If we're nullable we do it
-        # all by hand because we do not want our holder constructed if we're
-        # null.
+        # handle lazy construction of our holder.  If we're nullable and not
+        # isMember we do it all by hand because we do not want our holder
+        # constructed if we're null.  But if we're isMember we don't have a
+        # holder anyway, so we can do the normal Optional codepath.
         declLoc = "${declName}"
         constructDecl = None
         if nullable:
-            if isOptional:
+            if isOptional and not isMember:
                 holderArgs = "${declName}.Value().SetValue()"
                 declType = CGTemplatedType("Optional", declType)
                 constructDecl = CGGeneric("${declName}.Construct();")
                 declLoc = "${declName}.Value()"
             else:
                 holderArgs = "${declName}.SetValue()"
-            holderType = CGTemplatedType("Maybe", holderType)
-            constructHolder = CGGeneric("${holderName}.construct(%s);" % holderArgs)
+            if holderType is not None:
+                constructHolder = CGGeneric("${holderName}.construct(%s);" % holderArgs)
+            else:
+                constructHolder = None
             # Don't need to pass those args when the holder is being constructed
             holderArgs = None
         else:
@@ -3376,7 +3383,7 @@ for (uint32_t i = 0; i < length; ++i) {
                                         declType=declType,
                                         holderType=holderType,
                                         holderArgs=holderArgs,
-                                        dealWithOptional=isOptional and not nullable)
+                                        dealWithOptional=isOptional and (not nullable or isMember))
 
     if type.isGeckoInterface():
         assert not isEnforceRange and not isClamp
@@ -3845,7 +3852,7 @@ for (uint32_t i = 0; i < length; ++i) {
         if not isMember and isCallbackReturnValue:
             # Go ahead and just convert directly into our actual return value
             declType = CGWrapper(declType, post="&")
-            declArgs = "retval"
+            declArgs = "aRetVal"
         elif not isMember and typeNeedsRooting(type):
             declType = CGTemplatedType("RootedDictionary", declType);
             declArgs = "cx"
@@ -4195,8 +4202,9 @@ def getMaybeWrapValueFuncForType(type):
         if type.nullable():
             return "MaybeWrapObjectOrNullValue"
         return "MaybeWrapObjectValue"
-    # Spidermonkey interfaces are never DOM objects
-    if type.isSpiderMonkeyInterface():
+    # Spidermonkey interfaces are never DOM objects.  Neither are sequences or
+    # dictionaries, since those are always plain JS objects.
+    if type.isSpiderMonkeyInterface() or type.isDictionary() or type.isSequence():
         if type.nullable():
             return "MaybeWrapNonDOMObjectOrNullValue"
         return "MaybeWrapNonDOMObjectValue"
@@ -4663,9 +4671,21 @@ def getRetvalDeclarationForType(returnType, descriptorProvider,
         name = returnType.unroll().identifier.name
         return CGGeneric("nsRefPtr<%s>" % name), False, None, None
     if returnType.isAny():
-        return CGGeneric("JS::Value"), False, None, None
+        result = CGGeneric("JS::Value")
+        if isMember:
+            resultArgs = None
+        else:
+            result = CGTemplatedType("JS::Rooted", result)
+            resultArgs = "cx"
+        return result, False, None, resultArgs
     if returnType.isObject() or returnType.isSpiderMonkeyInterface():
-        return CGGeneric("JSObject*"), False, None, None
+        result = CGGeneric("JSObject*")
+        if isMember:
+            resultArgs = None
+        else:
+            result = CGTemplatedType("JS::Rooted", result)
+            resultArgs = "cx"
+        return result, False, None, resultArgs
     if returnType.isSequence():
         nullable = returnType.nullable()
         if nullable:
@@ -4702,7 +4722,7 @@ def getRetvalDeclarationForType(returnType, descriptorProvider,
             resultArgs = None
         return result, True, None, resultArgs
     if returnType.isUnion():
-        result = CGGeneric("Owning" + returnType.unroll().name)
+        result = CGGeneric(CGUnionStruct.unionTypeName(returnType.unroll(), True))
         if not isMember and typeNeedsRooting(returnType):
             if returnType.nullable():
                 result = CGTemplatedType("NullableRootedUnion", result)
@@ -4931,6 +4951,9 @@ def wrapTypeIntoCurrentCompartment(type, value, isMember=True):
 
     if type.isUnion():
         memberWraps = []
+        if type.nullable():
+            type = type.inner
+            value = "%s.Value()" % value
         for member in type.flatMemberTypes:
             memberName = getUnionMemberName(member)
             memberWrap = wrapTypeIntoCurrentCompartment(
@@ -5139,7 +5162,8 @@ if (!${obj}) {
                    (self.returnType.isGeckoInterface() and
                     self.descriptor.getDescriptor(self.returnType.unroll().inner.identifier.name).nativeOwnership == 'owned'))
 
-        if self.idlNode.isAttr() and self.idlNode.slotIndex is not None:
+        setSlot = self.idlNode.isAttr() and self.idlNode.slotIndex is not None
+        if setSlot:
             # For the case of Cached attributes, go ahead and preserve our
             # wrapper if needed.  We need to do this because otherwise the
             # wrapper could get garbage-collected and the cached value would
@@ -5150,26 +5174,28 @@ if (!${obj}) {
             # already-preserved wrapper.
             if (self.idlNode.getExtendedAttribute("Cached") and
                 self.descriptor.wrapperCache):
-                preserveWrapper = "  PreserveWrapper(self);\n"
+                preserveWrapper = "PreserveWrapper(self);\n"
             else:
                 preserveWrapper = ""
+            if self.idlNode.getExtendedAttribute("Frozen"):
+                assert self.idlNode.type.isSequence()
+                freezeValue = CGGeneric(
+                    "if (!JS_FreezeObject(cx, &args.rval().toObject())) {\n"
+                    "  return false;\n"
+                    "}")
+                if self.idlNode.type.nullable():
+                    freezeValue = CGIfWrapper(freezeValue,
+                                              "args.rval().isObject()")
+                freezeValue = freezeValue.define() + "\n"
+            else:
+                freezeValue = ""
+
             successCode = (
-                "// Be careful here: Have to wrap the value into the\n"
-                "// compartment of reflector before storing, since we might\n"
-                "// be coming in via Xrays and the value is already in the\n"
-                "// caller compartment.\n"
-                "{ // Scope for tempVal\n"
-                "  JS::Rooted<JS::Value> tempVal(cx, args.rval());\n"
-                "  JSAutoCompartment ac(cx, reflector);\n"
-                "  if (!%s(cx, &tempVal)) {\n"
-                "    return false;\n"
-                "  }\n"
-                "  js::SetReservedSlot(reflector, %s, tempVal);\n"
                 "%s"
-                "}\n"
-                "return true;" %
-                (getMaybeWrapValueFuncForType(self.idlNode.type),
-                 memberReservedSlot(self.idlNode), preserveWrapper))
+                "js::SetReservedSlot(reflector, %s, args.rval());\n"
+                "%s"
+                "break;" %
+                (freezeValue, memberReservedSlot(self.idlNode), preserveWrapper))
         else:
             successCode = None
 
@@ -5179,14 +5205,28 @@ if (!${obj}) {
                                  'successCode': successCode,
                                  }
         try:
-            return wrapForType(self.returnType, self.descriptor,
-                               resultTemplateValues)
+            wrapCode = CGGeneric(wrapForType(self.returnType, self.descriptor,
+                                             resultTemplateValues))
         except MethodNotNewObjectError, err:
             assert not returnsNewObject
             raise TypeError("%s being returned from non-NewObject method or property %s.%s" %
                             (err.typename,
                              self.descriptor.interface.identifier.name,
                              self.idlNode.identifier.name))
+        if setSlot:
+            # We need to make sure that our initial wrapping is done
+            # in the reflector compartment, but that we finally set
+            # args.rval() in the caller compartment.
+            wrapCode = CGWrapper(
+                CGIndenter(wrapCode),
+                pre=("do { // block we break out of when done wrapping\n"
+                     "  // Make sure we wrap and store in the slot in reflector's compartment\n"
+                     "  JSAutoCompartment ac(cx, reflector);\n"),
+                post=("\n} while (0);\n"
+                      "// And now make sure args.rval() is in the caller compartment\n"
+                      "return %s(cx, args.rval());" %
+                      getMaybeWrapValueFuncForType(self.idlNode.type)))
+        return wrapCode.define()
 
     def getErrorReport(self):
         jsImplemented = ""
@@ -5674,8 +5714,21 @@ class CGSetterCall(CGPerSignatureCall):
                                     nativeMethodName, attr.isStatic(),
                                     descriptor, attr, setter=True)
     def wrap_return_value(self):
+        attr = self.idlNode
+        if self.descriptor.wrapperCache and attr.slotIndex is not None:
+            if attr.getExtendedAttribute("StoreInSlot"):
+                args = "cx, self"
+            else:
+                args = "self"
+            clearSlot = ("ClearCached%sValue(%s);\n" %
+                         (MakeNativeName(self.idlNode.identifier.name), args))
+        else:
+            clearSlot = ""
+
         # We have no return value
-        return "\nreturn true;"
+        return ("\n"
+                "%s"
+                "return true;" % clearSlot)
 
 class CGAbstractBindingMethod(CGAbstractStaticMethod):
     """
@@ -5742,18 +5795,11 @@ class CGAbstractBindingMethod(CGAbstractStaticMethod):
                 CGGeneric("%s* self;" % self.descriptor.nativeType)
                 ], "\n")
 
-        objName = "uncheckedObj" if self.allowCrossOriginThis else "obj"
         unwrapThis = CGGeneric(
             str(CastableObjectUnwrapper(
                         self.descriptor,
-                        objName, "self", self.unwrapFailureCode)))
-        if self.allowCrossOriginThis:
-            unwrapThis = CGWrapper(
-                CGIndenter(unwrapThis),
-                pre=("{ // Scope for the uncheckedObj JSAutoCompartment\n"
-                     "  JS::Rooted<JSObject*> uncheckedObj(cx, js::UncheckedUnwrap(obj));\n"
-                     "  JSAutoCompartment ac(cx, uncheckedObj);\n"),
-                post="\n}")
+                        "obj", "self", self.unwrapFailureCode,
+                        allowCrossOriginObj=self.allowCrossOriginThis)))
         return CGList([ CGIndenter(getThis), CGIndenter(unwrapThis),
                         self.generate_code() ], "\n").define()
 
@@ -6345,8 +6391,16 @@ class CGMemberJITInfo(CGThing):
                 # one of them must take arguments.
                 methodInfal = False
                 args = None
+                movable = False
             else:
                 sig = sigs[0]
+                # For pure methods, it's OK to set movable to our notion of
+                # infallible on the C++ side, without considering argument
+                # conversions, since argument conversions that can reliably
+                # throw would be effectful anyway and the jit doesn't move
+                # effectful things.
+                hasInfallibleImpl = "infallible" in self.descriptor.getExtendedAttributes(self.member)
+                movable = methodPure and hasInfallibleImpl
                 # XXXbz can we move the smarts about fallibility due to arg
                 # conversions into the JIT, using our new args stuff?
                 if (len(sig[1]) != 0 or
@@ -6354,19 +6408,19 @@ class CGMemberJITInfo(CGThing):
                     # We have arguments or our return-value boxing can fail
                     methodInfal = False
                 else:
-                    methodInfal = "infallible" in self.descriptor.getExtendedAttributes(self.member)
+                    methodInfal = hasInfallibleImpl
                 # For now, only bother to output args if we're pure
                 if methodPure:
                     args = sig[1]
                 else:
                     args = None
 
-            if args:
+            if args is not None:
                 aliasSet = "AliasDOMSets"
             else:
                 aliasSet = "AliasEverything"
             result = self.defineJitInfo(methodinfo, method, "Method",
-                                        methodInfal, False, aliasSet, False, "0",
+                                        methodInfal, movable, aliasSet, False, "0",
                                         [s[0] for s in sigs], args)
             return result
         raise TypeError("Illegal member type to CGPropertyJITInfo")
@@ -6671,13 +6725,13 @@ def getUnionTypeTemplateVars(unionType, type, descriptorProvider,
 
     name = getUnionMemberName(type)
 
-    tryNextCode = ("tryNext = true;\n"
-                   "return true;")
-    if type.isGeckoInterface():
-         prefix = "" if ownsMembers else "mUnion."
-         tryNextCode = ("if (%smType != %seUninitialized) {"
-                        "  %sDestroy%s();"
-                        "}") % (prefix, prefix, prefix, name) + tryNextCode
+    # By the time tryNextCode is invoked, we're guaranteed the union has been
+    # constructed as some type, since we've been trying to convert into the
+    # corresponding member.
+    prefix = "" if ownsMembers else "mUnion."
+    tryNextCode = ("%sDestroy%s();\n"
+                   "tryNext = true;\n"
+                   "return true;" % (prefix, name))
     conversionInfo = getJSToNativeConversionInfo(
         type, descriptorProvider, failureCode=tryNextCode,
         isDefinitelyObject=not type.isDictionary(),
@@ -6696,10 +6750,12 @@ def getUnionTypeTemplateVars(unionType, type, descriptorProvider,
 
     if type.isObject():
         if ownsMembers:
-            body = ("mValue.mObject.SetValue(obj);\n"
+            body = ("MOZ_ASSERT(mType == eUninitialized);\n"
+                    "mValue.mObject.SetValue(obj);\n"
                     "mType = eObject;")
         else:
-            body = ("mUnion.mValue.mObject.SetValue(cx, obj);\n"
+            body = ("MOZ_ASSERT(mUnion.mType == mUnion.eUninitialized);\n"
+                    "mUnion.mValue.mObject.SetValue(cx, obj);\n"
                     "mUnion.mType = mUnion.eObject;")
         setter = ClassMethod("SetToObject", "void",
                              [Argument("JSContext*", "cx"),
@@ -6786,11 +6842,13 @@ class CGUnionStruct(CGThing):
                                        body="return mType == eNull;",
                                        bodyInHeader=True))
             methods.append(ClassMethod("SetNull", "void", [], inline=True,
-                                       body="mType = eNull;",
+                                       body=("MOZ_ASSERT(mType == eUninitialized);\n"
+                                             "mType = eNull;"),
                                        bodyInHeader=True))
             destructorCases.append(CGCase("eNull", None))
             assignmentCases.append(CGCase("eNull",
-                                          CGGeneric("mType = eNull;")))
+                                          CGGeneric("MOZ_ASSERT(mType == eUninitialized);\n"
+                                                    "mType = eNull;")))
             toJSValCases.append(CGCase("eNull", CGGeneric("rval.setNull();\n"
                                                           "return true;")))
 
@@ -6799,7 +6857,11 @@ class CGUnionStruct(CGThing):
                                             t, self.descriptorProvider,
                                             ownsMembers=self.ownsMembers)
             if vars["name"] != "Object" or self.ownsMembers:
-                body=string.Template("mType = e${name};\n"
+                body=string.Template("if (mType == e${name}) {\n"
+                                     "  return mValue.m${name}.Value();\n"
+                                     "}\n"
+                                     "MOZ_ASSERT(mType == eUninitialized);\n"
+                                     "mType = e${name};\n"
                                      "return mValue.m${name}.SetValue(${ctorArgs});").substitute(vars)
                 # bodyInHeader must be false for return values because they own
                 # their union members and we don't want include headers in
@@ -6891,7 +6953,7 @@ class CGUnionStruct(CGThing):
                          default=CGGeneric("return false;")).define(), const=True))
 
         constructors = [ctor]
-        selfName = ("Owning" if self.ownsMembers else "") + str(self.type)
+        selfName = CGUnionStruct.unionTypeName(self.type, self.ownsMembers)
         if self.ownsMembers:
             if len(traceCases):
                 traceBody = CGSwitch("mType", traceCases,
@@ -6950,6 +7012,28 @@ class CGUnionStruct(CGThing):
     def isUnionCopyConstructible(type):
         return all(isTypeCopyConstructible(t) for t in type.flatMemberTypes)
 
+    @staticmethod
+    def unionTypeName(type, ownsMembers):
+        """
+        Returns a string name for this known union type.
+        """
+        assert type.isUnion() and not type.nullable()
+        return ("Owning" if ownsMembers else "") + type.name
+
+    @staticmethod
+    def unionTypeDecl(type, ownsMembers):
+        """
+        Returns a string for declaring this possibly-nullable union type.
+        """
+        assert type.isUnion()
+        nullable = type.nullable()
+        if nullable:
+            type = type.inner
+        decl = CGGeneric(CGUnionStruct.unionTypeName(type, ownsMembers))
+        if nullable:
+            decl = CGTemplatedType("Nullable", decl)
+        return decl.define()
+
 class CGUnionConversionStruct(CGThing):
     def __init__(self, type, descriptorProvider):
         CGThing.__init__(self)
@@ -6970,7 +7054,8 @@ class CGUnionConversionStruct(CGThing):
 
         if self.type.hasNullableType:
             methods.append(ClassMethod("SetNull", "bool", [],
-                                       body=("mUnion.mType = mUnion.eNull;\n"
+                                       body=("MOZ_ASSERT(mUnion.mType == mUnion.eUninitialized);\n"
+                                             "mUnion.mType = mUnion.eNull;\n"
                                              "return true;"),
                                        inline=True, bodyInHeader=True))
 
@@ -6979,7 +7064,8 @@ class CGUnionConversionStruct(CGThing):
                                             t, self.descriptorProvider)
             methods.append(vars["setter"])
             if vars["name"] != "Object":
-                body=string.Template("mUnion.mType = mUnion.e${name};\n"
+                body=string.Template("MOZ_ASSERT(mUnion.mType == mUnion.eUninitialized);\n"
+                                     "mUnion.mType = mUnion.e${name};\n"
                                      "return mUnion.mValue.m${name}.SetValue(${ctorArgs});").substitute(vars)
                 methods.append(ClassMethod("SetAs" + vars["name"],
                                            vars["structType"] + "&",
@@ -8730,7 +8816,11 @@ class CGDescriptor(CGThing):
         if descriptor.wrapperCache:
             cgThings.extend(CGClearCachedValueMethod(descriptor, m) for
                             m in descriptor.interface.members if
-                            m.isAttr() and m.slotIndex is not None)
+                            m.isAttr() and
+                            # Constants should never need clearing!
+                            not m.getExtendedAttribute("Constant") and
+                            not m.getExtendedAttribute("SameObject") and
+                            m.slotIndex is not None)
 
         # CGCreateInterfaceObjectsMethod needs to come after our
         # CGDOMJSClass, if any.
@@ -9484,7 +9574,10 @@ class CGForwardDeclarations(CGWrapper):
             elif t.isCallbackInterface():
                 builder.addInMozillaDom(t.inner.identifier.name)
             elif t.isUnion():
-                builder.addInMozillaDom(str(t))
+                # Forward declare both the owning and non-owning version,
+                # since we don't know which one we might want
+                builder.addInMozillaDom(CGUnionStruct.unionTypeName(t, False))
+                builder.addInMozillaDom(CGUnionStruct.unionTypeName(t, True))
             # Don't need to do anything for void, primitive, string, any or object.
             # There may be some other cases we are missing.
 
@@ -9665,6 +9758,7 @@ class CGBindingRoot(CGThing):
         bindingHeaders = [header for (header, include) in
                           bindingHeaders.iteritems() if include]
         declareIncludes = ['mozilla/dom/BindingDeclarations.h',
+                          'mozilla/dom/Nullable.h',
                           'mozilla/ErrorResult.h',
                           'jspubtd.h',
                           'js/RootingAPI.h',
@@ -9767,13 +9861,13 @@ class CGNativeMember(ClassMethod):
                 # No need for a third element in the isMember case
                 return "nsString", None, None
             # Outparam
-            return "void", "", "retval = ${declName};"
+            return "void", "", "aRetVal = ${declName};"
         if type.isByteString():
             if isMember:
                 # No need for a third element in the isMember case
                 return "nsCString", None, None
             # Outparam
-            return "void", "", "retval = ${declName};"
+            return "void", "", "aRetVal = ${declName};"
         if type.isEnum():
             enumName = type.unroll().inner.identifier.name
             if type.nullable():
@@ -9833,12 +9927,12 @@ class CGNativeMember(ClassMethod):
             # Outparam.
             if type.nullable():
                 returnCode = ("if (${declName}.IsNull()) {\n"
-                              "  retval.SetNull();\n"
+                              "  aRetVal.SetNull();\n"
                               "} else {\n"
-                              "  retval.SetValue().SwapElements(${declName}.Value());\n"
+                              "  aRetVal.SetValue().SwapElements(${declName}.Value());\n"
                               "}")
             else:
-                returnCode = "retval.SwapElements(${declName});"
+                returnCode = "aRetVal.SwapElements(${declName});"
             return "void", "", returnCode
         if type.isDate():
             result = CGGeneric("Date")
@@ -9854,6 +9948,14 @@ class CGNativeMember(ClassMethod):
                 return CGDictionary.makeDictionaryName(type.inner), None, None
             # In this case we convert directly into our outparam to start with
             return "void", "", ""
+        if type.isUnion():
+            if isMember:
+                # Only the first member of the tuple matters here, but return
+                # bogus values for the others in case someone decides to use
+                # them.
+                return CGUnionStruct.unionTypeDecl(type, True), None, None
+            # In this case we convert directly into our outparam to start with
+            return "void", "", ""
 
         raise TypeError("Don't know how to declare return value for %s" %
                         type)
@@ -9862,9 +9964,9 @@ class CGNativeMember(ClassMethod):
         args = [self.getArg(arg) for arg in argList]
         # Now the outparams
         if returnType.isDOMString():
-            args.append(Argument("nsString&", "retval"))
+            args.append(Argument("nsString&", "aRetVal"))
         elif returnType.isByteString():
-            args.append(Argument("nsCString&", "retval"))
+            args.append(Argument("nsCString&", "aRetVal"))
         elif returnType.isSequence():
             nullable = returnType.nullable()
             if nullable:
@@ -9874,7 +9976,7 @@ class CGNativeMember(ClassMethod):
             type = CGTemplatedType("nsTArray", CGGeneric(elementDecl))
             if nullable:
                 type = CGTemplatedType("Nullable", type)
-            args.append(Argument("%s&" % type.define(), "retval"))
+            args.append(Argument("%s&" % type.define(), "aRetVal"))
         elif returnType.isDictionary():
             nullable = returnType.nullable()
             if nullable:
@@ -9882,7 +9984,11 @@ class CGNativeMember(ClassMethod):
             dictType = CGGeneric(CGDictionary.makeDictionaryName(returnType.inner))
             if nullable:
                 dictType = CGTemplatedType("Nullable", dictType)
-            args.append(Argument("%s&" % dictType.define(), "retval"))
+            args.append(Argument("%s&" % dictType.define(), "aRetVal"))
+        elif returnType.isUnion():
+            args.append(Argument("%s&" %
+                                 CGUnionStruct.unionTypeDecl(returnType, True),
+                                 "aRetVal"))
         # And the ErrorResult
         if not 'infallible' in self.extendedAttrs:
             # Use aRv so it won't conflict with local vars named "rv"
@@ -9927,9 +10033,9 @@ class CGNativeMember(ClassMethod):
             return decl.define(), True, True
 
         if type.isUnion():
-            if type.nullable():
-                type = type.inner
-            return str(type), True, True
+            # unionTypeDecl will handle nullable types, so return False for
+            # auto-wrapping in Nullable
+            return CGUnionStruct.unionTypeDecl(type, isMember), True, False
 
         if type.isGeckoInterface() and not type.isCallbackInterface():
             iface = type.unroll().inner
@@ -10440,11 +10546,13 @@ def genConstructorBody(descriptor, initCall=""):
     })
 
 # We're always fallible
-def callbackGetterName(attr):
-    return "Get" + MakeNativeName(attr.identifier.name)
+def callbackGetterName(attr, descriptor):
+    return "Get" + MakeNativeName(
+        descriptor.binaryNames.get(attr.identifier.name, attr.identifier.name))
 
-def callbackSetterName(attr):
-    return "Set" + MakeNativeName(attr.identifier.name)
+def callbackSetterName(attr, descriptor):
+    return "Set" + MakeNativeName(
+        descriptor.binaryNames.get(attr.identifier.name, attr.identifier.name))
 
 class CGJSImplGetter(CGJSImplMember):
     """
@@ -10462,7 +10570,9 @@ class CGJSImplGetter(CGJSImplMember):
 
     def getImpl(self):
         callbackArgs = [arg.name for arg in self.getArgs(self.member.type, [])]
-        return 'return mImpl->%s(%s);' % (callbackGetterName(self.member), ", ".join(callbackArgs))
+        return 'return mImpl->%s(%s);' % (
+            callbackGetterName(self.member, self.descriptorProvider),
+            ", ".join(callbackArgs))
 
 class CGJSImplSetter(CGJSImplMember):
     """
@@ -10482,7 +10592,9 @@ class CGJSImplSetter(CGJSImplMember):
     def getImpl(self):
         callbackArgs = [arg.name for arg in self.getArgs(BuiltinTypes[IDLBuiltinType.Types.void],
                                                          [FakeArgument(self.member.type, self.member)])]
-        return 'mImpl->%s(%s);' % (callbackSetterName(self.member), ", ".join(callbackArgs))
+        return 'mImpl->%s(%s);' % (
+            callbackSetterName(self.member, self.descriptorProvider),
+            ", ".join(callbackArgs))
 
 class CGJSImplClass(CGBindingImplClass):
     def __init__(self, descriptor):
@@ -10675,6 +10787,12 @@ class CGCallback(CGClass):
                 realMethods.append(method)
             else:
                 realMethods.extend(self.getMethodImpls(method))
+        realMethods.append(
+            ClassMethod("operator==", "bool",
+                        [Argument("const %s&" % name, "aOther")],
+                        inline=True, bodyInHeader=True,
+                        const=True,
+                        body=("return %s::operator==(aOther);" % baseName)))
         CGClass.__init__(self, name,
                          bases=[ClassBase(baseName)],
                          constructors=self.getConstructors(),
@@ -10891,13 +11009,13 @@ class CallbackMember(CGNativeMember):
             isCallbackReturnValue = "JSImpl"
         else:
             isCallbackReturnValue = "Callback"
+        sourceDescription = "return value of %s" % self.getPrettyName()
         convertType = instantiateJSToNativeConversion(
             getJSToNativeConversionInfo(self.retvalType,
                                         self.descriptorProvider,
                                         exceptionCode=self.exceptionCode,
                                         isCallbackReturnValue=isCallbackReturnValue,
-                                        # XXXbz we should try to do better here
-                                        sourceDescription="return value"),
+                                        sourceDescription=sourceDescription),
             replacements)
         assignRetval = string.Template(
             self.getRetvalInfo(self.retvalType,
@@ -10944,20 +11062,26 @@ class CallbackMember(CGNativeMember):
             result = argval
             prepend = ""
 
-        conversion = prepend + wrapForType(
-            arg.type, self.descriptorProvider,
-            {
-                'result' : result,
-                'successCode' : "continue;" if arg.variadic else "break;",
-                'jsvalRef' : "argv.handleAt(%s)" % jsvalIndex,
-                'jsvalHandle' : "argv.handleAt(%s)" % jsvalIndex,
-                # XXXbz we don't have anything better to use for 'obj',
-                # really...  It's OK to use CallbackPreserveColor because
-                # CallSetup already handled the unmark-gray bits for us.
-                'obj' : 'CallbackPreserveColor()',
-                'returnsNewObject': False,
-                'exceptionCode' : self.exceptionCode
-                })
+        try:
+            conversion = prepend + wrapForType(
+                arg.type, self.descriptorProvider,
+                {
+                    'result' : result,
+                    'successCode' : "continue;" if arg.variadic else "break;",
+                    'jsvalRef' : "argv.handleAt(%s)" % jsvalIndex,
+                    'jsvalHandle' : "argv.handleAt(%s)" % jsvalIndex,
+                    # XXXbz we don't have anything better to use for 'obj',
+                    # really...  It's OK to use CallbackPreserveColor because
+                    # CallSetup already handled the unmark-gray bits for us.
+                    'obj' : 'CallbackPreserveColor()',
+                    'returnsNewObject': False,
+                    'exceptionCode' : self.exceptionCode
+                    })
+        except MethodNotNewObjectError as err:
+            raise TypeError("%s being passed as an argument to %s but is not "
+                            "wrapper cached, so can't be reliably converted to "
+                            "a JS object." %
+                            (err.typename, self.getPrettyName()))
         if arg.variadic:
             conversion = string.Template(
                 "for (uint32_t idx = 0; idx < ${arg}.Length(); ++idx) {\n" +
@@ -11067,6 +11191,7 @@ class CallbackMethod(CallbackMember):
 
 class CallCallback(CallbackMethod):
     def __init__(self, callback, descriptorProvider):
+        self.callback = callback
         CallbackMethod.__init__(self, callback.signatures()[0], "Call",
                                 descriptorProvider, needThisHandling=True)
 
@@ -11076,13 +11201,16 @@ class CallCallback(CallbackMethod):
     def getCallableDecl(self):
         return "JS::Rooted<JS::Value> callable(cx, JS::ObjectValue(*mCallback));\n"
 
+    def getPrettyName(self):
+        return self.callback.identifier.name
+
 class CallbackOperationBase(CallbackMethod):
     """
     Common class for implementing various callback operations.
     """
     def __init__(self, signature, jsName, nativeName, descriptor, singleOperation, rethrowContentException=False):
         self.singleOperation = singleOperation
-        self.methodName = jsName
+        self.methodName = descriptor.binaryNames.get(jsName, jsName)
         CallbackMethod.__init__(self, signature, nativeName, descriptor, singleOperation, rethrowContentException)
 
     def getThisObj(self):
@@ -11120,22 +11248,39 @@ class CallbackOperation(CallbackOperationBase):
     """
     def __init__(self, method, signature, descriptor):
         self.ensureASCIIName(method)
+        self.method = method
         jsName = method.identifier.name
         CallbackOperationBase.__init__(self, signature,
-                                       jsName, MakeNativeName(jsName),
+                                       jsName,
+                                       MakeNativeName(descriptor.binaryNames.get(jsName, jsName)),
                                        descriptor, descriptor.interface.isSingleOperationInterface(),
                                        rethrowContentException=descriptor.interface.isJSImplemented())
 
-class CallbackGetter(CallbackMember):
-    def __init__(self, attr, descriptor):
+    def getPrettyName(self):
+        return "%s.%s" % (self.descriptorProvider.interface.identifier.name,
+                          self.method.identifier.name)
+
+class CallbackAccessor(CallbackMember):
+    """
+    Shared superclass for CallbackGetter and CallbackSetter.
+    """
+    def __init__(self, attr, sig, name, descriptor):
         self.ensureASCIIName(attr)
         self.attrName = attr.identifier.name
-        CallbackMember.__init__(self,
-                                (attr.type, []),
-                                callbackGetterName(attr),
-                                descriptor,
+        CallbackMember.__init__(self, sig, name, descriptor,
                                 needThisHandling=False,
                                 rethrowContentException=descriptor.interface.isJSImplemented())
+
+    def getPrettyName(self):
+        return "%s.%s" % (self.descriptorProvider.interface.identifier.name,
+                          self.attrName)
+
+class CallbackGetter(CallbackAccessor):
+    def __init__(self, attr, descriptor):
+        CallbackAccessor.__init__(self, attr,
+                                  (attr.type, []),
+                                  callbackGetterName(attr, descriptor),
+                                  descriptor)
 
     def getRvalDecl(self):
         return "JS::Rooted<JS::Value> rval(cx, JS::UndefinedValue());\n"
@@ -11143,7 +11288,8 @@ class CallbackGetter(CallbackMember):
     def getCall(self):
         replacements = {
             "errorReturn" : self.getDefaultRetval(),
-            "attrName": self.attrName
+            "attrName": self.descriptorProvider.binaryNames.get(self.attrName,
+                                                                self.attrName)
             }
         return string.Template(
             'if (!JS_GetProperty(cx, mCallback, "${attrName}", &rval)) {\n'
@@ -11151,17 +11297,13 @@ class CallbackGetter(CallbackMember):
             '  return${errorReturn};\n'
             '}\n').substitute(replacements);
 
-class CallbackSetter(CallbackMember):
+class CallbackSetter(CallbackAccessor):
     def __init__(self, attr, descriptor):
-        self.ensureASCIIName(attr)
-        self.attrName = attr.identifier.name
-        CallbackMember.__init__(self,
-                                (BuiltinTypes[IDLBuiltinType.Types.void],
-                                 [FakeArgument(attr.type, attr)]),
-                                callbackSetterName(attr),
-                                descriptor,
-                                needThisHandling=False,
-                                rethrowContentException=descriptor.interface.isJSImplemented())
+        CallbackAccessor.__init__(self, attr,
+                                  (BuiltinTypes[IDLBuiltinType.Types.void],
+                                   [FakeArgument(attr.type, attr)]),
+                                  callbackSetterName(attr, descriptor),
+                                  descriptor)
 
     def getRvalDecl(self):
         # We don't need an rval
@@ -11170,7 +11312,8 @@ class CallbackSetter(CallbackMember):
     def getCall(self):
         replacements = {
             "errorReturn" : self.getDefaultRetval(),
-            "attrName": self.attrName,
+            "attrName": self.descriptorProvider.binaryNames.get(self.attrName,
+                                                                self.attrName),
             "argv": "argv.handleAt(0)",
             }
         return string.Template(
@@ -11191,6 +11334,9 @@ class CGJSImplInitOperation(CallbackOperationBase):
         assert sig in descriptor.interface.ctor().signatures()
         CallbackOperationBase.__init__(self, (BuiltinTypes[IDLBuiltinType.Types.void], sig[1]),
                                        "__init", "__Init", descriptor, False, True)
+
+    def getPrettyName(self):
+        return "__init"
 
 class GlobalGenRoots():
     """
@@ -11435,72 +11581,36 @@ class CGEventGetter(CGNativeMember):
                                                                    attr),
                                 (attr.type, []),
                                 ea)
-
-    def retval(self, type):
-        if type.isPrimitive() and type.tag() in builtinNames:
-            result = CGGeneric(builtinNames[type.tag()])
-            if type.nullable():
-                result = CGTemplatedType("Nullable", result)
-            return result.define()
-        if type.isDOMString():
-            return "void"
-        if type.isByteString():
-            return "void"
-        if type.isEnum():
-            enumName = type.unroll().inner.identifier.name
-            if type.nullable():
-                enumName = CGTemplatedType("Nullable",
-                                           CGGeneric(enumName)).define()
-            return enumName
-        if type.isGeckoInterface():
-            iface = type.unroll().inner;
-            nativeType = self.descriptorProvider.getDescriptor(
-                iface.identifier.name).nativeType
-            # Now trim off unnecessary namespaces
-            nativeType = nativeType.split("::")
-            if nativeType[0] == "mozilla":
-                nativeType.pop(0)
-                if nativeType[0] == "dom":
-                    nativeType.pop(0)
-            return CGWrapper(CGGeneric("::".join(nativeType)), post="*").define()
-        if type.isAny():
-            return "JS::Value"
-        if type.isObject():
-            return "JSObject*"
-        if type.isSpiderMonkeyInterface():
-            return "JSObject*"
-        raise TypeError("Don't know how to declare return value for %s" %
-                        type)
+        self.body = self.getMethodBody()
 
     def getArgs(self, returnType, argList):
-        args = [self.getArg(arg) for arg in argList]
-        if returnType.isDOMString():
-            args.append(Argument("nsString&", "aRetVal"))
-        elif returnType.isByteString():
-            args.append(Argument("nsCString&", "aRetVal"))
-        if needCx(returnType, argList, self.extendedAttrs, True):
-            args.insert(0, Argument("JSContext*", "aCx"))
         if not 'infallible' in self.extendedAttrs:
             raise TypeError("Event code generator does not support [Throws]!")
-        return args
+        if not self.member.isAttr():
+            raise TypeError("Event code generator does not support methods")
+        if self.member.isStatic():
+            raise TypeError("Event code generators does not support static attributes")
+        return CGNativeMember.getArgs(self, returnType, argList)
 
     def getMethodBody(self):
         type = self.member.type
         memberName = CGDictionary.makeMemberName(self.member.identifier.name)
         if (type.isPrimitive() and type.tag() in builtinNames) or type.isEnum() or type.isGeckoInterface():
-            return "  return " + memberName + ";"
+            return "return " + memberName + ";"
         if type.isDOMString() or type.isByteString():
-            return "  aRetVal = " + memberName + ";";
+            return "aRetVal = " + memberName + ";";
         if type.isSpiderMonkeyInterface() or type.isObject():
-            ret =  "  if (%s) {\n" % memberName
-            ret += "    JS::ExposeObjectToActiveJS(%s);\n" % memberName
-            ret += "  }\n"
-            ret += "  return " + memberName + ";"
+            ret =  "if (%s) {\n" % memberName
+            ret += "  JS::ExposeObjectToActiveJS(%s);\n" % memberName
+            ret += "}\n"
+            ret += "return " + memberName + ";"
             return ret;
         if type.isAny():
-            ret =  "  JS::ExposeValueToActiveJS("+ memberName + ");\n"
-            ret += "  return " + memberName + ";"
+            ret =  "JS::ExposeValueToActiveJS("+ memberName + ");\n"
+            ret += "return " + memberName + ";"
             return ret;
+        if type.isUnion():
+            return "aRetVal = " + memberName + ";"
         raise TypeError("Event code generator does not support this type!")
 
     def declare(self, cgClass):
@@ -11513,11 +11623,7 @@ class CGEventGetter(CGNativeMember):
         if getattr(self.member, "originatingInterface",
                    cgClass.descriptor.interface) != cgClass.descriptor.interface:
             return ""
-        ret = self.retval(self.member.type);
-        methodName = self.descriptorProvider.name + '::' + self.name
-        args = (', '.join([a.declare() for a in self.args]))
-        body = self.getMethodBody()
-        return ret + "\n" + methodName + '(' + args + ') const\n{\n' + body + "\n}\n"
+        return CGNativeMember.define(self, cgClass)
 
 class CGEventSetter(CGNativeMember):
     def __init__(self):
@@ -11654,6 +11760,11 @@ class CGEventClass(CGBindingImplClass):
                     nativeType = "JS::Heap<JS::Value>"
                 elif m.type.isObject() or m.type.isSpiderMonkeyInterface():
                     nativeType = "JS::Heap<JSObject*>"
+                elif m.type.isUnion():
+                    nativeType = CGUnionStruct.unionTypeDecl(m.type, True)
+                else:
+                    raise TypeError("Don't know how to declare member of type %s" %
+                                    m.type)
                 members.append(ClassMember(CGDictionary.makeMemberName(m.identifier.name),
                                nativeType,
                                visibility="private",
@@ -11715,6 +11826,9 @@ class CGEventClass(CGBindingImplClass):
                     retVal += "  NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(" + name + ")\n"
                 elif m.type.isObject() or m.type.isSpiderMonkeyInterface():
                     retVal += "  NS_IMPL_CYCLE_COLLECTION_TRACE_JS_MEMBER_CALLBACK(" + name + ")\n"
+                elif typeNeedsRooting(m.type):
+                    raise TypeError("Need to implement tracing for event "
+                                    "member of type %s" % m.type)
         return retVal
 
     def define(self):

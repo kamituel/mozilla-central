@@ -74,7 +74,7 @@ CreateSharedRGBImage(ImageContainer *aImageContainer,
 
   if (gfxPlatform::GetPlatform()->UseDeprecatedTextures()) {
     nsRefPtr<DeprecatedSharedRGBImage> rgbImageDep = static_cast<DeprecatedSharedRGBImage*>(image.get());
-    rgbImageDep->mSize = gfxIntSize(aSize.width, aSize.height);
+    rgbImageDep->mSize = aSize.ToIntSize();
     rgbImageDep->mImageFormat = aImageFormat;
 
     if (!rgbImageDep->AllocateBuffer(aSize, aImageFormat)) {
@@ -104,7 +104,7 @@ DeprecatedSharedRGBImage::GetBufferSize()
   return mSize.width * mSize.height * gfxASurface::BytesPerPixel(mImageFormat);
 }
 
-gfxIntSize
+gfx::IntSize
 DeprecatedSharedRGBImage::GetSize()
 {
   return mSize;
@@ -215,10 +215,10 @@ SharedRGBImage::GetBuffer()
   return serializer.GetData();
 }
 
-gfxIntSize
+gfx::IntSize
 SharedRGBImage::GetSize()
 {
-  return ThebesIntSize(mSize);
+  return mSize;
 }
 
 size_t

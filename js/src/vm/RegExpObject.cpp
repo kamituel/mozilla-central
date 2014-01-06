@@ -20,6 +20,8 @@
 #include "vm/Shape-inl.h"
 
 using namespace js;
+
+using mozilla::DebugOnly;
 using js::frontend::TokenStream;
 
 JS_STATIC_ASSERT(IgnoreCaseFlag == JSREG_FOLD);
@@ -51,14 +53,16 @@ RegExpObjectBuilder::getOrCreate()
 }
 
 bool
-RegExpObjectBuilder::getOrCreateClone(RegExpObject *proto)
+RegExpObjectBuilder::getOrCreateClone(HandleTypeObject type)
 {
     JS_ASSERT(!reobj_);
+    JS_ASSERT(type->clasp() == &RegExpObject::class_);
+
+    JSObject *parent = type->proto().toObject()->getParent();
 
     // Note: RegExp objects are always allocated in the tenured heap. This is
     // not strictly required, but simplifies embedding them in jitcode.
-    JSObject *clone = NewObjectWithGivenProto(cx, &RegExpObject::class_, proto, proto->getParent(),
-                                              TenuredObject);
+    JSObject *clone = NewObjectWithType(cx->asJSContext(), type, parent, TenuredObject);
     if (!clone)
         return false;
     clone->initPrivate(nullptr);
@@ -90,9 +94,10 @@ RegExpObjectBuilder::build(HandleAtom source, RegExpFlag flags)
 }
 
 RegExpObject *
-RegExpObjectBuilder::clone(Handle<RegExpObject *> other, Handle<RegExpObject *> proto)
+RegExpObjectBuilder::clone(Handle<RegExpObject *> other)
 {
-    if (!getOrCreateClone(proto))
+    RootedTypeObject type(cx, other->type());
+    if (!getOrCreateClone(type))
         return nullptr;
 
     /*
@@ -100,7 +105,7 @@ RegExpObjectBuilder::clone(Handle<RegExpObject *> other, Handle<RegExpObject *> 
      * the clone -- if the |RegExpStatics| provides more flags we'll
      * need a different |RegExpShared|.
      */
-    RegExpStatics *res = proto->getParent()->as<GlobalObject>().getRegExpStatics();
+    RegExpStatics *res = other->getProto()->getParent()->as<GlobalObject>().getRegExpStatics();
     RegExpFlag origFlags = other->getFlags();
     RegExpFlag staticsFlags = res->getFlags();
     if ((origFlags & staticsFlags) != staticsFlags) {
@@ -630,13 +635,48 @@ RegExpShared::executeMatchOnly(JSContext *cx, const jschar *chars, size_t length
 /* RegExpCompartment */
 
 RegExpCompartment::RegExpCompartment(JSRuntime *rt)
-  : map_(rt), inUse_(rt)
+  : map_(rt), inUse_(rt), matchResultTemplateObject_(nullptr)
 {}
 
 RegExpCompartment::~RegExpCompartment()
 {
     JS_ASSERT(map_.empty());
     JS_ASSERT(inUse_.empty());
+}
+
+JSObject *
+RegExpCompartment::getOrCreateMatchResultTemplateObject(JSContext *cx)
+{
+    if (matchResultTemplateObject_)
+        return matchResultTemplateObject_;
+
+    /* Create template array object */
+    RootedObject templateObject(cx, NewDenseUnallocatedArray(cx, 0, nullptr, TenuredObject));
+    if (!templateObject)
+        return matchResultTemplateObject_; // = nullptr
+
+    /* Set dummy index property */
+    RootedValue index(cx, Int32Value(0));
+    if (!baseops::DefineProperty(cx, templateObject, cx->names().index, index,
+                                 JS_PropertyStub, JS_StrictPropertyStub, JSPROP_ENUMERATE))
+        return matchResultTemplateObject_; // = nullptr
+
+    /* Set dummy input property */
+    RootedValue inputVal(cx, StringValue(cx->runtime()->emptyString));
+    if (!baseops::DefineProperty(cx, templateObject, cx->names().input, inputVal,
+                                 JS_PropertyStub, JS_StrictPropertyStub, JSPROP_ENUMERATE))
+        return matchResultTemplateObject_; // = nullptr
+
+    // Make sure that the properties are in the right slots.
+    DebugOnly<Shape *> shape = templateObject->lastProperty();
+    JS_ASSERT(shape->previous()->slot() == 0 &&
+              shape->previous()->propidRef() == NameToId(cx->names().index));
+    JS_ASSERT(shape->slot() == 1 &&
+              shape->propidRef() == NameToId(cx->names().input));
+
+    matchResultTemplateObject_ = templateObject;
+
+    return matchResultTemplateObject_;
 }
 
 bool
@@ -668,6 +708,12 @@ RegExpCompartment::sweep(JSRuntime *rt)
             js_delete(shared);
             e.removeFront();
         }
+    }
+
+    if (matchResultTemplateObject_ &&
+        IsObjectAboutToBeFinalized(matchResultTemplateObject_.unsafeGet()))
+    {
+        matchResultTemplateObject_ = nullptr;
     }
 }
 
@@ -733,12 +779,13 @@ RegExpCompartment::sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf)
 /* Functions */
 
 JSObject *
-js::CloneRegExpObject(JSContext *cx, JSObject *obj_, JSObject *proto_)
+js::CloneRegExpObject(JSContext *cx, JSObject *obj_)
 {
     RegExpObjectBuilder builder(cx);
     Rooted<RegExpObject*> regex(cx, &obj_->as<RegExpObject>());
-    Rooted<RegExpObject*> proto(cx, &proto_->as<RegExpObject>());
-    return builder.clone(regex, proto);
+    JSObject *res = builder.clone(regex);
+    JS_ASSERT(res->type() == regex->type());
+    return res;
 }
 
 bool

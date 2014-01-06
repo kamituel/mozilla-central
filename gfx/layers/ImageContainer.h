@@ -10,11 +10,11 @@
 #include <sys/types.h>                  // for int32_t
 #include "ImageTypes.h"                 // for ImageFormat, etc
 #include "gfxASurface.h"                // for gfxASurface, etc
-#include "gfxPoint.h"                   // for gfxIntSize
 #include "mozilla/Assertions.h"         // for MOZ_ASSERT_HELPER2
 #include "mozilla/Mutex.h"              // for Mutex
 #include "mozilla/ReentrantMonitor.h"   // for ReentrantMonitorAutoEnter, etc
 #include "mozilla/TimeStamp.h"          // for TimeStamp
+#include "mozilla/gfx/Point.h"          // For IntSize
 #include "mozilla/layers/LayersTypes.h"  // for LayersBackend, etc
 #include "mozilla/mozalloc.h"           // for operator delete, etc
 #include "nsAutoPtr.h"                  // for nsRefPtr, nsAutoArrayPtr, etc
@@ -147,7 +147,7 @@ public:
   void* GetImplData() { return mImplData; }
 
   virtual already_AddRefed<gfxASurface> GetAsSurface() = 0;
-  virtual gfxIntSize GetSize() = 0;
+  virtual gfx::IntSize GetSize() = 0;
   virtual nsIntRect GetPictureRect()
   {
     return nsIntRect(0, 0, GetSize().width, GetSize().height);
@@ -262,7 +262,7 @@ protected:
 
   virtual already_AddRefed<Image> CreateImage(const ImageFormat* aFormats,
                                               uint32_t aNumFormats,
-                                              const gfxIntSize &aScaleHint,
+                                              const gfx::IntSize &aScaleHint,
                                               BufferRecycleBin *aRecycleBin);
 
 };
@@ -304,7 +304,7 @@ struct RemoteImageData {
   bool mWasUpdated;
   Type mType;
   Format mFormat;
-  gfxIntSize mSize;
+  gfx::IntSize mSize;
   union {
     struct {
       /* This pointer is set by a remote process, however it will be set to
@@ -483,7 +483,7 @@ public:
    * the lock methods should be used to avoid the copy, however this should be
    * avoided if the surface is required for a long period of time.
    */
-  already_AddRefed<gfxASurface> GetCurrentAsSurface(gfxIntSize* aSizeResult);
+  already_AddRefed<gfxASurface> GetCurrentAsSurface(gfx::IntSize* aSizeResult);
 
   /**
    * This is similar to GetCurrentAsSurface, however this does not make a copy
@@ -493,7 +493,7 @@ public:
    * type of image. Optionally a pointer can be passed to receive the current
    * image.
    */
-  already_AddRefed<gfxASurface> LockCurrentAsSurface(gfxIntSize* aSizeResult,
+  already_AddRefed<gfxASurface> LockCurrentAsSurface(gfx::IntSize* aSizeResult,
                                                      Image** aCurrentImage = nullptr);
 
   /**
@@ -501,7 +501,7 @@ public:
    * Can be called on any thread. This method takes mReentrantMonitor when accessing
    * thread-shared state.
    */
-  gfxIntSize GetCurrentSize();
+  gfx::IntSize GetCurrentSize();
 
   /**
    * Sets a size that the image is expected to be rendered at.
@@ -510,7 +510,7 @@ public:
    * Can be called on any thread. This method takes mReentrantMonitor
    * when accessing thread-shared state.
    */
-  void SetScaleHint(const gfxIntSize& aScaleHint)
+  void SetScaleHint(const gfx::IntSize& aScaleHint)
   { mScaleHint = aScaleHint; }
 
   void SetImageFactory(ImageFactory *aFactory)
@@ -637,7 +637,7 @@ protected:
   // create images for this container.
   nsRefPtr<ImageFactory> mImageFactory;
 
-  gfxIntSize mScaleHint;
+  gfx::IntSize mScaleHint;
 
   nsRefPtr<BufferRecycleBin> mRecycleBin;
 
@@ -673,7 +673,7 @@ public:
   ~AutoLockImage() { if (mContainer) { mContainer->UnlockCurrentImage(); } }
 
   Image* GetImage() { return mImage; }
-  const gfxIntSize &GetSize() { return mSize; }
+  const gfx::IntSize &GetSize() { return mSize; }
 
   void Unlock() { 
     if (mContainer) {
@@ -698,26 +698,26 @@ public:
 private:
   ImageContainer *mContainer;
   nsRefPtr<Image> mImage;
-  gfxIntSize mSize;
+  gfx::IntSize mSize;
 };
 
 struct PlanarYCbCrData {
   // Luminance buffer
   uint8_t* mYChannel;
   int32_t mYStride;
-  gfxIntSize mYSize;
+  gfx::IntSize mYSize;
   int32_t mYSkip;
   // Chroma buffers
   uint8_t* mCbChannel;
   uint8_t* mCrChannel;
   int32_t mCbCrStride;
-  gfxIntSize mCbCrSize;
+  gfx::IntSize mCbCrSize;
   int32_t mCbSkip;
   int32_t mCrSkip;
   // Picture region
   uint32_t mPicX;
   uint32_t mPicY;
-  gfxIntSize mPicSize;
+  gfx::IntSize mPicSize;
   StereoMode mStereoMode;
 
   nsIntRect GetPictureRect() const {
@@ -819,7 +819,7 @@ public:
 
   virtual bool IsValid() { return !!mBufferSize; }
 
-  virtual gfxIntSize GetSize() { return mSize; }
+  virtual gfx::IntSize GetSize() { return mSize; }
 
   PlanarYCbCrImage(BufferRecycleBin *aRecycleBin);
 
@@ -849,7 +849,7 @@ protected:
   nsAutoArrayPtr<uint8_t> mBuffer;
   uint32_t mBufferSize;
   Data mData;
-  gfxIntSize mSize;
+  gfx::IntSize mSize;
   gfxImageFormat mOffscreenFormat;
   nsCountedRef<nsMainThreadSurfaceRef> mSurface;
   nsRefPtr<BufferRecycleBin> mRecycleBin;
@@ -864,7 +864,7 @@ class CairoImage : public Image {
 public:
   struct Data {
     gfxASurface* mSurface;
-    gfxIntSize mSize;
+    gfx::IntSize mSize;
   };
 
   /**
@@ -885,12 +885,12 @@ public:
     return surface.forget();
   }
 
-  gfxIntSize GetSize() { return mSize; }
+  gfx::IntSize GetSize() { return mSize; }
 
   CairoImage() : Image(nullptr, CAIRO_SURFACE) {}
 
   nsCountedRef<nsMainThreadSurfaceRef> mSurface;
-  gfxIntSize mSize;
+  gfx::IntSize mSize;
 };
 
 class RemoteBitmapImage : public Image {
@@ -899,11 +899,11 @@ public:
 
   already_AddRefed<gfxASurface> GetAsSurface();
 
-  gfxIntSize GetSize() { return mSize; }
+  gfx::IntSize GetSize() { return mSize; }
 
   unsigned char *mData;
   int mStride;
-  gfxIntSize mSize;
+  gfx::IntSize mSize;
   RemoteImageData::Format mFormat;
 };
 
