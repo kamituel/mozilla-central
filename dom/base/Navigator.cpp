@@ -1818,6 +1818,13 @@ Navigator::HasNfcSupport(JSContext* /* unused */, JSObject* aGlobal)
   return win && (CheckPermission(win, "nfc-read") ||
                  CheckPermission(win, "nfc-write"));
 }
+
+bool
+Navigator::HasNfcManagerSupport(JSContext* /* unused */, JSObject* aGlobal)
+{
+  nsCOMPtr<nsPIDOMWindow> win = GetWindowFromGlobal(aGlobal);
+  return win && CheckPermission(win, "nfc-manager");
+}
 #endif // MOZ_NFC
 
 
