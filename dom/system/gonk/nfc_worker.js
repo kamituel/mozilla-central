@@ -390,7 +390,7 @@ NfcWorker[NFC_NOTIFICATION_TECH_DISCOVERED] = function NFC_NOTIFICATION_TECH_DIS
   }
   this.sendDOMMessage({type: "techDiscovered",
                        sessionId: sessionId,
-                       tech: techs,
+                       techList: techs,
                        ndef: ndefMsgs
                        });
 };

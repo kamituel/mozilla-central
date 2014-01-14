@@ -51,7 +51,8 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:GetDetailsNDEF",
   "NFC:MakeReadOnlyNDEF",
   "NFC:Connect",
-  "NFC:Close"
+  "NFC:Close",
+  "NFC:SendFile"
 ];
 
 const NFC_IPC_PEER_MSG_NAMES = [
@@ -59,7 +60,6 @@ const NFC_IPC_PEER_MSG_NAMES = [
   "NFC:UnregisterPeerTarget",
   "NFC:CheckP2PRegistration",
   "NFC:NotifyUserAcceptedP2P",
-  "NFC:SendFile",
   "NFC:NotifySendFileStatus"
 ];
 
@@ -298,12 +298,13 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           return null;
         }
 
-        // Add extra permission check for two IPC Peer events:
-        // 'NFC:CheckP2PRegistration' , 'NFC:NotifyUserAcceptedP2P'
+        // Add extra permission check for below events:
+        // 'NFC:CheckP2PRegistration' , 'NFC:NotifyUserAcceptedP2P',
+        // 'NFC:NotifySendFileStatus'
         if ((msg.name == "NFC:CheckP2PRegistration") ||
             (msg.name == "NFC:NotifyUserAcceptedP2P") ||
             (msg.name == "NFC:NotifySendFileStatus")) {
-          // ONLY privileged Content can send these two events
+          // ONLY privileged Content can send these events
           if (!msg.target.assertPermission("nfc-manager")) {
             debug("NFC message " + message.name +
                   " from a content process with no 'nfc-manager' privileges.");
@@ -346,11 +347,10 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           // Notify the 'NFC_PEER_EVENT_READY' since user has acknowledged
           this.notifyPeerEvent(msg.json.appId, NFC.NFC_PEER_EVENT_READY);
           break;
-        case "NFC:SendFile":
-          gSystemMessenger.broadcastMessage("nfc-manager-send-file",
-                                             msg.json);
           break;
         case "NFC:NotifySendFileStatus":
+          // Upon receiving the status of sendFile operation, send the response
+          // to appropriate content process.
           this.sendNfcResponseMessage(msg.name + "Response", msg.json);
           break;
       }
@@ -542,6 +542,7 @@ Nfc.prototype = {
         break;
       case "NFC:WriteNDEF": // Fall through
       case "NFC:MakeReadOnlyNDEF":
+      case "NFC:SendFile":
         if (!message.target.assertPermission("nfc-write")) {
           debug("NFC message " + message.name +
                 " from a content process with no 'nfc-write' privileges.");
@@ -583,6 +584,17 @@ Nfc.prototype = {
         break;
       case "NFC:Close":
         this.sendToWorker("close", message.json);
+        break;
+      case "NFC:SendFile":
+        // Chrome process is the arbitrator / mediator between
+        // system app (content process) that issued nfc 'sendFile' operation
+        // and system app that handles the system message :
+        // 'nfc-manager-send-file'. System app subsequently handover's
+        // the data to alternate carrier's (BT / WiFi) 'sendFile' interface.
+
+        // Notify system app to initiate BT send file operation
+        gSystemMessenger.broadcastMessage("nfc-manager-send-file",
+                                           message.json);
         break;
       default:
         debug("UnSupported : Message Name " + message.name);

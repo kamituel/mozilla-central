@@ -103,8 +103,10 @@ bool
 js::Nursery::isEmpty() const
 {
     JS_ASSERT(runtime_);
+    if (!isEnabled())
+        return true;
     JS_ASSERT_IF(runtime_->gcZeal_ != ZealGenerationalGCValue, currentStart_ == start());
-    return !isEnabled() || position() == currentStart_;
+    return position() == currentStart_;
 }
 
 void *
@@ -601,6 +603,8 @@ CheckHashTablesAfterMovingGC(JSRuntime *rt)
     /* Check that internal hash tables no longer have any pointers into the nursery. */
     for (CompartmentsIter c(rt, SkipAtoms); !c.done(); c.next()) {
         c->checkNewTypeObjectTableAfterMovingGC();
+        c->checkInitialShapesTableAfterMovingGC();
+        c->checkWrapperMapAfterMovingGC();
         if (c->debugScopes)
             c->debugScopes->checkHashTablesAfterMovingGC(rt);
     }
@@ -631,10 +635,6 @@ js::Nursery::collect(JSRuntime *rt, JS::gcreason::Reason reason, TypeObjectList 
     CheckHashTablesAfterMovingGC(rt);
     MarkRuntime(&trc);
     Debugger::markAll(&trc);
-    for (CompartmentsIter comp(rt, SkipAtoms); !comp.done(); comp.next()) {
-        comp->markAllCrossCompartmentWrappers(&trc);
-        comp->markAllInitialShapeTableEntries(&trc);
-    }
     rt->newObjectCache.clearNurseryObjects(rt);
 
     /*

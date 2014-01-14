@@ -52,8 +52,9 @@ const NFC_IPC_MSG_NAMES = [
   "NFC:ConnectResponse",
   "NFC:CloseResponse",
   "NFC:CheckP2PRegistrationResponse",
+  "NFC:PeerEvent",
   "NFC:NotifySendFileStatusResponse",
-  "NFC:PeerEvent"
+  "NFC:SendFileResponse"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -230,23 +231,22 @@ NfcContentHelper.prototype = {
 
     cpmm.sendAsyncMessage("NFC:SendFile", {
       requestId: requestId,
-      blob: data.blob,
-      sessionToken: sessionToken
+      sessionToken: sessionToken,
+      blob: data.blob
     });
     return request;
   },
 
   notifySendFileStatus: function notifySendFileStatus(window, status,
-                                                      requestId,
-                                                      sessionToken) {
+                                                      requestId) {
     if (window == null) {
       throw Components.Exception("Can't get window object",
                                   Cr.NS_ERROR_UNEXPECTED);
     }
 
     cpmm.sendAsyncMessage("NFC:NotifySendFileStatus", {
-      status: status,
-      requestId: requestId
+      requestId: requestId,
+      status: status
     });
   },
 

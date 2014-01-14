@@ -214,6 +214,7 @@
 
 .devtools-sidebar-tabs > tabpanels {
   -moz-appearance: none;
+  background: transparent;
   padding: 0;
   border: 0;
 }
@@ -436,6 +437,10 @@
   background-size: 48px 16px;
 }
 
+#command-button-pick > image {
+  background-image: url("chrome://browser/skin/devtools/command-pick@2x.png");
+}
+
 #command-button-splitconsole > image {
   background-image: url("chrome://browser/skin/devtools/command-console@2x.png");
 }
@@ -448,7 +453,6 @@
   border: 0px solid #000;
   border-bottom-width: 1px;
   box-shadow: 0 -2px 0 rgba(0,0,0,.1) inset;
-  min-height: 32px;
   padding: 0;
 }
 
@@ -464,7 +468,7 @@
 .devtools-tab {
   -moz-appearance: none;
   min-width: 32px;
-  min-height: 32px;
+  min-height: 26px;
   max-width: 127px;
   color: #b6babf;
   margin: 0;
