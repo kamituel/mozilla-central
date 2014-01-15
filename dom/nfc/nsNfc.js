@@ -286,7 +286,7 @@ mozNfc.prototype = {
     this.__DOM_IMPL__.dispatchEvent(event);
   },
 
-  classID: Components.ID("{fad17fe0-77d5-11e3-981f-0800200c9a66}"),
+  classID: Components.ID("{6ff2b290-2573-11e3-8224-0800200c9a66}"),
   contractID: "@mozilla.org/navigatorNfc;1",
   QueryInterface: XPCOMUtils.generateQI([Ci.nsISupports,
                                          Ci.nsIDOMGlobalPropertyInitializer]),
