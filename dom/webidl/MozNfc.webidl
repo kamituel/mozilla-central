@@ -25,7 +25,9 @@ interface MozNfc : EventTarget {
    MozNFCTag getNFCTag(DOMString sessionId);
    MozNFCPeer getNFCPeer(DOMString sessionId);
 
+   [Func="Navigator::HasNfcPeerSupport"]
    attribute EventHandler onpeerready;
+   [Func="Navigator::HasNfcPeerSupport"]
    attribute EventHandler onpeerlost;
 };
 
