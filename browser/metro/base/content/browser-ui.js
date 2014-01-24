@@ -161,11 +161,6 @@ var BrowserUI = {
         Util.dumpLn("Exception in delay load module:", ex.message);
       }
 
-      if (WindowsPrefSync) {
-        // Pulls in Desktop controlled prefs and pushes out Metro controlled prefs
-        WindowsPrefSync.init();
-      }
-
       // check for left over crash reports and submit them if found.
       BrowserUI.startupCrashCheck();
 
@@ -1104,6 +1099,9 @@ var BrowserUI = {
     let message = bundle.GetStringFromName("clearPrivateData.message");
     let clearbutton = bundle.GetStringFromName("clearPrivateData.clearButton");
 
+    let prefsClearButton = document.getElementById("prefs-clear-data");
+    prefsClearButton.disabled = true; 
+
     let buttonPressed = Services.prompt.confirmEx(
                           null,
                           title,
@@ -1120,6 +1118,8 @@ var BrowserUI = {
     if (buttonPressed === 0) {
       SanitizeUI.onSanitize();
     }
+
+    prefsClearButton.disabled = false;
   },
 };
 

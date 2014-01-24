@@ -253,7 +253,7 @@ CompositorOGL::CompositorOGL(nsIWidget *aWidget, int aSurfaceWidth,
   , mHeight(0)
 {
   MOZ_COUNT_CTOR(CompositorOGL);
-  sBackend = LAYERS_OPENGL;
+  sBackend = LayersBackend::LAYERS_OPENGL;
 }
 
 CompositorOGL::~CompositorOGL()
@@ -765,6 +765,18 @@ CalculatePOTSize(const IntSize& aSize, GLContext* gl)
     return aSize;
 
   return IntSize(NextPowerOfTwo(aSize.width), NextPowerOfTwo(aSize.height));
+}
+
+void
+CompositorOGL::clearFBRect(const gfx::Rect* aRect)
+{
+  if (!aRect) {
+    return;
+  }
+
+  ScopedScissorRect autoScissorRect(mGLContext, aRect->x, aRect->y, aRect->width, aRect->height);
+  mGLContext->fClearColor(0.0, 0.0, 0.0, 0.0);
+  mGLContext->fClear(LOCAL_GL_COLOR_BUFFER_BIT | LOCAL_GL_DEPTH_BUFFER_BIT);
 }
 
 void
@@ -1495,7 +1507,7 @@ CompositorOGL::CopyToTarget(DrawTarget *aTarget, const gfxMatrix& aTransform)
     new gfxImageSurface(map.mData,
                         gfxIntSize(width, height),
                         map.mStride,
-                        gfxImageFormatARGB32);
+                        gfxImageFormat::ARGB32);
   ReadPixelsIntoImageSurface(mGLContext, surf);
   source->Unmap();
 
@@ -1540,6 +1552,10 @@ void
 CompositorOGL::Pause()
 {
 #ifdef MOZ_WIDGET_ANDROID
+  if (!gl() || gl()->IsDestroyed())
+    return;
+
+  // ReleaseSurface internally calls MakeCurrent.
   gl()->ReleaseSurface();
 #endif
 }
@@ -1548,6 +1564,10 @@ bool
 CompositorOGL::Resume()
 {
 #ifdef MOZ_WIDGET_ANDROID
+  if (!gl() || gl()->IsDestroyed())
+    return false;
+
+  // RenewSurface internally calls MakeCurrent.
   return gl()->RenewSurface();
 #endif
   return true;

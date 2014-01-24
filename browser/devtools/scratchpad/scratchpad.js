@@ -982,6 +982,7 @@ var Scratchpad = {
 
         this.editor.setText(content);
         this.editor.clearHistory();
+        this.dirty = false;
         document.getElementById("sp-cmd-revert").setAttribute("disabled", true);
       }
       else if (!aSilentError) {
@@ -1490,13 +1491,9 @@ var Scratchpad = {
       value: initialText,
       lineNumbers: true,
       showTrailingSpace: Services.prefs.getBoolPref(SHOW_TRAILING_SPACE),
+      enableCodeFolding: Services.prefs.getBoolPref(ENABLE_CODE_FOLDING),
       contextMenu: "scratchpad-text-popup"
     };
-
-    if (Services.prefs.getBoolPref(ENABLE_CODE_FOLDING)) {
-      config.foldGutter = true;
-      config.gutters = ["CodeMirror-linenumbers", "CodeMirror-foldgutter"];
-    }
 
     this.editor = new Editor(config);
     this.editor.appendTo(document.querySelector("#scratchpad-editor")).then(() => {

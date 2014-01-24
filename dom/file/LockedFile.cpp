@@ -33,6 +33,7 @@
 #include "nsContentUtils.h"
 
 #include "mozilla/dom/EncodingUtils.h"
+#include "mozilla/dom/LockedFileBinding.h"
 
 #define STREAM_COPY_BLOCK_SIZE 32768
 
@@ -61,10 +62,11 @@ public:
   Init();
 
   nsresult
-  DoAsyncRun(nsISupports* aStream);
+  DoAsyncRun(nsISupports* aStream) MOZ_OVERRIDE;
 
   nsresult
-  GetSuccessResult(JSContext* aCx, JS::Value* aVal);
+  GetSuccessResult(JSContext* aCx,
+                   JS::MutableHandle<JS::Value> aVal) MOZ_OVERRIDE;
 
 protected:
   uint64_t mLocation;
@@ -86,7 +88,8 @@ public:
   { }
 
   nsresult
-  GetSuccessResult(JSContext* aCx, JS::Value* aVal);
+  GetSuccessResult(JSContext* aCx,
+                   JS::MutableHandle<JS::Value> aVal) MOZ_OVERRIDE;
 
 private:
   nsString mEncoding;
@@ -541,19 +544,16 @@ LockedFile::GetMetadata(JS::Handle<JS::Value> aParameters,
     return NS_OK;
   }
 
-  nsRefPtr<MetadataParameters> params = new MetadataParameters();
-
   // Get optional arguments.
-  if (!JSVAL_IS_VOID(aParameters) && !JSVAL_IS_NULL(aParameters)) {
-    nsresult rv = params->Init(aCx, aParameters);
-    NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
+  DOMFileMetadataParameters config;
+  JS::Rooted<JS::Value> parameters(aCx, aParameters);
+  bool result = config.Init(aCx, parameters);
+  NS_ENSURE_TRUE(result, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
 
-    if (!params->IsConfigured()) {
-      return NS_ERROR_TYPE_ERR;
-    }
-  }
-  else {
-    params->Init(true, true);
+  nsRefPtr<MetadataParameters> params =
+    new MetadataParameters(config.mSize, config.mLastModified);
+  if (!params->IsConfigured()) {
+    return NS_ERROR_TYPE_ERR;
   }
 
   nsRefPtr<FileRequest> fileRequest = GenerateFileRequest();
@@ -829,13 +829,13 @@ LockedFile::OpenInputStream(bool aWholeFile, uint64_t aStart, uint64_t aLength,
 
   nsCOMPtr<nsIInputStream>& result = helper->Result();
   NS_ENSURE_TRUE(result, NS_ERROR_DOM_FILEHANDLE_UNKNOWN_ERR);
-  
+
   result.forget(aResult);
   return NS_OK;
 }
 
 nsresult
-LockedFile::WriteOrAppend(const JS::Value& aValue,
+LockedFile::WriteOrAppend(JS::Handle<JS::Value> aValue,
                           JSContext* aCx,
                           nsISupports** _retval,
                           bool aAppend)
@@ -857,11 +857,10 @@ LockedFile::WriteOrAppend(const JS::Value& aValue,
     return NS_OK;
   }
 
-  JS::Rooted<JS::Value> val(aCx, aValue);
   nsCOMPtr<nsIInputStream> inputStream;
   uint64_t inputLength;
   nsresult rv =
-    GetInputStreamForJSVal(val, aCx, getter_AddRefs(inputStream),
+    GetInputStreamForJSVal(aValue, aCx, getter_AddRefs(inputStream),
                            &inputLength);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1021,24 +1020,21 @@ ReadHelper::DoAsyncRun(nsISupports* aStream)
 
 nsresult
 ReadHelper::GetSuccessResult(JSContext* aCx,
-                             JS::Value* aVal)
+                             JS::MutableHandle<JS::Value> aVal)
 {
   JS::Rooted<JSObject*> arrayBuffer(aCx);
   nsresult rv =
     nsContentUtils::CreateArrayBuffer(aCx, mStream->Data(), arrayBuffer.address());
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aVal = OBJECT_TO_JSVAL(arrayBuffer);
-
+  aVal.setObject(*arrayBuffer);
   return NS_OK;
 }
 
 nsresult
 ReadTextHelper::GetSuccessResult(JSContext* aCx,
-                                 JS::Value* aVal)
+                                 JS::MutableHandle<JS::Value> aVal)
 {
-  nsresult rv;
-
   nsAutoCString encoding;
   const nsCString& data = mStream->Data();
   // The BOM sniffing is baked into the "decode" part of the Encoding
@@ -1057,17 +1053,14 @@ ReadTextHelper::GetSuccessResult(JSContext* aCx,
   }
 
   nsString tmpString;
-  rv = nsContentUtils::ConvertStringFromEncoding(encoding, data,
-                                                 tmpString);
+  nsresult rv = nsContentUtils::ConvertStringFromEncoding(encoding, data,
+                                                          tmpString);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  JS::Rooted<JS::Value> rval(aCx);
-  if (!xpc::StringToJsval(aCx, tmpString, &rval)) {
+  if (!xpc::StringToJsval(aCx, tmpString, aVal)) {
     NS_WARNING("Failed to convert string!");
     return NS_ERROR_FAILURE;
   }
-
-  *aVal = rval;
   return NS_OK;
 }
 
@@ -1109,7 +1102,7 @@ TruncateHelper::DoAsyncRun(nsISupports* aStream)
 
   nsresult rv = truncator->AsyncWork(this, nullptr);
   NS_ENSURE_SUCCESS(rv, rv);
-  
+
   return NS_OK;
 }
 

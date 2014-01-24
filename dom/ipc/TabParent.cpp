@@ -278,6 +278,14 @@ TabParent::Destroy()
     static_cast<IndexedDBParent*>(idbParents[i])->Disconnect();
   }
 
+  const InfallibleTArray<POfflineCacheUpdateParent*>& ocuParents =
+    ManagedPOfflineCacheUpdateParent();
+  for (uint32_t i = 0; i < ocuParents.Length(); ++i) {
+    nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> ocuParent =
+      static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(ocuParents[i]);
+    ocuParent->StopSendingMessagesToChild();
+  }
+
   if (RenderFrameParent* frame = GetRenderFrame()) {
     frame->Destroy();
   }
@@ -925,36 +933,75 @@ TabParent::RecvSetBackgroundColor(const nscolor& aColor)
   return true;
 }
 
+nsIXULBrowserWindow*
+TabParent::GetXULBrowserWindow()
+{
+  nsCOMPtr<nsIContent> frame = do_QueryInterface(mFrameElement);
+  if (!frame) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIDocShell> docShell = frame->OwnerDoc()->GetDocShell();
+  if (!docShell) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
+  docShell->GetTreeOwner(getter_AddRefs(treeOwner));
+  if (!treeOwner) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIXULWindow> window = do_GetInterface(treeOwner);
+  if (!window) {
+    return nullptr;
+  }
+
+  nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow;
+  window->GetXULBrowserWindow(getter_AddRefs(xulBrowserWindow));
+  return xulBrowserWindow;
+}
+
 bool
 TabParent::RecvSetStatus(const uint32_t& aType, const nsString& aStatus)
 {
-  nsCOMPtr<nsIContent> frame = do_QueryInterface(mFrameElement);
-  if (frame) {
-    nsCOMPtr<nsIDocShell> docShell = frame->OwnerDoc()->GetDocShell();
-    if (!docShell)
-      return true;
-    nsCOMPtr<nsIDocShellTreeOwner> treeOwner;
-    docShell->GetTreeOwner(getter_AddRefs(treeOwner));
-    if (!treeOwner)
-      return true;
-
-    nsCOMPtr<nsIXULWindow> window = do_GetInterface(treeOwner);
-    if (window) {
-      nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow;
-      window->GetXULBrowserWindow(getter_AddRefs(xulBrowserWindow));
-      if (xulBrowserWindow) {
-        switch (aType)
-        {
-        case nsIWebBrowserChrome::STATUS_SCRIPT:
-          xulBrowserWindow->SetJSStatus(aStatus);
-          break;
-        case nsIWebBrowserChrome::STATUS_LINK:
-          xulBrowserWindow->SetOverLink(aStatus, nullptr);
-          break;
-        }
-      }
-    }
+  nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow = GetXULBrowserWindow();
+  if (!xulBrowserWindow) {
+    return true;
   }
+
+  switch (aType) {
+   case nsIWebBrowserChrome::STATUS_SCRIPT:
+    xulBrowserWindow->SetJSStatus(aStatus);
+    break;
+   case nsIWebBrowserChrome::STATUS_LINK:
+    xulBrowserWindow->SetOverLink(aStatus, nullptr);
+    break;
+  }
+  return true;
+}
+
+bool
+TabParent::RecvShowTooltip(const uint32_t& aX, const uint32_t& aY, const nsString& aTooltip)
+{
+  nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow = GetXULBrowserWindow();
+  if (!xulBrowserWindow) {
+    return true;
+  }
+
+  xulBrowserWindow->ShowTooltip(aX, aY, aTooltip);
+  return true;
+}
+
+bool
+TabParent::RecvHideTooltip()
+{
+  nsCOMPtr<nsIXULBrowserWindow> xulBrowserWindow = GetXULBrowserWindow();
+  if (!xulBrowserWindow) {
+    return true;
+  }
+
+  xulBrowserWindow->HideTooltip();
   return true;
 }
 
@@ -1647,32 +1694,42 @@ TabParent::DeallocPRenderFrameParent(PRenderFrameParent* aFrame)
 mozilla::docshell::POfflineCacheUpdateParent*
 TabParent::AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,
                                           const URIParams& aDocumentURI,
-                                          const bool& stickDocument)
+                                          const bool& aStickDocument)
 {
   nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
     new mozilla::docshell::OfflineCacheUpdateParent(OwnOrContainingAppId(),
                                                     IsBrowserElement());
-
-  nsresult rv = update->Schedule(aManifestURI, aDocumentURI, stickDocument);
-  if (NS_FAILED(rv)) {
-    // Must dispatch since the parent is not at this moment ready yet.
-    nsRefPtr<nsRunnableMethod<mozilla::docshell::OfflineCacheUpdateParent> > event =
-      NS_NewRunnableMethod(update, &mozilla::docshell::OfflineCacheUpdateParent::Kill);
-    NS_DispatchToCurrentThread(event);
-  }
-
-  POfflineCacheUpdateParent* result = update.get();
-  update.forget();
-  return result;
+  // Use this reference as the IPDL reference.
+  return update.forget().get();
 }
 
 bool
-TabParent::DeallocPOfflineCacheUpdateParent(mozilla::docshell::POfflineCacheUpdateParent* actor)
+TabParent::RecvPOfflineCacheUpdateConstructor(POfflineCacheUpdateParent* aActor,
+                                              const URIParams& aManifestURI,
+                                              const URIParams& aDocumentURI,
+                                              const bool& aStickDocument)
 {
-  mozilla::docshell::OfflineCacheUpdateParent* update =
-    static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(actor);
+  MOZ_ASSERT(aActor);
 
-  update->Release();
+  nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
+    static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(aActor);
+
+  nsresult rv = update->Schedule(aManifestURI, aDocumentURI, aStickDocument);
+  if (NS_FAILED(rv) && !IsDestroyed()) {
+    // Inform the child of failure.
+    unused << update->SendFinish(false, false);
+  }
+
+  return true;
+}
+
+bool
+TabParent::DeallocPOfflineCacheUpdateParent(POfflineCacheUpdateParent* aActor)
+{
+  // Reclaim the IPDL reference.
+  nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
+    dont_AddRef(
+      static_cast<mozilla::docshell::OfflineCacheUpdateParent*>(aActor));
   return true;
 }
 

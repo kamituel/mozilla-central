@@ -152,7 +152,7 @@ LayerManagerComposite::BeginTransaction()
   
   mIsCompositorReady = true;
 
-  if (Compositor::GetBackend() == LAYERS_BASIC) {
+  if (Compositor::GetBackend() == LayersBackend::LAYERS_BASIC) {
     mClonedLayerTreeProperties = LayerProperties::CloneFrom(GetRoot());
   }
 }
@@ -764,6 +764,7 @@ LayerComposite::LayerComposite(LayerManagerComposite *aManager)
   , mShadowTransformSetByAnimation(false)
   , mDestroyed(false)
   , mLayerComposited(false)
+  , mClearFB(false)
 { }
 
 LayerComposite::~LayerComposite()

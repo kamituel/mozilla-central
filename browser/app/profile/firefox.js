@@ -842,9 +842,6 @@ pref("browser.sessionstore.resume_session_once", false);
 
 // minimal interval between two save operations in milliseconds
 pref("browser.sessionstore.interval", 15000);
-// maximum amount of POSTDATA to be saved in bytes per history entry (-1 = all of it)
-// (NB: POSTDATA will be saved either entirely or not at all)
-pref("browser.sessionstore.postdata", 0);
 // on which sites to save text data, POSTDATA and cookies
 // 0 = everywhere, 1 = unencrypted sites, 2 = nowhere
 pref("browser.sessionstore.privacy_level", 0);
@@ -1340,7 +1337,7 @@ pref("browser.uiCustomization.debug", false);
 
 // The URL where remote content that composes the UI for Firefox Accounts should
 // be fetched. Must use HTTPS.
-pref("firefox.accounts.remoteUrl", "https://accounts.dev.lcip.org/?service=sync");
+pref("identity.fxaccounts.remote.uri", "https://accounts.dev.lcip.org/?service=sync");
 
 // The URL of the Firefox Accounts auth server backend
 pref("identity.fxaccounts.auth.uri", "https://api-accounts.dev.lcip.org/v1");

@@ -4,7 +4,8 @@
 
  /* Copyright © 2013 Deutsche Telekom, Inc. */
 
-[NoInterfaceObject, Func="Navigator::HasNfcManagerSupport"]
+[NoInterfaceObject,
+ Func="Navigator::HasNfcManagerSupport"]
 interface MozNfcManager {
    /**
     * API to check if the given application's manifest
@@ -20,7 +21,8 @@ interface MozNfcManager {
 };
 
 [JSImplementation="@mozilla.org/navigatorNfc;1",
- NavigatorProperty="mozNfc"]
+ NavigatorProperty="mozNfc",
+ Func="Navigator::HasNfcSupport"]
 interface MozNfc : EventTarget {
    MozNFCTag getNFCTag(DOMString sessionId);
    MozNFCPeer getNFCPeer(DOMString sessionId);

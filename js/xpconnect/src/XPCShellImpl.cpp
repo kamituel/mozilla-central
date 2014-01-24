@@ -538,25 +538,27 @@ Parent(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static bool
-Atob(JSContext *cx, unsigned argc, jsval *vp)
+Atob(JSContext *cx, unsigned argc, Value *vp)
 {
-    if (!argc)
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (!args.length())
         return true;
 
-    return xpc::Base64Decode(cx, JS_ARGV(cx, vp)[0], &JS_RVAL(cx, vp));
+    return xpc::Base64Decode(cx, args[0], args.rval());
 }
 
 static bool
-Btoa(JSContext *cx, unsigned argc, jsval *vp)
+Btoa(JSContext *cx, unsigned argc, Value *vp)
 {
-  if (!argc)
-      return true;
+    CallArgs args = CallArgsFromVp(argc, vp);
+    if (!args.length())
+        return true;
 
-  return xpc::Base64Encode(cx, JS_ARGV(cx, vp)[0], &JS_RVAL(cx, vp));
+  return xpc::Base64Encode(cx, args[0], args.rval());
 }
 
 static bool
-Blob(JSContext *cx, unsigned argc, jsval *vp)
+Blob(JSContext *cx, unsigned argc, Value *vp)
 {
   JS::CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -582,7 +584,7 @@ Blob(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  JSObject* global = JS::CurrentGlobalOrNull(cx);
+  JSObject *global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
                               args.rval());
@@ -595,7 +597,7 @@ Blob(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 static bool
-File(JSContext *cx, unsigned argc, jsval *vp)
+File(JSContext *cx, unsigned argc, Value *vp)
 {
   JS::CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -621,7 +623,7 @@ File(JSContext *cx, unsigned argc, jsval *vp)
     return false;
   }
 
-  JSObject* global = JS::CurrentGlobalOrNull(cx);
+  JSObject *global = JS::CurrentGlobalOrNull(cx);
   rv = xpc->WrapNativeToJSVal(cx, global, native, nullptr,
                               &NS_GET_IID(nsISupports), true,
                               args.rval());
@@ -731,7 +733,7 @@ env_setProperty(JSContext *cx, HandleObject obj, HandleId id, bool strict, Mutab
     int rv;
 
     RootedValue idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return false;
 
     idstr = ToString(cx, idval);
@@ -814,7 +816,7 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
     JSString *idstr, *valstr;
 
     RootedValue idval(cx);
-    if (!JS_IdToValue(cx, id, idval.address()))
+    if (!JS_IdToValue(cx, id, &idval))
         return false;
 
     idstr = ToString(cx, idval);

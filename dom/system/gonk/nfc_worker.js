@@ -368,7 +368,7 @@ NfcWorker[NFC_NOTIFICATION_INITIALIZED] = function NFC_NOTIFICATION_INITIALIZED 
 NfcWorker[NFC_NOTIFICATION_TECH_DISCOVERED] = function NFC_NOTIFICATION_TECH_DISCOVERED() {
   debug("NFC_NOTIFICATION_TECH_DISCOVERED");
   let techList  = [];
-  let records   = [];
+  let records   = null;
 
   let sessionId = Buf.readInt32();
   let techCount = Buf.readInt32();

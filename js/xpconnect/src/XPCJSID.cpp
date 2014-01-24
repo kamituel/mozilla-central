@@ -538,7 +538,7 @@ xpc::HasInstance(JSContext *cx, HandleObject objArg, const nsID *iid, bool *bp)
 /* bool hasInstance (in nsIXPConnectWrappedNative wrapper, in JSContextPtr cx, in JSObjectPtr obj, in jsval val, out bool bp); */
 NS_IMETHODIMP
 nsJSIID::HasInstance(nsIXPConnectWrappedNative *wrapper,
-                     JSContext * cx, JSObject * /* unused */,
+                     JSContext *cx, JSObject * /* unused */,
                      HandleValue val, bool *bp, bool *_retval)
 {
     *bp = false;
@@ -617,24 +617,21 @@ nsJSCID::NewID(const char* str)
     }
 
     nsRefPtr<nsJSCID> idObj = new nsJSCID();
-    bool success = false;
-
     if (str[0] == '{') {
-        if (NS_SUCCEEDED(idObj->Initialize(str)))
-            success = true;
+        NS_ENSURE_SUCCESS(idObj->Initialize(str), nullptr);
     } else {
         nsCOMPtr<nsIComponentRegistrar> registrar;
         NS_GetComponentRegistrar(getter_AddRefs(registrar));
-        if (registrar) {
-            nsCID *cid;
-            if (NS_SUCCEEDED(registrar->ContractIDToCID(str, &cid))) {
-                success = idObj->mDetails.InitWithName(*cid, str);
-                nsMemory::Free(cid);
-            }
-        }
+        NS_ENSURE_TRUE(registrar, nullptr);
+
+        nsCID *cid;
+        if (NS_FAILED(registrar->ContractIDToCID(str, &cid)))
+            return nullptr;
+        bool success = idObj->mDetails.InitWithName(*cid, str);
+        nsMemory::Free(cid);
+        if (!success)
+            return nullptr;
     }
-    if (!success)
-        return nullptr;
     return idObj.forget();
 }
 
@@ -674,7 +671,7 @@ GetWrapperObject(MutableHandleObject obj)
 
 /* nsISupports createInstance (); */
 NS_IMETHODIMP
-nsJSCID::CreateInstance(HandleValue iidval, JSContext* cx,
+nsJSCID::CreateInstance(HandleValue iidval, JSContext *cx,
                         uint8_t optionalArgc, MutableHandleValue retval)
 {
     if (!mDetails.IsValid())
@@ -717,8 +714,8 @@ nsJSCID::CreateInstance(HandleValue iidval, JSContext* cx,
 
 /* nsISupports getService (); */
 NS_IMETHODIMP
-nsJSCID::GetService(HandleValue iidval, JSContext* cx,
-                    uint8_t optionalArgc, MutableHandleValue retval)
+nsJSCID::GetService(HandleValue iidval, JSContext *cx, uint8_t optionalArgc,
+                    MutableHandleValue retval)
 {
     if (!mDetails.IsValid())
         return NS_ERROR_XPC_BAD_CID;
@@ -729,7 +726,7 @@ nsJSCID::GetService(HandleValue iidval, JSContext* cx,
         return NS_ERROR_UNEXPECTED;
     }
 
-    nsIXPCSecurityManager* sm;
+    nsIXPCSecurityManager *sm;
     sm = nsXPConnect::XPConnect()->GetDefaultSecurityManager();
     if (sm && NS_FAILED(sm->CanCreateInstance(cx, mDetails.ID()))) {
         MOZ_ASSERT(JS_IsExceptionPending(cx),
@@ -738,7 +735,7 @@ nsJSCID::GetService(HandleValue iidval, JSContext* cx,
     }
 
     // If an IID was passed in then use it
-    const nsID* iid = GetIIDArg(optionalArgc, iidval, cx);
+    const nsID *iid = GetIIDArg(optionalArgc, iidval, cx);
     if (!iid)
         return NS_ERROR_XPC_BAD_IID;
 
@@ -753,22 +750,19 @@ nsJSCID::GetService(HandleValue iidval, JSContext* cx,
     if (NS_FAILED(rv) || !srvc)
         return NS_ERROR_XPC_GS_RETURNED_FAILURE;
 
-    RootedObject instJSObj(cx);
     nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
     rv = nsXPConnect::XPConnect()->WrapNative(cx, obj, srvc, *iid, getter_AddRefs(holder));
-    if (NS_FAILED(rv) || !holder ||
-        // Assign, not compare
-        !(instJSObj = holder->GetJSObject()))
+    if (NS_FAILED(rv) || !holder || !holder->GetJSObject())
         return NS_ERROR_XPC_CANT_CREATE_WN;
 
-    retval.setObject(*instJSObj);
+    retval.setObject(*holder->GetJSObject());
     return NS_OK;
 }
 
 /* bool construct (in nsIXPConnectWrappedNative wrapper, in JSContextPtr cx, in JSObjectPtr obj, in uint32_t argc, in JSValPtr argv, in JSValPtr vp); */
 NS_IMETHODIMP
 nsJSCID::Construct(nsIXPConnectWrappedNative *wrapper,
-                   JSContext * cx, JSObject * objArg,
+                   JSContext *cx, JSObject *objArg,
                    const CallArgs &args, bool *_retval)
 {
     RootedObject obj(cx, objArg);
@@ -788,24 +782,24 @@ nsJSCID::Construct(nsIXPConnectWrappedNative *wrapper,
 /* bool hasInstance (in nsIXPConnectWrappedNative wrapper, in JSContextPtr cx, in JSObjectPtr obj, in jsval val, out bool bp); */
 NS_IMETHODIMP
 nsJSCID::HasInstance(nsIXPConnectWrappedNative *wrapper,
-                     JSContext * cx, JSObject * /* unused */,
+                     JSContext *cx, JSObject * /* unused */,
                      HandleValue val, bool *bp, bool *_retval)
 {
     *bp = false;
     nsresult rv = NS_OK;
 
-    if (!JSVAL_IS_PRIMITIVE(val)) {
+    if (val.isObject()) {
         // we have a JSObject
         RootedObject obj(cx, &val.toObject());
 
         MOZ_ASSERT(obj, "when is an object not an object?");
 
         // is this really a native xpcom object with a wrapper?
-        nsIClassInfo* ci = nullptr;
+        nsIClassInfo *ci = nullptr;
         obj = FindObjectForHasInstance(cx, obj);
         if (!obj || !IS_WN_REFLECTOR(obj))
             return rv;
-        if (XPCWrappedNative* other_wrapper = XPCWrappedNative::Get(obj))
+        if (XPCWrappedNative *other_wrapper = XPCWrappedNative::Get(obj))
             ci = other_wrapper->GetClassInfo();
 
         // We consider CID equality to be the thing that matters here.
@@ -816,6 +810,7 @@ nsJSCID::HasInstance(nsIXPConnectWrappedNative *wrapper,
                 *bp = cid.Equals(mDetails.ID());
         }
     }
+
     return rv;
 }
 
@@ -829,7 +824,7 @@ xpc_NewIDObject(JSContext *cx, HandleObject jsobj, const nsID& aID)
 
     nsCOMPtr<nsIJSID> iid = nsJSID::NewID(aID);
     if (iid) {
-        nsXPConnect* xpc = nsXPConnect::XPConnect();
+        nsXPConnect *xpc = nsXPConnect::XPConnect();
         if (xpc) {
             nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
             nsresult rv = xpc->WrapNative(cx, jsobj,
@@ -846,13 +841,13 @@ xpc_NewIDObject(JSContext *cx, HandleObject jsobj, const nsID& aID)
 
 // note: returned pointer is only valid while |obj| remains alive!
 const nsID*
-xpc_JSObjectToID(JSContext *cx, JSObject* obj)
+xpc_JSObjectToID(JSContext *cx, JSObject *obj)
 {
     if (!cx || !obj)
         return nullptr;
 
     // NOTE: this call does NOT addref
-    XPCWrappedNative* wrapper = nullptr;
+    XPCWrappedNative *wrapper = nullptr;
     obj = js::CheckedUnwrap(obj);
     if (obj && IS_WN_REFLECTOR(obj))
         wrapper = XPCWrappedNative::Get(obj);
@@ -866,11 +861,11 @@ xpc_JSObjectToID(JSContext *cx, JSObject* obj)
 }
 
 bool
-xpc_JSObjectIsID(JSContext *cx, JSObject* obj)
+xpc_JSObjectIsID(JSContext *cx, JSObject *obj)
 {
     MOZ_ASSERT(cx && obj, "bad param");
     // NOTE: this call does NOT addref
-    XPCWrappedNative* wrapper = nullptr;
+    XPCWrappedNative *wrapper = nullptr;
     obj = js::CheckedUnwrap(obj);
     if (obj && IS_WN_REFLECTOR(obj))
         wrapper = XPCWrappedNative::Get(obj);

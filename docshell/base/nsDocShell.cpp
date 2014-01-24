@@ -334,8 +334,7 @@ ForEachPing(nsIContent *content, ForEachPingCallback callback, void *closure)
   if (!content->IsHTML())
     return;
   nsIAtom *nameAtom = content->Tag();
-  if (!nameAtom->Equals(NS_LITERAL_STRING("a")) &&
-      !nameAtom->Equals(NS_LITERAL_STRING("area")))
+  if (nameAtom != nsGkAtoms::a && nameAtom != nsGkAtoms::area)
     return;
 
   nsCOMPtr<nsIAtom> pingAtom = do_GetAtom("ping");
@@ -1323,6 +1322,7 @@ nsDocShell::LoadURI(nsIURI * aURI,
     nsCOMPtr<nsISHEntry> shEntry;
     nsXPIDLString target;
     nsAutoString srcdoc;
+    nsCOMPtr<nsIDocShell> sourceDocShell;
 
     uint32_t loadType = MAKE_LOAD_TYPE(LOAD_NORMAL, aLoadFlags);    
 
@@ -1352,6 +1352,7 @@ nsDocShell::LoadURI(nsIURI * aURI,
         aLoadInfo->GetSendReferrer(&sendReferrer);
         aLoadInfo->GetIsSrcdocLoad(&isSrcdoc);
         aLoadInfo->GetSrcdocData(srcdoc);
+        aLoadInfo->GetSourceDocShell(getter_AddRefs(sourceDocShell));
     }
 
 #if defined(PR_LOGGING) && defined(DEBUG)
@@ -1597,6 +1598,7 @@ nsDocShell::LoadURI(nsIURI * aURI,
                         nullptr,         // No SHEntry
                         aFirstParty,
                         srcdoc,
+                        sourceDocShell,
                         nullptr,         // No nsIDocShell
                         nullptr);        // No nsIRequest
 }
@@ -2837,12 +2839,18 @@ nsDocShell::NameEquals(const char16_t *aName, bool *_retval)
     return NS_OK;
 }
 
+/* virtual */ int32_t
+nsDocShell::ItemType()
+{
+   return mItemType;
+}
+
 NS_IMETHODIMP
 nsDocShell::GetItemType(int32_t * aItemType)
 {
     NS_ENSURE_ARG_POINTER(aItemType);
 
-    *aItemType = mItemType;
+    *aItemType = ItemType();
     return NS_OK;
 }
 
@@ -3026,10 +3034,7 @@ nsDocShell::GetSameTypeParent(nsIDocShellTreeItem ** aParent)
     if (!parent)
         return NS_OK;
 
-    int32_t parentType;
-    NS_ENSURE_SUCCESS(parent->GetItemType(&parentType), NS_ERROR_FAILURE);
-
-    if (parentType == mItemType) {
+    if (parent->ItemType() == mItemType) {
         parent.swap(*aParent);
     }
     return NS_OK;
@@ -3046,10 +3051,7 @@ nsDocShell::GetSameTypeParentIgnoreBrowserAndAppBoundaries(nsIDocShell** aParent
     if (!parent)
         return NS_OK;
 
-    int32_t parentType;
-    NS_ENSURE_SUCCESS(parent->GetItemType(&parentType), NS_ERROR_FAILURE);
-
-    if (parentType == mItemType) {
+    if (parent->ItemType() == mItemType) {
         nsCOMPtr<nsIDocShell> parentDS = do_QueryInterface(parent);
         parentDS.forget(aParent);
     }
@@ -3303,11 +3305,7 @@ nsDocShell::FindItemWithName(const char16_t * aName,
         // DoFindItemWithName only returns active items and we don't check if
         // the item is active for the special cases.
         if (foundItem) {
-            if (IsSandboxedFrom(foundItem, aOriginalRequestor)) {
-                return NS_ERROR_DOM_INVALID_ACCESS_ERR;
-            } else {
-                foundItem.swap(*_retval);
-            }
+            foundItem.swap(*_retval);
         }
         return NS_OK;
     }
@@ -3353,9 +3351,7 @@ nsDocShell::DoFindItemWithName(const char16_t* aName,
         if (parentAsTreeItem == reqAsTreeItem)
             return NS_OK;
 
-        int32_t parentType;
-        parentAsTreeItem->GetItemType(&parentType);
-        if (parentType == mItemType) {
+        if (parentAsTreeItem->ItemType() == mItemType) {
             return parentAsTreeItem->
                 FindItemWithName(aName,
                                  static_cast<nsIDocShellTreeItem*>
@@ -3380,35 +3376,38 @@ nsDocShell::DoFindItemWithName(const char16_t* aName,
     return NS_OK;
 }
 
-/* static */
 bool
-nsDocShell::IsSandboxedFrom(nsIDocShellTreeItem* aTargetItem,
-                            nsIDocShellTreeItem* aAccessingItem)
+nsDocShell::IsSandboxedFrom(nsIDocShell* aTargetDocShell)
 {
-    // aAccessingItem cannot be sandboxed from itself.
-    if (SameCOMIdentity(aTargetItem, aAccessingItem)) {
+    // If no target then not sandboxed.
+    if (!aTargetDocShell) {
+        return false;
+    }
+
+    // We cannot be sandboxed from ourselves.
+    if (aTargetDocShell == this) {
         return false;
     }
 
     uint32_t sandboxFlags = 0;
 
-    nsCOMPtr<nsIDocument> doc = do_GetInterface(aAccessingItem);
+    nsCOMPtr<nsIDocument> doc = mContentViewer->GetDocument();
     if (doc) {
         sandboxFlags = doc->GetSandboxFlags();
     }
 
-    // If no flags, aAccessingItem is not sandboxed at all.
+    // If no flags, we are not sandboxed at all.
     if (!sandboxFlags) {
         return false;
     }
 
-    // If aTargetItem has an ancestor, it is not top level.
+    // If aTargetDocShell has an ancestor, it is not top level.
     nsCOMPtr<nsIDocShellTreeItem> ancestorOfTarget;
-    aTargetItem->GetSameTypeParent(getter_AddRefs(ancestorOfTarget));
+    aTargetDocShell->GetSameTypeParent(getter_AddRefs(ancestorOfTarget));
     if (ancestorOfTarget) {
         do {
-            // aAccessingItem is not sandboxed if it is an ancestor of target.
-            if (SameCOMIdentity(aAccessingItem, ancestorOfTarget)) {
+            // We are not sandboxed if we are an ancestor of target.
+            if (ancestorOfTarget == this) {
                 return false;
             }
             nsCOMPtr<nsIDocShellTreeItem> tempTreeItem;
@@ -3416,31 +3415,30 @@ nsDocShell::IsSandboxedFrom(nsIDocShellTreeItem* aTargetItem,
             tempTreeItem.swap(ancestorOfTarget);
         } while (ancestorOfTarget);
 
-        // Otherwise, aAccessingItem is sandboxed from aTargetItem.
+        // Otherwise, we are sandboxed from aTargetDocShell.
         return true;
     }
 
-    // aTargetItem is top level, is aAccessingItem the "one permitted sandboxed
-    // navigator", i.e. did aAccessingItem open aTargetItem?
-    nsCOMPtr<nsIDocShell> targetDocShell = do_QueryInterface(aTargetItem);
+    // aTargetDocShell is top level, are we the "one permitted sandboxed
+    // navigator", i.e. did we open aTargetDocShell?
     nsCOMPtr<nsIDocShell> permittedNavigator;
-    targetDocShell->
+    aTargetDocShell->
         GetOnePermittedSandboxedNavigator(getter_AddRefs(permittedNavigator));
-    if (SameCOMIdentity(aAccessingItem, permittedNavigator)) {
+    if (permittedNavigator == this) {
         return false;
     }
 
-    // If SANDBOXED_TOPLEVEL_NAVIGATION flag is not on, aAccessingItem is
-    // not sandboxed from its top.
+    // If SANDBOXED_TOPLEVEL_NAVIGATION flag is not on, we are not sandboxed
+    // from our top.
     if (!(sandboxFlags & SANDBOXED_TOPLEVEL_NAVIGATION)) {
         nsCOMPtr<nsIDocShellTreeItem> rootTreeItem;
-        aAccessingItem->GetSameTypeRootTreeItem(getter_AddRefs(rootTreeItem));
-        if (SameCOMIdentity(aTargetItem, rootTreeItem)) {
+        GetSameTypeRootTreeItem(getter_AddRefs(rootTreeItem));
+        if (SameCOMIdentity(aTargetDocShell, rootTreeItem)) {
             return false;
         }
     }
 
-    // Otherwise, aAccessingItem is sandboxed from aTargetItem.
+    // Otherwise, we are sandboxed from aTargetDocShell.
     return true;
 }
 
@@ -3463,8 +3461,7 @@ PrintDocTree(nsIDocShellTreeItem * aParentNode, int aLevel)
   int32_t childWebshellCount;
   aParentNode->GetChildCount(&childWebshellCount);
   nsCOMPtr<nsIDocShell> parentAsDocShell(do_QueryInterface(aParentNode));
-  int32_t type;
-  aParentNode->GetItemType(&type);
+  int32_t type = aParentNode->ItemType();
   nsCOMPtr<nsIPresShell> presShell = parentAsDocShell->GetPresShell();
   nsRefPtr<nsPresContext> presContext;
   parentAsDocShell->GetPresContext(getter_AddRefs(presContext));
@@ -3556,9 +3553,8 @@ nsDocShell::SetTreeOwner(nsIDocShellTreeOwner * aTreeOwner)
     while (iter.HasMore()) {
         nsCOMPtr<nsIDocShellTreeItem> child = do_QueryObject(iter.GetNext());
         NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
-        int32_t childType = ~mItemType; // Set it to not us in case the get fails
-        child->GetItemType(&childType); // We don't care if this fails, if it does we won't set the owner
-        if (childType == mItemType)
+        
+        if (child->ItemType() == mItemType)
             child->SetTreeOwner(aTreeOwner);
     }
 
@@ -3656,13 +3652,9 @@ nsDocShell::AddChild(nsIDocShellTreeItem * aChild)
             childDocShell->SetUseGlobalHistory(true);
     }
 
-
-    int32_t childType = ~mItemType;     // Set it to not us in case the get fails
-    aChild->GetItemType(&childType);
-    if (childType != mItemType)
+    if (aChild->ItemType() != mItemType) {
         return NS_OK;
-    // Everything below here is only done when the child is the same type.
-
+    }
 
     aChild->SetTreeOwner(mTreeOwner);
 
@@ -3772,8 +3764,7 @@ nsDocShell::FindChildWithName(const char16_t * aName,
     while (iter.HasMore()) {
         nsCOMPtr<nsIDocShellTreeItem> child = do_QueryObject(iter.GetNext());
         NS_ENSURE_TRUE(child, NS_ERROR_FAILURE);
-        int32_t childType;
-        child->GetItemType(&childType);
+        int32_t childType = child->ItemType();
 
         if (aSameType && (childType != mItemType))
             continue;
@@ -4793,7 +4784,7 @@ nsDocShell::LoadErrorPage(nsIURI *aURI, const char16_t *aURL,
     return InternalLoad(errorPageURI, nullptr, nullptr,
                         INTERNAL_LOAD_FLAGS_INHERIT_OWNER, nullptr, nullptr,
                         NullString(), nullptr, nullptr, LOAD_ERROR_PAGE,
-                        nullptr, true, NullString(), nullptr,nullptr);
+                        nullptr, true, NullString(), this, nullptr, nullptr);
 }
 
 
@@ -4861,6 +4852,7 @@ nsDocShell::Reload(uint32_t aReloadFlags)
                           nullptr,         // No SHEntry
                           true,
                           srcdoc,          // srcdoc argument for iframe
+                          this,            // For reloads we are the source
                           nullptr,         // No nsIDocShell
                           nullptr);        // No nsIRequest
     }
@@ -8636,7 +8628,7 @@ public:
                       const char* aTypeHint, nsIInputStream * aPostData,
                       nsIInputStream * aHeadersData, uint32_t aLoadType,
                       nsISHEntry * aSHEntry, bool aFirstParty,
-                      const nsAString &aSrcdoc) :
+                      const nsAString &aSrcdoc, nsIDocShell* aSourceDocShell) :
         mSrcdoc(aSrcdoc),
         mDocShell(aDocShell),
         mURI(aURI),
@@ -8647,7 +8639,8 @@ public:
         mSHEntry(aSHEntry),
         mFlags(aFlags),
         mLoadType(aLoadType),
-        mFirstParty(aFirstParty)
+        mFirstParty(aFirstParty),
+        mSourceDocShell(aSourceDocShell)
     {
         // Make sure to keep null things null as needed
         if (aTypeHint) {
@@ -8660,7 +8653,7 @@ public:
                                        nullptr, mTypeHint.get(),
                                        NullString(), mPostData, mHeadersData,
                                        mLoadType, mSHEntry, mFirstParty,
-                                       mSrcdoc, nullptr, nullptr);
+                                       mSrcdoc, mSourceDocShell, nullptr, nullptr);
     }
 
 private:
@@ -8680,6 +8673,7 @@ private:
     uint32_t mFlags;
     uint32_t mLoadType;
     bool mFirstParty;
+    nsCOMPtr<nsIDocShell> mSourceDocShell;
 };
 
 /**
@@ -8713,6 +8707,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
                          nsISHEntry * aSHEntry,
                          bool aFirstParty,
                          const nsAString &aSrcdoc,
+                         nsIDocShell* aSourceDocShell,
                          nsIDocShell** aDocShell,
                          nsIRequest** aRequest)
 {
@@ -8776,10 +8771,9 @@ nsDocShell::InternalLoad(nsIURI * aURI,
     if (aWindowTarget && *aWindowTarget) {
         // Locate the target DocShell.
         nsCOMPtr<nsIDocShellTreeItem> targetItem;
-        if (FindItemWithName(aWindowTarget, nullptr, this,
-               getter_AddRefs(targetItem)) == NS_ERROR_DOM_INVALID_ACCESS_ERR) {
-            return NS_ERROR_DOM_INVALID_ACCESS_ERR;
-        }
+        rv = FindItemWithName(aWindowTarget, nullptr, this,
+                              getter_AddRefs(targetItem));
+        NS_ENSURE_SUCCESS(rv, rv);
 
         targetDocShell = do_QueryInterface(targetItem);
         // If the targetDocShell doesn't exist, then this is a new docShell
@@ -8968,6 +8962,7 @@ nsDocShell::InternalLoad(nsIURI * aURI,
                                               aSHEntry,
                                               aFirstParty,
                                               aSrcdoc,
+                                              aSourceDocShell,
                                               aDocShell,
                                               aRequest);
             if (rv == NS_ERROR_NO_CONTENT) {
@@ -9022,17 +9017,6 @@ nsDocShell::InternalLoad(nsIURI * aURI,
         return rv;
     }
 
-    // If this docshell is owned by a frameloader, make sure to cancel
-    // possible frameloader initialization before loading a new page.
-    nsCOMPtr<nsIDocShellTreeItem> parent;
-    GetParent(getter_AddRefs(parent));
-    if (parent) {
-      nsCOMPtr<nsIDocument> doc = do_GetInterface(parent);
-      if (doc) {
-        doc->TryCancelFrameLoaderInitialization(this);
-      }
-    }
-
     if (mFiredUnloadEvent) {
         if (IsOKToLoadURI(aURI)) {
             NS_PRECONDITION(!aWindowTarget || !*aWindowTarget,
@@ -9049,12 +9033,30 @@ nsDocShell::InternalLoad(nsIURI * aURI,
             nsCOMPtr<nsIRunnable> ev =
                 new InternalLoadEvent(this, aURI, aReferrer, aOwner, aFlags,
                                       aTypeHint, aPostData, aHeadersData,
-                                      aLoadType, aSHEntry, aFirstParty, aSrcdoc);
+                                      aLoadType, aSHEntry, aFirstParty, aSrcdoc,
+                                      aSourceDocShell);
             return NS_DispatchToCurrentThread(ev);
         }
 
         // Just ignore this load attempt
         return NS_OK;
+    }
+
+    // If a source docshell has been passed, check to see if we are sandboxed
+    // from it as the result of an iframe or CSP sandbox.
+    if (aSourceDocShell && aSourceDocShell->IsSandboxedFrom(this)) {
+        return NS_ERROR_DOM_INVALID_ACCESS_ERR;
+    }
+
+    // If this docshell is owned by a frameloader, make sure to cancel
+    // possible frameloader initialization before loading a new page.
+    nsCOMPtr<nsIDocShellTreeItem> parent;
+    GetParent(getter_AddRefs(parent));
+    if (parent) {
+        nsCOMPtr<nsIDocument> doc = do_GetInterface(parent);
+        if (doc) {
+            doc->TryCancelFrameLoaderInitialization(this);
+        }
     }
 
     // Before going any further vet loads initiated by external programs.
@@ -11067,6 +11069,10 @@ nsDocShell::LoadHistoryEntry(nsISHEntry * aEntry, uint32_t aLoadType)
         srcdoc = NullString();
     }
 
+    // Passing nullptr as aSourceDocShell gives the same behaviour as before
+    // aSourceDocShell was introduced. According to spec we should be passing
+    // the source browsing context that was used when the history entry was
+    // first created. bug 947716 has been created to address this issue.
     rv = InternalLoad(uri,
                       referrerURI,
                       owner,
@@ -11080,6 +11086,7 @@ nsDocShell::LoadHistoryEntry(nsISHEntry * aEntry, uint32_t aLoadType)
                       aEntry,             // SHEntry
                       true,
                       srcdoc,
+                      nullptr,            // Source docshell, see comment above
                       nullptr,            // No nsIDocShell
                       nullptr);           // No nsIRequest
     return rv;
@@ -12494,6 +12501,7 @@ nsDocShell::OnLinkClickSync(nsIContent *aContent,
                              nullptr,                   // No SHEntry
                              true,                      // first party site
                              NullString(),              // No srcdoc
+                             this,                      // We are the source
                              aDocShell,                 // DocShell out-param
                              aRequest);                 // Request out-param
   if (NS_SUCCEEDED(rv)) {
