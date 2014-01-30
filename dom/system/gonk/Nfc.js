@@ -359,7 +359,6 @@ XPCOMUtils.defineLazyGetter(this, "gMessageManager", function () {
           // Notify the 'NFC_PEER_EVENT_READY' since user has acknowledged
           this.notifyPeerEvent(msg.json.appId, NFC.NFC_PEER_EVENT_READY);
           break;
-          break;
         case "NFC:NotifySendFileStatus":
           // Upon receiving the status of sendFile operation, send the response
           // to appropriate content process.

@@ -12,6 +12,7 @@
 #include "jsfriendapi.h"
 #include "jsmath.h"
 #include "json.h"
+#include "jsprototypes.h"
 #include "jsweakmap.h"
 
 #include "builtin/Eval.h"
@@ -31,6 +32,19 @@
 #include "vm/ObjectImpl-inl.h"
 
 using namespace js;
+
+#define DECLARE_PROTOTYPE_CLASS_INIT(name,code,init,clasp) \
+    extern JSObject *init(JSContext *cx, Handle<JSObject*> obj);
+JS_FOR_EACH_PROTOTYPE(DECLARE_PROTOTYPE_CLASS_INIT)
+#undef DECLARE_PROTOTYPE_CLASS_INIT
+
+static const ClassInitializerOp class_init_functions[JSProto_LIMIT] = {
+#define INIT_FUNC(name,code,init,clasp) init,
+#define INIT_FUNC_DUMMY(name,code,init,clasp) nullptr,
+    JS_FOR_PROTOTYPES(INIT_FUNC, INIT_FUNC_DUMMY)
+#undef INIT_FUNC_DUMMY
+#undef INIT_FUNC
+};
 
 // This method is not in the header file to avoid having to include
 // TypedObject.h from GlobalObject.h. It is not generally perf
@@ -82,14 +96,11 @@ ProtoGetterImpl(JSContext *cx, CallArgs args)
     if (thisv.isPrimitive() && !BoxNonStrictThis(cx, args))
         return false;
 
-    unsigned dummy;
     RootedObject obj(cx, &args.thisv().toObject());
-    RootedId nid(cx, NameToId(cx->names().proto));
-    RootedValue v(cx);
-    if (!CheckAccess(cx, obj, nid, JSACC_PROTO, &v, &dummy))
+    RootedObject proto(cx);
+    if (!JSObject::getProto(cx, obj, &proto))
         return false;
-
-    args.rval().set(v);
+    args.rval().setObjectOrNull(proto);
     return true;
 }
 
@@ -408,6 +419,17 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
     RootedScript functionProtoScript(cx, functionProto->nonLazyScript());
     CallNewScriptHook(cx, functionProtoScript, functionProto);
     return functionProto;
+}
+
+bool
+GlobalObject::ensureConstructor(JSContext *cx, JSProtoKey key)
+{
+    if (getConstructor(key).isObject())
+        return true;
+    MOZ_ASSERT(getConstructor(key).isUndefined());
+    RootedObject self(cx, this);
+    ClassInitializerOp init = class_init_functions[key];
+    return !init || init(cx, self);
 }
 
 GlobalObject *

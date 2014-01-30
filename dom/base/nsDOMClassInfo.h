@@ -256,8 +256,9 @@ protected:
 
   static nsresult GlobalResolve(nsGlobalWindow *aWin, JSContext *cx,
                                 JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
-                                bool *did_resolve);
+                                JS::MutableHandle<JSPropertyDescriptor> desc);
 
+  friend class nsGlobalWindow;
 public:
   NS_IMETHOD PreCreate(nsISupports *nativeObj, JSContext *cx,
                        JSObject *globalObj, JSObject **parentObj) MOZ_OVERRIDE;
@@ -303,10 +304,6 @@ protected:
   }
 
 public:
-  NS_IMETHOD CheckAccess(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, uint32_t mode,
-                         JS::Value *vp, bool *_retval) MOZ_OVERRIDE;
-
   NS_IMETHOD PreCreate(nsISupports *nativeObj, JSContext *cx,
                        JSObject *globalObj, JSObject **parentObj) MOZ_OVERRIDE;
   NS_IMETHODIMP AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,

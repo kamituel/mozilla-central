@@ -245,8 +245,8 @@ NfcContentHelper.prototype = {
     }
 
     cpmm.sendAsyncMessage("NFC:NotifySendFileStatus", {
-      requestId: requestId,
-      status: status
+      status: status,
+      requestId: requestId
     });
   },
 

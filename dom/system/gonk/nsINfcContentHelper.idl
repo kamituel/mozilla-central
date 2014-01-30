@@ -24,7 +24,7 @@ interface nsINfcPeerCallback : nsISupports
                          in DOMString sessionToken);
 };
 
-[scriptable, uuid(91c2760a-f41c-4174-ad68-614840d4e201)]
+[scriptable, uuid(70cac000-7e3c-11e3-baa7-0800200c9a66)]
 interface nsINfcContentHelper : nsISupports
 {
   const long NFC_EVENT_PEER_READY = 0x01;
