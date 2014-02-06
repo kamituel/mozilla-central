@@ -131,6 +131,7 @@ public:
     nsCString mPathname;
     nsCString mSearch;
     nsCString mHash;
+    nsString mOrigin;
   };
 
   struct LoadInfo
@@ -150,10 +151,13 @@ public:
     bool mReportCSPViolations;
     bool mXHRParamsAllowed;
     bool mPrincipalIsSystem;
+    bool mIsInPrivilegedApp;
+    bool mIsInCertifiedApp;
 
     LoadInfo()
     : mEvalAllowed(false), mReportCSPViolations(false),
-      mXHRParamsAllowed(false), mPrincipalIsSystem(false)
+      mXHRParamsAllowed(false), mPrincipalIsSystem(false),
+      mIsInPrivilegedApp(false), mIsInCertifiedApp(false)
     { }
 
     void
@@ -185,6 +189,8 @@ public:
       mReportCSPViolations = aOther.mReportCSPViolations;
       mXHRParamsAllowed = aOther.mXHRParamsAllowed;
       mPrincipalIsSystem = aOther.mPrincipalIsSystem;
+      mIsInPrivilegedApp = aOther.mIsInPrivilegedApp;
+      mIsInCertifiedApp = aOther.mIsInCertifiedApp;
     }
   };
 
@@ -231,13 +237,17 @@ private:
   uint64_t mBusyCount;
   uint64_t mMessagePortSerial;
   Status mParentStatus;
-  bool mRooted;
   bool mParentSuspended;
   bool mIsChromeWorker;
   bool mMainThreadObjectsForgotten;
   WorkerType mWorkerType;
 
 protected:
+  // The worker is owned by its thread, which is represented here.  This is set
+  // in Construct() and emptied by WorkerFinishedRunnable, and conditionally
+  // traversed by the cycle collector if the busy count is zero.
+  nsRefPtr<WorkerPrivate> mSelfRef;
+
   WorkerPrivateParent(JSContext* aCx, WorkerPrivate* aParent,
                       const nsAString& aScriptURL, bool aIsChromeWorker,
                       WorkerType aWorkerType,
@@ -279,6 +289,14 @@ public:
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(WorkerPrivateParent,
                                                          nsDOMEventTargetHelper)
+
+  void
+  ClearSelfRef()
+  {
+    AssertIsOnParentThread();
+    MOZ_ASSERT(mSelfRef);
+    mSelfRef = nullptr;
+  }
 
   nsresult
   Dispatch(WorkerRunnable* aRunnable)
@@ -328,20 +346,10 @@ public:
   SynchronizeAndResume(JSContext* aCx, nsPIDOMWindow* aWindow,
                        nsIScriptContext* aScriptContext);
 
-  void
-  _finalize(JSFreeOp* aFop);
-
-  void
-  Finish(JSContext* aCx)
-  {
-    Root(false);
-  }
-
   bool
   Terminate(JSContext* aCx)
   {
     AssertIsOnParentThread();
-    Root(false);
     return TerminatePrivate(aCx);
   }
 
@@ -350,9 +358,6 @@ public:
 
   bool
   ModifyBusyCount(JSContext* aCx, bool aIncrease);
-
-  void
-  Root(bool aRoot);
 
   void
   ForgetMainThreadObjects(nsTArray<nsCOMPtr<nsISupports> >& aDoomed);
@@ -376,7 +381,7 @@ public:
   DispatchMessageEventToMessagePort(
                                JSContext* aCx,
                                uint64_t aMessagePortSerial,
-                               JSAutoStructuredCloneBuffer& aBuffer,
+                               JSAutoStructuredCloneBuffer&& aBuffer,
                                nsTArray<nsCOMPtr<nsISupports>>& aClonedObjects);
 
   uint64_t
@@ -523,6 +528,18 @@ public:
   UsesSystemPrincipal() const
   {
     return mLoadInfo.mPrincipalIsSystem;
+  }
+
+  bool
+  IsInPrivilegedApp() const
+  {
+    return mLoadInfo.mIsInPrivilegedApp;
+  }
+
+  bool
+  IsInCertifiedApp() const
+  {
+    return mLoadInfo.mIsInCertifiedApp;
   }
 
   already_AddRefed<nsIChannel>
@@ -990,13 +1007,6 @@ public:
   {
     AssertIsOnWorkerThread();
     return mPreferences[WORKERPREF_DUMP];
-  }
-
-  bool
-  PromiseEnabled() const
-  {
-    AssertIsOnWorkerThread();
-    return mPreferences[WORKERPREF_PROMISE];
   }
 
   bool

@@ -14,7 +14,6 @@ const COLLAPSE_ATTRIBUTE_LENGTH = 120;
 const COLLAPSE_DATA_URL_REGEX = /^data.+base64/;
 const COLLAPSE_DATA_URL_LENGTH = 60;
 const CONTAINER_FLASHING_DURATION = 500;
-const IMAGE_PREVIEW_MAX_DIM = 400;
 const NEW_SELECTION_HIGHLIGHTER_TIMER = 1000;
 
 const {UndoStack} = require("devtools/shared/undo");
@@ -28,6 +27,7 @@ const EventEmitter = require("devtools/shared/event-emitter");
 Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm");
 Cu.import("resource://gre/modules/devtools/Templater.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
 loader.lazyGetter(this, "DOMParser", function() {
  return Cc["@mozilla.org/xmlextras/domparser;1"].createInstance(Ci.nsIDOMParser);
@@ -53,10 +53,6 @@ loader.lazyGetter(this, "AutocompletePopup", () => {
  *        The inspector we're watching.
  * @param iframe aFrame
  *        An iframe in which the caller has kindly loaded markup-view.xhtml.
- *
- * Fires the following events:
- * - node-highlight: When a node in the markup-view is hovered and the
- *   corresponding node in the content gets highlighted
  */
 function MarkupView(aInspector, aFrame, aControllerWindow) {
   this._inspector = aInspector;
@@ -173,41 +169,11 @@ MarkupView.prototype = {
   },
 
   _showBoxModel: function(nodeFront, options={}) {
-    let toolbox = this._inspector.toolbox;
-
-    // If the remote highlighter exists on the target, use it
-    if (toolbox.isRemoteHighlightable) {
-      toolbox.initInspector().then(() => {
-        toolbox.highlighter.showBoxModel(nodeFront, options).then(() => {
-          this.emit("node-highlight", nodeFront);
-        });
-      });
-    }
-    // Else, revert to the "older" version of the highlighter in the walker
-    // actor
-    else {
-      this.walker.highlight(nodeFront).then(() => {
-        this.emit("node-highlight", nodeFront);
-      });
-    }
+    this._inspector.toolbox.highlighterUtils.highlightNodeFront(nodeFront, options);
   },
 
   _hideBoxModel: function() {
-    let deferred = promise.defer();
-    let toolbox = this._inspector.toolbox;
-
-    // If the remote highlighter exists on the target, use it
-    if (toolbox.isRemoteHighlightable) {
-      toolbox.initInspector().then(() => {
-        toolbox.highlighter.hideBoxModel().then(deferred.resolve);
-      });
-    } else {
-      deferred.resolve();
-    }
-    // If not, no need to unhighlight as the older highlight method uses a
-    // setTimeout to hide itself
-
-    return deferred.promise;
+    this._inspector.toolbox.highlighterUtils.unhighlight();
   },
 
   _briefBoxModelTimer: null,
@@ -1279,42 +1245,61 @@ MarkupContainer.prototype = {
     return "[MarkupContainer for " + this.node + "]";
   },
 
-  _prepareImagePreview: function() {
+  isPreviewable: function() {
     if (this.node.tagName) {
       let tagName = this.node.tagName.toLowerCase();
       let srcAttr = this.editor.getAttributeElement("src");
       let isImage = tagName === "img" && srcAttr;
       let isCanvas = tagName === "canvas";
 
+      return isImage || isCanvas;
+    } else {
+      return false;
+    }
+  },
+
+  _prepareImagePreview: function() {
+    if (this.isPreviewable()) {
       // Get the image data for later so that when the user actually hovers over
       // the element, the tooltip does contain the image
-      if (isImage || isCanvas) {
-        let def = promise.defer();
+      let def = promise.defer();
 
-        this.tooltipData = {
-          target: isImage ? srcAttr : this.editor.tag,
-          data: def.promise
-        };
+      this.tooltipData = {
+        target: this.editor.getAttributeElement("src") || this.editor.tag,
+        data: def.promise
+      };
 
-        this.node.getImageData(IMAGE_PREVIEW_MAX_DIM).then(data => {
-          if (data) {
-            data.data.string().then(str => {
-              let res = {data: str, size: data.size};
-              // Resolving the data promise and, to always keep tooltipData.data
-              // as a promise, create a new one that resolves immediately
-              def.resolve(res);
-              this.tooltipData.data = promise.resolve(res);
-            });
-          }
+      let maxDim = Services.prefs.getIntPref("devtools.inspector.imagePreviewTooltipSize");
+      this.node.getImageData(maxDim).then(data => {
+        data.data.string().then(str => {
+          let res = {data: str, size: data.size};
+          // Resolving the data promise and, to always keep tooltipData.data
+          // as a promise, create a new one that resolves immediately
+          def.resolve(res);
+          this.tooltipData.data = promise.resolve(res);
         });
-      }
+      }, () => {
+        this.tooltipData.data = promise.reject();
+      });
     }
+  },
+
+  copyImageDataUri: function() {
+    // We need to send again a request to gettooltipData even if one was sent for
+    // the tooltip, because we want the full-size image
+    this.node.getImageData().then(data => {
+      data.data.string().then(str => {
+        clipboardHelper.copyString(str, this.markup.doc);
+      });
+    });
   },
 
   _buildTooltipContent: function(target, tooltip) {
     if (this.tooltipData && target === this.tooltipData.target) {
       this.tooltipData.data.then(({data, size}) => {
         tooltip.setImageContent(data, size);
+      }, () => {
+        tooltip.setBrokenImageContent();
       });
       return true;
     }
@@ -2068,3 +2053,8 @@ function parseAttributeValues(attr, doc) {
 loader.lazyGetter(MarkupView.prototype, "strings", () => Services.strings.createBundle(
   "chrome://browser/locale/devtools/inspector.properties"
 ));
+
+XPCOMUtils.defineLazyGetter(this, "clipboardHelper", function() {
+  return Cc["@mozilla.org/widget/clipboardhelper;1"].
+    getService(Ci.nsIClipboardHelper);
+});

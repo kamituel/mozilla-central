@@ -791,9 +791,9 @@ nsFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
   }
 
   imgIRequest *oldBorderImage = aOldStyleContext
-    ? aOldStyleContext->StyleBorder()->GetBorderImage()
+    ? aOldStyleContext->StyleBorder()->GetBorderImageRequest()
     : nullptr;
-  imgIRequest *newBorderImage = StyleBorder()->GetBorderImage();
+  imgIRequest *newBorderImage = StyleBorder()->GetBorderImageRequest();
   // FIXME (Bug 759996): The following is no longer true.
   // For border-images, we can't be as conservative (we need to set the
   // new loaders if there has been any change) since the CalcDifference
@@ -4896,6 +4896,8 @@ nsIFrame::SchedulePaint(PaintType aType)
     return;
   }
   
+  // Disabled temporarily for happening too frequently. (bug 967758)
+  //MOZ_ASSERT(pres->GetContainerWeak(), "SchedulePaint in a detached pres context");
   pres->PresShell()->ScheduleViewManagerFlush(aType == PAINT_DELAYED_COMPRESS ?
                                               nsIPresShell::PAINT_DELAYED_COMPRESS :
                                               nsIPresShell::PAINT_DEFAULT);
