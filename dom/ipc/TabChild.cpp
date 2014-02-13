@@ -696,6 +696,8 @@ TabChild::Init()
   MOZ_ASSERT(loadContext);
   loadContext->SetPrivateBrowsing(
       mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_WINDOW);
+  loadContext->SetRemoteTabs(
+      mChromeFlags & nsIWebBrowserChrome::CHROME_REMOTE_WINDOW);
 
   nsCOMPtr<nsIWebProgress> webProgress = do_GetInterface(docShell);
   NS_ENSURE_TRUE(webProgress, NS_ERROR_FAILURE);
@@ -1128,12 +1130,11 @@ TabChild::ArraysToParams(const InfallibleTArray<int>& aIntParams,
 #ifdef DEBUG
 PContentPermissionRequestChild*
 TabChild:: SendPContentPermissionRequestConstructor(PContentPermissionRequestChild* aActor,
-                                                    const nsCString& aType,
-                                                    const nsCString& aAccess,
+                                                    const InfallibleTArray<PermissionRequest>& aRequests,
                                                     const IPC::Principal& aPrincipal)
 {
   PCOMContentPermissionRequestChild* child = static_cast<PCOMContentPermissionRequestChild*>(aActor);
-  PContentPermissionRequestChild* request = PBrowserChild::SendPContentPermissionRequestConstructor(aActor, aType, aAccess, aPrincipal);
+  PContentPermissionRequestChild* request = PBrowserChild::SendPContentPermissionRequestConstructor(aActor, aRequests, aPrincipal);
   child->mIPCOpen = true;
   return request;
 }
@@ -1592,7 +1593,7 @@ TabChild::ProcessUpdateFrame(const FrameMetrics& aFrameMetrics)
 }
 
 bool
-TabChild::RecvHandleDoubleTap(const CSSIntPoint& aPoint)
+TabChild::RecvHandleDoubleTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
     if (!mGlobal || !mTabChildGlobal) {
         return true;
@@ -1609,7 +1610,7 @@ TabChild::RecvHandleDoubleTap(const CSSIntPoint& aPoint)
 }
 
 bool
-TabChild::RecvHandleSingleTap(const CSSIntPoint& aPoint)
+TabChild::RecvHandleSingleTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (!mGlobal || !mTabChildGlobal) {
     return true;
@@ -1626,7 +1627,7 @@ TabChild::RecvHandleSingleTap(const CSSIntPoint& aPoint)
 }
 
 bool
-TabChild::RecvHandleLongTap(const CSSIntPoint& aPoint)
+TabChild::RecvHandleLongTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (!mGlobal || !mTabChildGlobal) {
     return true;
@@ -1636,18 +1637,20 @@ TabChild::RecvHandleLongTap(const CSSIntPoint& aPoint)
       DispatchMouseEvent(NS_LITERAL_STRING("contextmenu"), aPoint, 2, 1, 0, false,
                          nsIDOMMouseEvent::MOZ_SOURCE_TOUCH);
 
+  SendContentReceivedTouch(aGuid, mContextMenuHandled);
+
   return true;
 }
 
 bool
-TabChild::RecvHandleLongTapUp(const CSSIntPoint& aPoint)
+TabChild::RecvHandleLongTapUp(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid)
 {
   if (mContextMenuHandled) {
     mContextMenuHandled = false;
     return true;
   }
 
-  RecvHandleSingleTap(aPoint);
+  RecvHandleSingleTap(aPoint, aGuid);
   return true;
 }
 
@@ -2064,7 +2067,8 @@ TabChild::DeallocPContentDialogChild(PContentDialogChild* aDialog)
 }
 
 PContentPermissionRequestChild*
-TabChild::AllocPContentPermissionRequestChild(const nsCString& aType, const nsCString& aAccess, const IPC::Principal&)
+TabChild::AllocPContentPermissionRequestChild(const InfallibleTArray<PermissionRequest>& aRequests,
+                                              const IPC::Principal& aPrincipal)
 {
   NS_RUNTIMEABORT("unused");
   return nullptr;
@@ -2108,7 +2112,7 @@ bool
 TabChild::DeallocPOfflineCacheUpdateChild(POfflineCacheUpdateChild* actor)
 {
   OfflineCacheUpdateChild* offlineCacheUpdate = static_cast<OfflineCacheUpdateChild*>(actor);
-  delete offlineCacheUpdate;
+  NS_RELEASE(offlineCacheUpdate);
   return true;
 }
 
