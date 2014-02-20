@@ -1543,7 +1543,7 @@ nsStyleGradient::HasCalc()
       return true;
   }
   return mBgPosX.IsCalcUnit() || mBgPosY.IsCalcUnit() || mAngle.IsCalcUnit() ||
-         mRadiusX.IsCalcUnit() || mRadiusX.IsCalcUnit();
+         mRadiusX.IsCalcUnit() || mRadiusY.IsCalcUnit();
 }
 
 // --------------------
@@ -2467,7 +2467,13 @@ nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
       NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
   }
 
-  if (mWillChangeBitField != aOther.mWillChangeBitField) {
+  uint8_t willChangeBitsChanged =
+    mWillChangeBitField ^ aOther.mWillChangeBitField;
+  if (willChangeBitsChanged & NS_STYLE_WILL_CHANGE_STACKING_CONTEXT) {
+    NS_UpdateHint(hint, nsChangeHint_RepaintFrame);
+  }
+  if (willChangeBitsChanged & ~uint8_t(NS_STYLE_WILL_CHANGE_STACKING_CONTEXT)) {
+    // FIXME (Bug 974125): Don't reconstruct the frame
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
   }
 
@@ -2970,6 +2976,7 @@ nsStyleText::nsStyleText(void)
   mTextSizeAdjust = NS_STYLE_TEXT_SIZE_ADJUST_AUTO;
   mTextOrientation = NS_STYLE_TEXT_ORIENTATION_AUTO;
   mTextCombineHorizontal = NS_STYLE_TEXT_COMBINE_HORIZ_NONE;
+  mControlCharacterVisibility = NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN;
 
   mLetterSpacing.SetNormalValue();
   mLineHeight.SetNormalValue();
@@ -2993,6 +3000,7 @@ nsStyleText::nsStyleText(const nsStyleText& aSource)
     mTextSizeAdjust(aSource.mTextSizeAdjust),
     mTextOrientation(aSource.mTextOrientation),
     mTextCombineHorizontal(aSource.mTextCombineHorizontal),
+    mControlCharacterVisibility(aSource.mControlCharacterVisibility),
     mTabSize(aSource.mTabSize),
     mWordSpacing(aSource.mWordSpacing),
     mLetterSpacing(aSource.mLetterSpacing),
@@ -3016,7 +3024,8 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aOther) const
     return NS_STYLE_HINT_FRAMECHANGE;
   }
 
-  if (mTextCombineHorizontal != aOther.mTextCombineHorizontal) {
+  if (mTextCombineHorizontal != aOther.mTextCombineHorizontal ||
+      mControlCharacterVisibility != aOther.mControlCharacterVisibility) {
     return nsChangeHint_ReconstructFrame;
   }
 

@@ -93,8 +93,6 @@ js::StartOffThreadIonCompile(JSContext *cx, jit::IonBuilder *builder)
     if (!WorkerThreadState().ionWorklist().append(builder))
         return false;
 
-    cx->runtime()->addCompilationThread();
-
     WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
     return true;
 }
@@ -409,15 +407,7 @@ js::EnqueuePendingParseTasksAfterGC(JSRuntime *rt)
     WorkerThreadState().notifyAll(GlobalWorkerThreadState::PRODUCER);
 }
 
-#ifdef XP_WIN
-// The default stack size for new threads on Windows is 1MB, but specifying a
-// smaller explicit size to NSPR on thread creation causes our visible memory
-// usage to increase. Just use the default stack size on Windows.
-static const uint32_t WORKER_STACK_SIZE = 0;
-#else
 static const uint32_t WORKER_STACK_SIZE = 512 * 1024;
-#endif
-
 static const uint32_t WORKER_STACK_QUOTA = 450 * 1024;
 
 bool
@@ -657,8 +647,6 @@ GlobalWorkerThreadState::finishParseTask(JSContext *maybecx, JSRuntime *rt, void
         JSObject *newProto = GetClassPrototypePure(&parseTask->scopeChain->global(), key);
         JS_ASSERT(newProto);
 
-        // Note: this is safe to do without requiring the compilation lock, as
-        // the new type is not yet available to compilation threads.
         object->setProtoUnchecked(newProto);
     }
 
@@ -799,11 +787,7 @@ WorkerThread::handleIonWorkload()
         jit::IonContext ictx(jit::CompileRuntime::get(rt),
                              jit::CompileCompartment::get(ionBuilder->script()->compartment()),
                              &ionBuilder->alloc());
-        AutoEnterIonCompilation ionCompiling;
-        bool succeeded = ionBuilder->build();
-        ionBuilder->clearForBackEnd();
-        if (succeeded)
-            ionBuilder->setBackgroundCodegen(jit::CompileBackEnd(ionBuilder));
+        ionBuilder->setBackgroundCodegen(jit::CompileBackEnd(ionBuilder));
     }
 
     FinishOffThreadIonCompile(ionBuilder);

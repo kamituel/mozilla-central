@@ -302,7 +302,16 @@ HyperTextAccessible::DOMPointToOffset(nsINode* aNode, int32_t aNodeOffset,
       // This <br> is the hacky "bogus node" used when there is no text in a control
       return 0;
     }
-    descendant = GetFirstAvailableAccessible(findNode);
+
+    descendant = mDoc->GetAccessible(findNode);
+    if (!descendant && findNode->IsContent()) {
+      Accessible* container = mDoc->GetContainerAccessible(findNode);
+      if (container) {
+        TreeWalker walker(container, findNode->AsContent(),
+                          TreeWalker::eWalkContextTree);
+        descendant = walker.NextChild();
+      }
+    }
   }
 
   return TransformOffset(descendant, offset, aIsEndOffset);
@@ -1107,16 +1116,13 @@ HyperTextAccessible::SetSelectionRange(int32_t aStartPos, int32_t aEndPos)
   if (isFocusable)
     TakeFocus();
 
-  // Set the selection
-  SetSelectionBoundsAt(0, aStartPos, aEndPos);
-
-  // If range 0 was successfully set, clear any additional selection 
-  // ranges remaining from previous selection
   Selection* domSel = DOMSelection();
   NS_ENSURE_STATE(domSel);
 
+  // Set up the selection.
   for (int32_t idx = domSel->GetRangeCount() - 1; idx > 0; idx--)
     domSel->RemoveRange(domSel->GetRangeAt(idx));
+  SetSelectionBoundsAt(0, aStartPos, aEndPos);
 
   // When selection is done, move the focus to the selection if accessible is
   // not focusable. That happens when selection is set within hypertext
@@ -1766,28 +1772,6 @@ HyperTextAccessible::GetDOMPointByFrameOffset(nsIFrame* aFrame, int32_t aOffset,
 
 // HyperTextAccessible
 nsresult
-HyperTextAccessible::RangeBoundToHypertextOffset(nsRange* aRange,
-                                                 bool aIsStartBound,
-                                                 bool aIsStartHTOffset,
-                                                 int32_t* aOffset)
-{
-  nsINode* node = nullptr;
-  int32_t nodeOffset = 0;
-
-  if (aIsStartBound) {
-    node = aRange->GetStartParent();
-    nodeOffset = aRange->StartOffset();
-  } else {
-    node = aRange->GetEndParent();
-    nodeOffset = aRange->EndOffset();
-  }
-
-  *aOffset = DOMPointToOffset(node, nodeOffset);
-  return NS_OK;
-}
-
-// HyperTextAccessible
-nsresult
 HyperTextAccessible::GetSpellTextAttribute(nsINode* aNode,
                                            int32_t aNodeOffset,
                                            int32_t* aHTStartOffset,
@@ -1828,11 +1812,9 @@ HyperTextAccessible::GetSpellTextAttribute(nsINode* aNode,
     int32_t startOffset = range->StartOffset();
     if (nsContentUtils::ComparePoints(startNode, startOffset, aNode,
                                       aNodeOffset) <= 0) {
-      rv = RangeBoundToHypertextOffset(range, true, true, &startHTOffset);
-      NS_ENSURE_SUCCESS(rv, rv);
+      startHTOffset = DOMPointToOffset(startNode, startOffset);
 
-      rv = RangeBoundToHypertextOffset(range, false, false, &endHTOffset);
-      NS_ENSURE_SUCCESS(rv, rv);
+      endHTOffset = DOMPointToOffset(endNode, endOffset);
 
       if (startHTOffset > *aHTStartOffset)
         *aHTStartOffset = startHTOffset;
@@ -1849,13 +1831,12 @@ HyperTextAccessible::GetSpellTextAttribute(nsINode* aNode,
     }
 
     // This range came after the point.
-    rv = RangeBoundToHypertextOffset(range, true, false, &endHTOffset);
-    NS_ENSURE_SUCCESS(rv, rv);
+    endHTOffset = DOMPointToOffset(startNode, startOffset);
 
     if (idx > 0) {
-      rv = RangeBoundToHypertextOffset(domSel->GetRangeAt(idx - 1), false,
-                                       true, &startHTOffset);
-      NS_ENSURE_SUCCESS(rv, rv);
+      nsRange* prevRange = domSel->GetRangeAt(idx - 1);
+      startHTOffset = DOMPointToOffset(prevRange->GetEndParent(),
+                                       prevRange->EndOffset());
     }
 
     if (startHTOffset > *aHTStartOffset)
@@ -1871,9 +1852,9 @@ HyperTextAccessible::GetSpellTextAttribute(nsINode* aNode,
   // the point is not in a range, that we do not need to compute an end offset,
   // and that we should use the end offset of the last range to compute the
   // start offset of the text attribute range.
-  rv = RangeBoundToHypertextOffset(domSel->GetRangeAt(rangeCount - 1), false,
-                                   true, &startHTOffset);
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRange* prevRange = domSel->GetRangeAt(rangeCount - 1);
+  startHTOffset = DOMPointToOffset(prevRange->GetEndParent(),
+                                   prevRange->EndOffset());
 
   if (startHTOffset > *aHTStartOffset)
     *aHTStartOffset = startHTOffset;

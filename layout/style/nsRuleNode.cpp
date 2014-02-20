@@ -127,17 +127,29 @@ nsRuleNode::ChildrenHashOps = {
 //  - if the display value (argument) is not a block-type
 //    then we set it to a valid block display value
 //  - For enforcing the floated/positioned element CSS2 rules
+//  - We allow the behavior of "list-item" to be customized.
+//    CSS21 says that position/float do not convert 'list-item' to 'block',
+//    but it explicitly does not define whether 'list-item' should be
+//    converted to block *on the root node*. To allow for flexibility
+//    (so that we don't have to support a list-item root node), this method
+//    lets the caller pick either behavior, using the 'aConvertListItem' arg.
+//    Reference: http://www.w3.org/TR/CSS21/visuren.html#dis-pos-flo
 /* static */
 void
-nsRuleNode::EnsureBlockDisplay(uint8_t& display)
+nsRuleNode::EnsureBlockDisplay(uint8_t& display,
+                               bool aConvertListItem /* = false */)
 {
   // see if the display value is already a block
   switch (display) {
+  case NS_STYLE_DISPLAY_LIST_ITEM :
+    if (aConvertListItem) {
+      display = NS_STYLE_DISPLAY_BLOCK;
+      break;
+    } // else, fall through to share the 'break' for non-changing display vals
   case NS_STYLE_DISPLAY_NONE :
     // never change display:none *ever*
   case NS_STYLE_DISPLAY_TABLE :
   case NS_STYLE_DISPLAY_BLOCK :
-  case NS_STYLE_DISPLAY_LIST_ITEM :
   case NS_STYLE_DISPLAY_FLEX :
     // do not muck with these at all - already blocks
     // This is equivalent to nsStyleDisplay::IsBlockOutside.  (XXX Maybe we
@@ -4225,6 +4237,14 @@ nsRuleNode::ComputeTextData(void* aStartStruct,
               NS_STYLE_TEXT_SIZE_ADJUST_NONE, // none value
               0, 0);
 
+  // -moz-text-discard: enum, inherit, initial
+  SetDiscrete(*aRuleData->ValueForControlCharacterVisibility(),
+              text->mControlCharacterVisibility,
+              canStoreInRuleTree,
+              SETDSC_ENUMERATED | SETDSC_UNSET_INHERIT,
+              parentText->mControlCharacterVisibility,
+              NS_STYLE_CONTROL_CHARACTER_VISIBILITY_HIDDEN, 0, 0, 0, 0);
+
   // text-orientation: enum, inherit, initial
   SetDiscrete(*aRuleData->ValueForTextOrientation(), text->mTextOrientation,
               canStoreInRuleTree,
@@ -4752,18 +4772,7 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
                          display, parentDisplay, aRuleData,
                          canStoreInRuleTree);
 
-  if (!display->mTransitions.SetLength(numTransitions)) {
-    NS_WARNING("failed to allocate transitions array");
-    display->mTransitions.SetLength(1);
-    NS_ABORT_IF_FALSE(display->mTransitions.Length() == 1,
-                      "could not allocate using auto array buffer");
-    numTransitions = 1;
-    FOR_ALL_TRANSITION_PROPS(p) {
-      TransitionPropData& d = transitionPropData[p];
-
-      d.num = 1;
-    }
-  }
+  display->mTransitions.SetLength(numTransitions);
 
   FOR_ALL_TRANSITION_PROPS(p) {
     const TransitionPropInfo& i = transitionPropInfo[p];
@@ -4919,18 +4928,7 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
                          display, parentDisplay, aRuleData,
                          canStoreInRuleTree);
 
-  if (!display->mAnimations.SetLength(numAnimations)) {
-    NS_WARNING("failed to allocate animations array");
-    display->mAnimations.SetLength(1);
-    NS_ABORT_IF_FALSE(display->mAnimations.Length() == 1,
-                      "could not allocate using auto array buffer");
-    numAnimations = 1;
-    FOR_ALL_ANIMATION_PROPS(p) {
-      TransitionPropData& d = animationPropData[p];
-
-      d.num = 1;
-    }
-  }
+  display->mAnimations.SetLength(numAnimations);
 
   FOR_ALL_ANIMATION_PROPS(p) {
     const TransitionPropInfo& i = animationPropInfo[p];
@@ -5485,6 +5483,8 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
       if (item->mValue.UnitHasStringValue()) {
         nsAutoString buffer;
         item->mValue.GetStringValue(buffer);
+        display->mWillChange.AppendElement(buffer);
+
         if (buffer.EqualsLiteral("transform")) {
           display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_TRANSFORM;
         }
@@ -5494,7 +5494,13 @@ nsRuleNode::ComputeDisplayData(void* aStartStruct,
         if (buffer.EqualsLiteral("scroll-position")) {
           display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_SCROLL;
         }
-        display->mWillChange.AppendElement(buffer);
+
+        nsCSSProperty prop =
+          nsCSSProps::LookupProperty(buffer, nsCSSProps::eEnabled);
+        if (nsCSSProps::PropHasFlags(prop,
+                                     CSS_PROPERTY_CREATES_STACKING_CONTEXT)) {
+          display->mWillChangeBitField |= NS_STYLE_WILL_CHANGE_STACKING_CONTEXT;
+        }
       }
     }
     break;

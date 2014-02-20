@@ -315,6 +315,7 @@ var shell = {
     window.addEventListener('mozfullscreenchange', this);
     window.addEventListener('MozAfterPaint', this);
     window.addEventListener('sizemodechange', this);
+    window.addEventListener('unload', this);
     this.contentBrowser.addEventListener('mozbrowserloadstart', this, true);
 
     CustomEventManager.init();
@@ -338,6 +339,7 @@ var shell = {
   },
 
   stop: function shell_stop() {
+    window.removeEventListener('unload', this);
     window.removeEventListener('keydown', this, true);
     window.removeEventListener('keypress', this, true);
     window.removeEventListener('keyup', this, true);
@@ -536,6 +538,9 @@ var shell = {
         this.sendChromeEvent({
           type: 'system-first-paint'
         });
+        break;
+      case 'unload':
+        this.stop();
         break;
     }
   },
@@ -750,6 +755,10 @@ var CustomEventManager = {
         break;
       case 'inputmethod-update-layouts':
         KeyboardHelper.handleEvent(detail);
+        break;
+      case 'nfc-hardware-state-change':
+        Services.obs.notifyObservers(null, 'nfc-hardware-state-change',
+          JSON.stringify({ nfcHardwareState: detail.nfcHardwareState }));
         break;
     }
   }
@@ -1092,7 +1101,7 @@ let RemoteDebugger = {
       // the parent process, unless we enable certified apps debugging.
       let restrictPrivileges = Services.prefs.getBoolPref("devtools.debugger.forbid-certified-apps");
       DebuggerServer.addBrowserActors("navigator:browser", restrictPrivileges);
-      DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
+      DebuggerServer.addActors('chrome://b2g/content/dbg-browser-actors.js');
 
 #ifdef MOZ_WIDGET_GONK
       DebuggerServer.onConnectionChange = function(what) {

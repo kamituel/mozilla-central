@@ -10,6 +10,7 @@
 #include "mozilla/EventForwards.h"
 #include "mozilla/dom/PBrowserParent.h"
 #include "mozilla/dom/PContentDialogParent.h"
+#include "mozilla/dom/PFilePickerParent.h"
 #include "mozilla/dom/TabContext.h"
 #include "nsCOMPtr.h"
 #include "nsIAuthPromptProvider.h"
@@ -207,10 +208,18 @@ public:
     void UpdateDimensions(const nsRect& rect, const nsIntSize& size);
     void UpdateFrame(const layers::FrameMetrics& aFrameMetrics);
     void AcknowledgeScrollUpdate(const ViewID& aScrollId, const uint32_t& aScrollGeneration);
-    void HandleDoubleTap(const CSSIntPoint& aPoint, int32_t aModifiers);
-    void HandleSingleTap(const CSSIntPoint& aPoint, int32_t aModifiers);
-    void HandleLongTap(const CSSIntPoint& aPoint, int32_t aModifiers);
-    void HandleLongTapUp(const CSSIntPoint& aPoint, int32_t aModifiers);
+    void HandleDoubleTap(const CSSIntPoint& aPoint,
+                         int32_t aModifiers,
+                         const ScrollableLayerGuid& aGuid);
+    void HandleSingleTap(const CSSIntPoint& aPoint,
+                         int32_t aModifiers,
+                         const ScrollableLayerGuid& aGuid);
+    void HandleLongTap(const CSSIntPoint& aPoint,
+                       int32_t aModifiers,
+                       const ScrollableLayerGuid& aGuid);
+    void HandleLongTapUp(const CSSIntPoint& aPoint,
+                         int32_t aModifiers,
+                         const ScrollableLayerGuid& aGuid);
     void NotifyTransformBegin(ViewID aViewId);
     void NotifyTransformEnd(ViewID aViewId);
     void Activate();
@@ -230,10 +239,10 @@ public:
     bool SendMouseWheelEvent(mozilla::WidgetWheelEvent& event);
     bool SendRealKeyEvent(mozilla::WidgetKeyboardEvent& event);
     bool SendRealTouchEvent(WidgetTouchEvent& event);
-    bool SendHandleSingleTap(const CSSIntPoint& aPoint);
-    bool SendHandleLongTap(const CSSIntPoint& aPoint);
-    bool SendHandleLongTapUp(const CSSIntPoint& aPoint);
-    bool SendHandleDoubleTap(const CSSIntPoint& aPoint);
+    bool SendHandleSingleTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid);
+    bool SendHandleLongTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid);
+    bool SendHandleLongTapUp(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid);
+    bool SendHandleDoubleTap(const CSSIntPoint& aPoint, const ScrollableLayerGuid& aGuid);
 
     virtual PDocumentRendererParent*
     AllocPDocumentRendererParent(const nsRect& documentRect,
@@ -245,11 +254,15 @@ public:
     virtual bool DeallocPDocumentRendererParent(PDocumentRendererParent* actor) MOZ_OVERRIDE;
 
     virtual PContentPermissionRequestParent*
-    AllocPContentPermissionRequestParent(const nsCString& aType,
-                                         const nsCString& aAccess,
+    AllocPContentPermissionRequestParent(const InfallibleTArray<PermissionRequest>& aRequests,
                                          const IPC::Principal& aPrincipal) MOZ_OVERRIDE;
     virtual bool
     DeallocPContentPermissionRequestParent(PContentPermissionRequestParent* actor) MOZ_OVERRIDE;
+
+    virtual PFilePickerParent*
+    AllocPFilePickerParent(const nsString& aTitle,
+                           const int16_t& aMode) MOZ_OVERRIDE;
+    virtual bool DeallocPFilePickerParent(PFilePickerParent* actor) MOZ_OVERRIDE;
 
     virtual POfflineCacheUpdateParent*
     AllocPOfflineCacheUpdateParent(const URIParams& aManifestURI,

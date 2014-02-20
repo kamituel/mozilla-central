@@ -4,6 +4,7 @@
 
 const { classes: Cc, interfaces: Ci, utils: Cu } = Components;
 
+Cu.import("resource://gre/modules/Accounts.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 
@@ -136,9 +137,8 @@ function cacheSnippets(response) {
 function loadSnippetsFromCache() {
   let promise = OS.File.read(gSnippetsPath);
   promise.then(array => updateBanner(gDecoder.decode(array)), e => {
-    // If snippets.json doesn't exist, update data from the server.
     if (e instanceof OS.File.Error && e.becauseNoSuchFile) {
-      update();
+      Cu.reportError("Couldn't show snippets because cache does not exist yet.");
     } else {
       Cu.reportError("Error loading snippets from cache: " + e);
     }
@@ -178,7 +178,8 @@ function updateBanner(response) {
       text: message.text,
       icon: message.icon,
       onclick: function() {
-        gChromeWin.BrowserApp.addTab(message.url);
+        let parentId = gChromeWin.BrowserApp.selectedTab.id;
+        gChromeWin.BrowserApp.addTab(message.url, { parentId: parentId });
       },
       onshown: function() {
         // 10% of the time, record the snippet id and a timestamp
@@ -292,25 +293,29 @@ function _httpGetRequest(url, callback) {
 }
 
 function loadSyncPromoBanner() {
-  // XXX: Use Accounts.jsm to check if a sync account exists (bug 917942).
-  let syncAccountExists = false;
-  if (syncAccountExists) {
-    // Don't show the promo banner if a sync account already exists.
-    return;
-  }
+  Accounts.anySyncAccountsExist().then(
+    (exist) => {
+      // Don't show the banner if sync accounts exist.
+      if (exist) {
+        return;
+      }
 
-  let stringBundle = Services.strings.createBundle("chrome://browser/locale/sync.properties");
-  let text = stringBundle.GetStringFromName("promoBanner.message.text");
-  let link = stringBundle.GetStringFromName("promoBanner.message.link");
+      let stringBundle = Services.strings.createBundle("chrome://browser/locale/sync.properties");
+      let text = stringBundle.GetStringFromName("promoBanner.message.text");
+      let link = stringBundle.GetStringFromName("promoBanner.message.link");
 
-  Home.banner.add({
-    text: text + "<a href=\"#\">" + link + "</a>",
-    icon: "drawable://sync_promo",
-    onclick: function() {
-      // XXX: Use Accounts.jsm to launch sync set-up activity (bug 917942).
-      gChromeWin.alert("Launch sync set-up activity!");
+      Home.banner.add({
+        text: text + "<a href=\"#\">" + link + "</a>",
+        icon: "drawable://sync_promo",
+        onclick: function() {
+          Accounts.launchSetup();
+        }
+      });
+    },
+    (err) => {
+      Cu.reportError("Error checking whether sync account exists: " + err);
     }
-  });
+  );
 }
 
 function Snippets() {}

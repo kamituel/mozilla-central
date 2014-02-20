@@ -130,12 +130,13 @@ public:
    * aUpdated is the region which should be updated
    * aUpdatedRegionBack is the region in aNewBackResult which has been updated
    */
-  virtual void UpdateThebes(const ThebesBufferData& aData,
+  virtual bool UpdateThebes(const ThebesBufferData& aData,
                             const nsIntRegion& aUpdated,
                             const nsIntRegion& aOldValidRegionBack,
                             nsIntRegion* aUpdatedRegionBack)
   {
-    MOZ_ASSERT(false, "should be implemented or not used");
+    NS_ERROR("should be implemented or not used");
+    return false;
   }
 
   /**
@@ -265,7 +266,6 @@ public:
         aLayer == mLayer ||
         aFlags & FORCE_DETACH) {
       SetLayer(nullptr);
-      SetCompositor(nullptr);
       mAttached = false;
       mKeepAttached = false;
       if (mBackendData) {
@@ -290,6 +290,8 @@ public:
   virtual void UseTextureHost(TextureHost* aTexture);
   virtual void UseComponentAlphaTextures(TextureHost* aTextureOnBlack,
                                          TextureHost* aTextureOnWhite);
+
+  virtual void RemoveTextureHost(TextureHost* aTexture);
 
 protected:
   TextureInfo mTextureInfo;

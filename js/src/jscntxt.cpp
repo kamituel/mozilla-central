@@ -116,7 +116,6 @@ js::ExistingCloneFunctionAtCallsite(const CallsiteCloneTable &table, JSFunction 
     JS_ASSERT(fun->nonLazyScript()->shouldCloneAtCallsite());
     JS_ASSERT(!fun->nonLazyScript()->enclosingStaticScope());
     JS_ASSERT(types::UseNewTypeForClone(fun));
-    JS_ASSERT(CurrentThreadCanReadCompilationData());
 
     /*
      * If we start allocating function objects in the nursery, then the callsite
@@ -153,8 +152,6 @@ js::CloneFunctionAtCallsite(JSContext *cx, HandleFunction fun, HandleScript scri
 
     typedef CallsiteCloneKey Key;
     typedef CallsiteCloneTable Table;
-
-    AutoLockForCompilation lock(cx);
 
     Table &table = cx->compartment()->callsiteClones;
     if (!table.initialized() && !table.init())
@@ -197,11 +194,12 @@ js::NewContext(JSRuntime *rt, size_t stackChunkSize)
 #ifdef JS_THREADSAFE
         JS_BeginRequest(cx);
 #endif
-        bool ok = rt->staticStrings.init(cx);
-        if (ok)
-            ok = InitCommonNames(cx);
+        bool ok = rt->initializeAtoms(cx);
         if (ok)
             ok = rt->initSelfHosting(cx);
+
+        if (ok && !rt->parentRuntime)
+            ok = rt->transformToPermanentAtoms();
 
 #ifdef JS_THREADSAFE
         JS_EndRequest(cx);
@@ -210,6 +208,7 @@ js::NewContext(JSRuntime *rt, size_t stackChunkSize)
             DestroyContext(cx, DCM_NEW_FAILED);
             return nullptr;
         }
+
         rt->haveCreatedContext = true;
     }
 
@@ -1001,27 +1000,28 @@ js_InvokeOperationCallback(JSContext *cx)
     JS_ASSERT_REQUEST_DEPTH(cx);
 
     JSRuntime *rt = cx->runtime();
-    JS_ASSERT(rt->interrupt != 0);
+    JS_ASSERT(rt->interrupt);
 
     /*
      * Reset the callback counter first, then run GC and yield. If another
      * thread is racing us here we will accumulate another callback request
      * which will be serviced at the next opportunity.
      */
-    rt->interrupt = 0;
+    rt->interrupt = false;
 
-    /* IonMonkey sets its stack limit to UINTPTR_MAX to trigger operaton callbacks. */
+    /*
+     * IonMonkey sets its stack limit to UINTPTR_MAX to trigger operation
+     * callbacks.
+     */
     rt->resetIonStackLimit();
 
-    if (rt->gcIsNeeded)
-        GCSlice(rt, GC_NORMAL, rt->gcTriggerReason);
-
-#ifdef JSGC_GENERATIONAL
-    if (rt->gcStoreBuffer.isAboutToOverflow())
-        MinorGC(cx, JS::gcreason::FULL_STORE_BUFFER);
-#endif
+    js::gc::GCIfNeeded(cx);
 
 #ifdef JS_ION
+#ifdef JS_THREADSAFE
+    rt->interruptPar = false;
+#endif
+
     /*
      * A worker thread may have set the callback after finishing an Ion
      * compilation.

@@ -757,7 +757,11 @@ var gBrowserInit = {
   delayedStartupFinished: false,
 
   onLoad: function() {
-    gMultiProcessBrowser = Services.appinfo.browserTabsRemote;
+    gMultiProcessBrowser =
+      window.QueryInterface(Ci.nsIInterfaceRequestor)
+      .getInterface(Ci.nsIWebNavigation)
+      .QueryInterface(Ci.nsILoadContext)
+      .useRemoteTabs;
 
     var mustLoadSidebar = false;
 
@@ -802,7 +806,7 @@ var gBrowserInit = {
     gBrowser.addTabsProgressListener(window.TabsProgressListener);
 
     // setup our common DOMLinkAdded listener
-    gBrowser.addEventListener("DOMLinkAdded", DOMLinkHandler, false);
+    DOMLinkHandler.init();
 
     // setup simple gestures support
     gGestureSupport.init(true);
@@ -1001,8 +1005,13 @@ var gBrowserInit = {
       }
       // Note: loadOneOrMoreURIs *must not* be called if window.arguments.length >= 3.
       // Such callers expect that window.arguments[0] is handled as a single URI.
-      else
+      else {
+        if (uriToLoad == "about:newtab" &&
+            Services.prefs.getBoolPref("browser.newtabpage.enabled")) {
+          Services.telemetry.getHistogramById("NEWTAB_PAGE_SHOWN").add(true);
+        }
         loadOneOrMoreURIs(uriToLoad);
+      }
     }
 
 #ifdef MOZ_SAFE_BROWSING
@@ -1023,6 +1032,7 @@ var gBrowserInit = {
     IndexedDBPromptHelper.init();
     gFormSubmitObserver.init();
     SocialUI.init();
+    gRemoteTabsUI.init();
 
     // Initialize the full zoom setting.
     // We do this before the session restore service gets initialized so we can
@@ -2342,7 +2352,7 @@ let BrowserOnClick = {
    */
   onE10sAboutNewTab: function(aEvent, aOwnerDoc) {
     let isTopFrame = (aOwnerDoc.defaultView.parent === aOwnerDoc.defaultView);
-    if (!isTopFrame) {
+    if (!isTopFrame || aEvent.button != 0) {
       return;
     }
 
@@ -2764,133 +2774,54 @@ var newWindowButtonObserver = {
 }
 
 const DOMLinkHandler = {
-  handleEvent: function (event) {
-    switch (event.type) {
-      case "DOMLinkAdded":
-        this.onLinkAdded(event);
+  init: function() {
+    let mm = window.messageManager;
+    mm.addMessageListener("Link:AddFeed", this);
+    mm.addMessageListener("Link:AddIcon", this);
+    mm.addMessageListener("Link:AddSearch", this);
+  },
+
+  receiveMessage: function (aMsg) {
+    switch (aMsg.name) {
+      case "Link:AddFeed":
+        let link = {type: aMsg.data.type, href: aMsg.data.href, title: aMsg.data.title};
+        FeedHandler.addFeed(link, aMsg.target);
+        break;
+
+      case "Link:AddIcon":
+        return this.addIcon(aMsg.target, aMsg.data.url);
+        break;
+
+      case "Link:AddSearch":
+        this.addSearch(aMsg.target, aMsg.data.engine, aMsg.data.url);
         break;
     }
   },
-  getLinkIconURI: function(aLink) {
-    let targetDoc = aLink.ownerDocument;
-    var uri = makeURI(aLink.href, targetDoc.characterSet);
 
-    // Verify that the load of this icon is legal.
-    // Some error or special pages can load their favicon.
-    // To be on the safe side, only allow chrome:// favicons.
-    var isAllowedPage = [
-      /^about:neterror\?/,
-      /^about:blocked\?/,
-      /^about:certerror\?/,
-      /^about:home$/,
-    ].some(function (re) re.test(targetDoc.documentURI));
+  addIcon: function(aBrowser, aURL) {
+    if (gBrowser.isFailedIcon(aURL))
+      return false;
 
-    if (!isAllowedPage || !uri.schemeIs("chrome")) {
-      var ssm = Services.scriptSecurityManager;
-      try {
-        ssm.checkLoadURIWithPrincipal(targetDoc.nodePrincipal, uri,
-                                      Ci.nsIScriptSecurityManager.DISALLOW_SCRIPT);
-      } catch(e) {
-        return null;
-      }
-    }
+    let tab = gBrowser._getTabForBrowser(aBrowser);
+    if (!tab)
+      return false;
 
-    try {
-      var contentPolicy = Cc["@mozilla.org/layout/content-policy;1"].
-                          getService(Ci.nsIContentPolicy);
-    } catch(e) {
-      return null; // Refuse to load if we can't do a security check.
-    }
-
-    // Security says okay, now ask content policy
-    if (contentPolicy.shouldLoad(Ci.nsIContentPolicy.TYPE_IMAGE,
-                                 uri, targetDoc.documentURIObject,
-                                 aLink, aLink.type, null)
-                                 != Ci.nsIContentPolicy.ACCEPT)
-      return null;
-
-    try {
-      uri.userPass = "";
-    } catch(e) {
-      // some URIs are immutable
-    }
-    return uri;
+    gBrowser.setIcon(tab, aURL);
+    return true;
   },
-  onLinkAdded: function (event) {
-    var link = event.originalTarget;
-    var rel = link.rel && link.rel.toLowerCase();
-    if (!link || !link.ownerDocument || !rel || !link.href)
-      return;
 
-    var feedAdded = false;
-    var iconAdded = false;
-    var searchAdded = false;
-    var rels = {};
-    for (let relString of rel.split(/\s+/))
-      rels[relString] = true;
+  addSearch: function(aBrowser, aEngine, aURL) {
+    let tab = gBrowser._getTabForBrowser(aBrowser);
+    if (!tab)
+      return false;
 
-    for (let relVal in rels) {
-      switch (relVal) {
-        case "feed":
-        case "alternate":
-          if (!feedAdded) {
-            if (!rels.feed && rels.alternate && rels.stylesheet)
-              break;
-
-            if (isValidFeed(link, link.ownerDocument.nodePrincipal, "feed" in rels)) {
-              FeedHandler.addFeed(link, link.ownerDocument);
-              feedAdded = true;
-            }
-          }
-          break;
-        case "icon":
-          if (!iconAdded) {
-            if (!gPrefService.getBoolPref("browser.chrome.site_icons"))
-              break;
-
-            var uri = this.getLinkIconURI(link);
-            if (!uri)
-              break;
-
-            if (gBrowser.isFailedIcon(uri))
-              break;
-
-            var browserIndex = gBrowser.getBrowserIndexForDocument(link.ownerDocument);
-            // no browser? no favicon.
-            if (browserIndex == -1)
-              break;
-
-            let tab = gBrowser.tabs[browserIndex];
-            gBrowser.setIcon(tab, uri.spec);
-            iconAdded = true;
-          }
-          break;
-        case "search":
-          if (!searchAdded) {
-            var type = link.type && link.type.toLowerCase();
-            type = type.replace(/^\s+|\s*(?:;.*)?$/g, "");
-
-            if (type == "application/opensearchdescription+xml" && link.title &&
-                /^(?:https?|ftp):/i.test(link.href)) {
-              var engine = { title: link.title, href: link.href };
-              BrowserSearch.addEngine(engine, link.ownerDocument);
-              searchAdded = true;
-            }
-          }
-          break;
-      }
-    }
-  }
+    BrowserSearch.addEngine(aBrowser, aEngine, makeURI(aURL));
+  },
 }
 
 const BrowserSearch = {
-  addEngine: function(engine, targetDoc) {
+  addEngine: function(browser, engine, uri) {
     if (!this.searchBar)
-      return;
-
-    var browser = gBrowser.getBrowserForDocument(targetDoc);
-    // ignore search engines from subframes (see bug 479408)
-    if (!browser)
       return;
 
     // Check to see whether we've already added an engine with this title
@@ -2903,8 +2834,8 @@ const BrowserSearch = {
     // Use documentURIObject in the check for shouldLoadFavIcon so that we
     // do the right thing with about:-style error pages.  Bug 453442
     var iconURL = null;
-    if (gBrowser.shouldLoadFavIcon(targetDoc.documentURIObject))
-      iconURL = targetDoc.documentURIObject.prePath + "/favicon.ico";
+    if (gBrowser.shouldLoadFavIcon(uri))
+      iconURL = uri.prePath + "/favicon.ico";
 
     var hidden = false;
     // If this engine (identified by title) is already in the list, add it
@@ -3263,6 +3194,12 @@ function OpenBrowserWindow(options)
     }
   } else {
     extraFeatures = ",non-private";
+  }
+
+  if (options && options.remote) {
+    extraFeatures += ",remote";
+  } else if (options && options.remote === false) {
+    extraFeatures += ",non-remote";
   }
 
   // if and only if the current window is a browser window and it has a document with a character
@@ -3673,8 +3610,7 @@ var XULBrowserWindow = {
       if (gURLBar) {
         URLBarSetURI(aLocationURI);
 
-        // Update starring UI
-        BookmarkingUI.updateStarState();
+        BookmarkingUI.onLocationChange();
         SocialUI.updateState();
       }
 
@@ -4306,6 +4242,7 @@ function onViewToolbarsPopupShowing(aEvent, aInsertPoint) {
     while (toolbarItem && toolbarItem.parentNode) {
       let parent = toolbarItem.parentNode;
       if ((parent.classList && parent.classList.contains("customization-target")) ||
+          parent.getAttribute("overflowfortoolbar") || // Needs to work in the overflow list as well.
           parent.localName == "toolbarpaletteitem" ||
           parent.localName == "toolbar")
         break;
@@ -5281,9 +5218,12 @@ function FoldCharset(charset) {
   // for the purpose of the check mark.
   if (charset == "ISO-8859-8-I") {
     return "windows-1255";
-  } else if (charset == "gb18030") {
+  }
+
+  if (charset == "gb18030") {
     return "gbk";
   }
+
   return charset;
 }
 
@@ -6563,6 +6503,7 @@ var gIdentityHandler = {
     ];
     let options = {
       dismissed: true,
+      learnMoreURL: Services.urlFormatter.formatURLPref("app.support.baseURL") + "mixed-content",
     };
     PopupNotifications.show(gBrowser.selectedBrowser, "mixed-content-blocked",
                             messageString, "mixed-content-blocked-notification-icon",
@@ -6942,6 +6883,28 @@ let gPrivateBrowsingUI = {
   }
 };
 
+let gRemoteTabsUI = {
+  init: function() {
+    if (window.location.href != getBrowserURL()) {
+      return;
+    }
+
+    let remoteTabs = gPrefService.getBoolPref("browser.tabs.remote");
+    let autostart = gPrefService.getBoolPref("browser.tabs.remote.autostart");
+
+    let newRemoteWindow = document.getElementById("menu_newRemoteWindow");
+    let newNonRemoteWindow = document.getElementById("menu_newNonRemoteWindow");
+
+    if (!remoteTabs) {
+      newRemoteWindow.hidden = true;
+      newNonRemoteWindow.hidden = true;
+      return;
+    }
+
+    newRemoteWindow.hidden = autostart;
+    newNonRemoteWindow.hidden = !autostart;
+  }
+};
 
 /**
  * Switch to a tab that has a given URI, and focusses its browser window.
@@ -7279,3 +7242,11 @@ let BrowserChromeTest = {
       this._cb = cb;
   }
 };
+
+function BrowserOpenNewTabOrWindow(event) {
+  if (event.shiftKey) {
+    OpenBrowserWindow();
+  } else {
+    BrowserOpenTab();
+  }
+}

@@ -12,7 +12,8 @@
  NamedConstructor=Example,
  NamedConstructor=Example(DOMString str),
  NamedConstructor=Example2(DictForConstructor dict, any any1, object obj1,
-                           object? obj2, sequence<Dict> seq, optional any any2,
+                           object? obj2, sequence<Dict> seq,
+                           optional any any2 = null,
                            optional object obj3, optional object? obj4)
  ]
 interface TestExampleInterface {
@@ -129,6 +130,8 @@ interface TestExampleInterface {
   void passNullableSelf(TestInterface? arg);
   attribute TestInterface nonNullSelf;
   attribute TestInterface? nullableSelf;
+  [Cached, Pure]
+  readonly attribute TestInterface cachedSelf;
   // Optional arguments
   void passOptionalSelf(optional TestInterface? arg);
   void passOptionalNonNullSelf(optional TestInterface arg);
@@ -319,7 +322,6 @@ interface TestExampleInterface {
   // Any types
   void passAny(any arg);
   void passVariadicAny(any... arg);
-  void passOptionalAny(optional any arg);
   void passAnyDefaultNull(optional any arg = null);
   void passSequenceOfAny(sequence<any> arg);
   void passNullableSequenceOfAny(sequence<any>? arg);

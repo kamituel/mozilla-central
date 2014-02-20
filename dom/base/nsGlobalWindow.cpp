@@ -559,6 +559,7 @@ nsPIDOMWindow::nsPIDOMWindow(nsPIDOMWindow *aOuterWindow)
   mIsHandlingResizeEvent(false), mIsInnerWindow(aOuterWindow != nullptr),
   mMayHavePaintEventListener(false), mMayHaveTouchEventListener(false),
   mMayHaveMouseEnterLeaveEventListener(false),
+  mMayHavePointerEnterLeaveEventListener(false),
   mIsModalContentWindow(false),
   mIsActive(false), mIsBackground(false),
   mInnerWindow(nullptr), mOuterWindow(aOuterWindow),
@@ -1176,10 +1177,10 @@ nsGlobalWindow::nsGlobalWindow(nsGlobalWindow *aOuterWindow)
   if (!PR_GetEnv("MOZ_QUIET")) {
     printf_stderr("++DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p]\n",
                   gRefCnt,
-                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(this)),
+                  static_cast<void*>(ToCanonicalSupports(this)),
                   getpid(),
                   gSerialCounter,
-                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(aOuterWindow)));
+                  static_cast<void*>(ToCanonicalSupports(aOuterWindow)));
   }
 #endif
 
@@ -1254,10 +1255,10 @@ nsGlobalWindow::~nsGlobalWindow()
     nsGlobalWindow* outer = static_cast<nsGlobalWindow*>(mOuterWindow.get());
     printf_stderr("--DOMWINDOW == %d (%p) [pid = %d] [serial = %d] [outer = %p] [url = %s]\n",
                   gRefCnt,
-                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(this)),
+                  static_cast<void*>(ToCanonicalSupports(this)),
                   getpid(),
                   mSerial,
-                  static_cast<void*>(static_cast<nsIScriptGlobalObject*>(outer)),
+                  static_cast<void*>(ToCanonicalSupports(outer)),
                   url.get());
   }
 #endif
@@ -1305,8 +1306,6 @@ nsGlobalWindow::~nsGlobalWindow()
     if (outer) {
       outer->MaybeClearInnerWindow(this);
     }
-
-    MOZ_ASSERT_IF(mDoc, !mDoc->EventHandlingSuppressed());
   }
 
   // Outer windows are always supposed to call CleanUp before letting themselves
@@ -2181,6 +2180,7 @@ CreateNativeGlobalForInner(JSContext* aCx,
   bool needComponents = nsContentUtils::IsSystemPrincipal(aPrincipal) ||
                         TreatAsRemoteXUL(aPrincipal);
   uint32_t flags = needComponents ? 0 : nsIXPConnect::OMIT_COMPONENTS_OBJECT;
+  flags |= nsIXPConnect::DONT_FIRE_ONNEWGLOBALHOOK;
 
   nsRefPtr<nsIXPConnectJSObjectHolder> jsholder;
   nsresult rv = xpc->InitClassesWithNewWrappedGlobal(
@@ -2593,6 +2593,13 @@ nsGlobalWindow::SetNewDocument(nsIDocument* aDocument,
 
   mContext->GC(JS::gcreason::SET_NEW_DOCUMENT);
   mContext->DidInitializeContext();
+
+  // We wait to fire the debugger hook until the window is all set up and hooked
+  // up with the outer. See bug 969156.
+  if (createdInnerWindow) {
+    JS::Rooted<JSObject*> global(cx, newInnerWindow->mJSObject);
+    JS_FireOnNewGlobalObject(cx, global);
+  }
 
   if (newInnerWindow && !newInnerWindow->mHasNotifiedGlobalCreated && mDoc) {
     // We should probably notify. However if this is the, arguably bad,
@@ -3571,7 +3578,7 @@ nsGlobalWindow::GetSpeechSynthesis(nsISupports** aSpeechSynthesis)
 {
   ErrorResult rv;
   nsCOMPtr<nsISupports> speechSynthesis;
-  if (SpeechSynthesis::PrefEnabled()) {
+  if (Preferences::GetBool("media.webspeech.synth.enabled")) {
     speechSynthesis = GetSpeechSynthesis(rv);
   }
   speechSynthesis.forget(aSpeechSynthesis);
@@ -7005,7 +7012,7 @@ NS_IMETHODIMP
 nsGlobalWindow::ClearInterval(int32_t aHandle)
 {
   ErrorResult rv;
-  ClearTimeoutOrInterval(aHandle, rv);
+  ClearInterval(aHandle, rv);
 
   return rv.ErrorCode();
 }
@@ -7031,7 +7038,7 @@ nsGlobalWindow::SetResizable(bool aResizable)
 }
 
 NS_IMETHODIMP
-nsGlobalWindow::CaptureEvents(int32_t aEventFlags)
+nsGlobalWindow::CaptureEvents()
 {
   if (mDoc) {
     mDoc->WarnOnceAbout(nsIDocument::eUseOfCaptureEvents);
@@ -7041,7 +7048,7 @@ nsGlobalWindow::CaptureEvents(int32_t aEventFlags)
 }
 
 NS_IMETHODIMP
-nsGlobalWindow::ReleaseEvents(int32_t aEventFlags)
+nsGlobalWindow::ReleaseEvents()
 {
   if (mDoc) {
     mDoc->WarnOnceAbout(nsIDocument::eUseOfReleaseEvents);
@@ -7424,18 +7431,25 @@ JSObject* nsGlobalWindow::CallerGlobal()
   // If somebody does sameOriginIframeWindow.postMessage(...), they probably
   // expect the .source attribute of the resulting message event to be |window|
   // rather than |sameOriginIframeWindow|, even though the transparent wrapper
-  // semantics of same-origin access will cause us to be in the iframe's cx at
-  // the time of the call. So we do some nasty poking in the JS engine and
-  // retrieve the global corresponding to the innermost scripted frame. Then,
-  // we verify that its principal is subsumed by the subject principal. If it
-  // isn't, something is screwy, and we want to clamp to the cx global.
-  JS::Rooted<JSObject*> scriptedGlobal(cx, JS_GetScriptedGlobal(cx));
-  JS::Rooted<JSObject*> cxGlobal(cx, JS::CurrentGlobalOrNull(cx));
-  if (!xpc::AccessCheck::subsumes(cxGlobal, scriptedGlobal)) {
-    NS_WARNING("Something nasty is happening! Applying countermeasures...");
-    return cxGlobal;
-  }
-  return scriptedGlobal;
+  // semantics of same-origin access will cause us to be in the iframe's
+  // compartment at the time of the call. This means that we want the incumbent
+  // global here, rather than the global of the current compartment.
+  //
+  // There are various edge cases in which the incumbent global and the current
+  // global would not be same-origin. They include:
+  // * A privileged caller (System Principal or Expanded Principal) manipulating
+  //   less-privileged content via Xray Waivers.
+  // * An unprivileged caller invoking a cross-origin function that was exposed
+  //   to it by privileged code (i.e. Sandbox.importFunction).
+  //
+  // In these cases, we probably don't want the privileged global appearing in the
+  // .source attribute. So we fall back to the compartment global there.
+  JS::Rooted<JSObject*> incumbentGlobal(cx, &IncumbentJSGlobal());
+  JS::Rooted<JSObject*> compartmentGlobal(cx, JS::CurrentGlobalOrNull(cx));
+  nsIPrincipal* incumbentPrin = nsContentUtils::GetObjectPrincipal(incumbentGlobal);
+  nsIPrincipal* compartmentPrin = nsContentUtils::GetObjectPrincipal(compartmentGlobal);
+  return incumbentPrin->EqualsConsideringDomain(compartmentPrin) ? incumbentGlobal
+                                                                 : compartmentGlobal;
 }
 
 
@@ -7711,7 +7725,7 @@ PostMessageEvent::Run()
     //       don't do that in other places it seems better to hold the line for
     //       now.  Long-term, we want HTML5 to address this so that we can
     //       be compliant while being safer.
-    if (!targetPrin->EqualsIgnoringDomain(mProvidedPrincipal)) {
+    if (!targetPrin->Equals(mProvidedPrincipal)) {
       return NS_OK;
     }
   }
@@ -7933,9 +7947,13 @@ nsGlobalWindow::PostMessageMoz(JSContext* aCx, JS::Handle<JS::Value> aMessage,
   JS::Rooted<JS::Value> transferArray(aCx, JS::UndefinedValue());
   if (aTransfer.WasPassed()) {
     const Sequence<JS::Value >& values = aTransfer.Value();
-    transferArray = JS::ObjectOrNullValue(JS_NewArrayObject(aCx,
-                                                            values.Length(),
-                                                            const_cast<JS::Value*>(values.Elements())));
+
+    // The input sequence only comes from the generated bindings code, which
+    // ensures it is rooted.
+    JS::HandleValueArray elements =
+      JS::HandleValueArray::fromMarkedLocation(values.Length(), values.Elements());
+
+    transferArray = JS::ObjectOrNullValue(JS_NewArrayObject(aCx, elements));
     if (transferArray.isNull()) {
       aError.Throw(NS_ERROR_OUT_OF_MEMORY);
       return;
@@ -8544,7 +8562,16 @@ nsGlobalWindow::GetFrameElement(ErrorResult& aError)
     return nullptr;
   }
 
-  return GetRealFrameElement(aError);
+  // Per HTML5, the frameElement getter returns null in cross-origin situations.
+  Element* element = GetRealFrameElement(aError);
+  if (aError.Failed() || !element) {
+    return nullptr;
+  }
+  if (!nsContentUtils::GetSubjectPrincipal()->
+         SubsumesConsideringDomain(element->NodePrincipal())) {
+    return nullptr;
+  }
+  return element;
 }
 
 Element*
@@ -8780,18 +8807,14 @@ nsGlobalWindow::ShowModalDialog(const nsAString& aUrl, nsIVariant* aArgument,
 
 JS::Value
 nsGlobalWindow::ShowModalDialog(JSContext* aCx, const nsAString& aUrl,
-                                const Optional<JS::Handle<JS::Value> >& aArgument,
+                                JS::Handle<JS::Value> aArgument,
                                 const nsAString& aOptions,
                                 ErrorResult& aError)
 {
   nsCOMPtr<nsIVariant> args;
-  if (aArgument.WasPassed()) {
-    aError = nsContentUtils::XPConnect()->JSToVariant(aCx,
-                                                      aArgument.Value(),
-                                                      getter_AddRefs(args));
-  } else {
-    args = CreateVoidVariant();
-  }
+  aError = nsContentUtils::XPConnect()->JSToVariant(aCx,
+                                                    aArgument,
+                                                    getter_AddRefs(args));
 
   nsCOMPtr<nsIVariant> retVal = ShowModalDialog(aUrl, args, aOptions, aError);
   if (aError.Failed()) {
@@ -11403,7 +11426,9 @@ nsGlobalWindow::SetTimeout(JSContext* aCx, Function& aFunction,
 
 int32_t
 nsGlobalWindow::SetTimeout(JSContext* aCx, const nsAString& aHandler,
-                           int32_t aTimeout, ErrorResult& aError)
+                           int32_t aTimeout,
+                           const Sequence<JS::Value>& /* unused */,
+                           ErrorResult& aError)
 {
   return SetTimeoutOrInterval(aCx, aHandler, aTimeout, false, aError);
 }
@@ -11437,6 +11462,7 @@ nsGlobalWindow::SetInterval(JSContext* aCx, Function& aFunction,
 int32_t
 nsGlobalWindow::SetInterval(JSContext* aCx, const nsAString& aHandler,
                             const Optional<int32_t>& aTimeout,
+                            const Sequence<JS::Value>& /* unused */,
                             ErrorResult& aError)
 {
   int32_t timeout;

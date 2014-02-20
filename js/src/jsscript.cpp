@@ -414,6 +414,75 @@ js::XDRScriptConst(XDRState<XDR_ENCODE> *, MutableHandleValue);
 template bool
 js::XDRScriptConst(XDRState<XDR_DECODE> *, MutableHandleValue);
 
+// Code LazyScript's free variables.
+template<XDRMode mode>
+static bool
+XDRLazyFreeVariables(XDRState<mode> *xdr, MutableHandle<LazyScript *> lazy)
+{
+    JSContext *cx = xdr->cx();
+    RootedAtom atom(cx);
+    HeapPtrAtom *freeVariables = lazy->freeVariables();
+    size_t numFreeVariables = lazy->numFreeVariables();
+    for (size_t i = 0; i < numFreeVariables; i++) {
+        if (mode == XDR_ENCODE)
+            atom = freeVariables[i];
+
+        if (!XDRAtom(xdr, &atom))
+            return false;
+
+        if (mode == XDR_DECODE)
+            freeVariables[i] = atom;
+    }
+
+    return true;
+}
+
+// Code the missing part needed to re-create a LazyScript from a JSScript.
+template<XDRMode mode>
+static bool
+XDRRelazificationInfo(XDRState<mode> *xdr, HandleFunction fun, HandleScript script,
+                      MutableHandle<LazyScript *> lazy)
+{
+    MOZ_ASSERT_IF(mode == XDR_ENCODE, script->isRelazifiable() && script->maybeLazyScript());
+    MOZ_ASSERT_IF(mode == XDR_ENCODE, !lazy->numInnerFunctions());
+
+    JSContext *cx = xdr->cx();
+
+    uint64_t packedFields;
+    {
+        uint32_t begin = script->sourceStart();
+        uint32_t end = script->sourceEnd();
+        uint32_t lineno = script->lineno();
+        uint32_t column = script->column();
+
+        if (mode == XDR_ENCODE) {
+            packedFields = lazy->packedFields();
+            MOZ_ASSERT(begin == lazy->begin());
+            MOZ_ASSERT(end == lazy->end());
+            MOZ_ASSERT(lineno == lazy->lineno());
+            MOZ_ASSERT(column == lazy->column());
+        }
+
+        if (!xdr->codeUint64(&packedFields))
+            return false;
+
+        if (mode == XDR_DECODE) {
+            lazy.set(LazyScript::Create(cx, fun, packedFields, begin, end, lineno, column));
+
+            // As opposed to XDRLazyScript, we need to restore the runtime bits
+            // of the script, as we are trying to match the fact this function
+            // has already been parsed and that it would need to be re-lazified.
+            lazy->initRuntimeFields(packedFields);
+        }
+    }
+
+    // Code free variables.
+    if (!XDRLazyFreeVariables(xdr, lazy))
+        return false;
+
+    return true;
+}
+
 static inline uint32_t
 FindScopeObjectIndex(JSScript *script, NestedScopeObject &scope)
 {
@@ -463,7 +532,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         SelfHosted,
         IsCompileAndGo,
         HasSingleton,
-        TreatAsRunOnce
+        TreatAsRunOnce,
+        HasLazyScript
     };
 
     uint32_t length, lineno, column, nslots;
@@ -561,6 +631,8 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
             scriptBits |= (1 << HasSingleton);
         if (script->treatAsRunOnce())
             scriptBits |= (1 << TreatAsRunOnce);
+        if (script->isRelazifiable())
+            scriptBits |= (1 << HasLazyScript);
     }
 
     if (!xdr->codeUint32(&prologLength))
@@ -821,12 +893,16 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
           case CK_JSFunction: {
             /* Code the nested function's enclosing scope. */
             uint32_t funEnclosingScopeIndex = 0;
+            RootedObject funEnclosingScope(cx);
             if (mode == XDR_ENCODE) {
-                JSScript *innerScript = (*objp)->as<JSFunction>().getOrCreateScript(cx);
-                if (!innerScript)
-                    return false;
-                RootedObject staticScope(cx, innerScript->enclosingStaticScope());
-                StaticScopeIter<NoGC> ssi(staticScope);
+                RootedFunction function(cx, &(*objp)->as<JSFunction>());
+
+                if (function->isInterpretedLazy())
+                    funEnclosingScope = function->lazyScript()->enclosingScope();
+                else
+                    funEnclosingScope = function->nonLazyScript()->enclosingStaticScope();
+
+                StaticScopeIter<NoGC> ssi(funEnclosingScope);
                 if (ssi.done() || ssi.type() == StaticScopeIter<NoGC>::FUNCTION) {
                     JS_ASSERT(ssi.done() == !fun);
                     funEnclosingScopeIndex = UINT32_MAX;
@@ -835,9 +911,10 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
                     JS_ASSERT(funEnclosingScopeIndex < i);
                 }
             }
+
             if (!xdr->codeUint32(&funEnclosingScopeIndex))
                 return false;
-            Rooted<JSObject*> funEnclosingScope(cx);
+
             if (mode == XDR_DECODE) {
                 if (funEnclosingScopeIndex == UINT32_MAX) {
                     funEnclosingScope = fun;
@@ -847,6 +924,7 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
                 }
             }
 
+            // Code nested function and script.
             RootedObject tmp(cx, *objp);
             if (!XDRInterpretedFunction(xdr, funEnclosingScope, script, &tmp))
                 return false;
@@ -901,6 +979,18 @@ js::XDRScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enc
         }
     }
 
+    if (scriptBits & (1 << HasLazyScript)) {
+        Rooted<LazyScript *> lazy(cx);
+        if (mode == XDR_ENCODE)
+            lazy = script->maybeLazyScript();
+
+        if (!XDRRelazificationInfo(xdr, fun, script, &lazy))
+            return false;
+
+        if (mode == XDR_DECODE)
+            script->setLazyScript(lazy);
+    }
+
     if (mode == XDR_DECODE) {
         scriptp.set(script);
 
@@ -923,6 +1013,83 @@ template bool
 js::XDRScript(XDRState<XDR_DECODE> *, HandleObject, HandleScript, HandleFunction,
               MutableHandleScript);
 
+template<XDRMode mode>
+bool
+js::XDRLazyScript(XDRState<mode> *xdr, HandleObject enclosingScope, HandleScript enclosingScript,
+                  HandleFunction fun, MutableHandle<LazyScript *> lazy)
+{
+    JSContext *cx = xdr->cx();
+
+    {
+        uint32_t begin;
+        uint32_t end;
+        uint32_t lineno;
+        uint32_t column;
+        uint64_t packedFields;
+
+        if (mode == XDR_ENCODE) {
+            MOZ_ASSERT(!lazy->maybeScript());
+            MOZ_ASSERT(fun == lazy->functionNonDelazifying());
+
+            begin = lazy->begin();
+            end = lazy->end();
+            lineno = lazy->lineno();
+            column = lazy->column();
+            packedFields = lazy->packedFields();
+        }
+
+        if (!xdr->codeUint32(&begin) || !xdr->codeUint32(&end) ||
+            !xdr->codeUint32(&lineno) || !xdr->codeUint32(&column) ||
+            !xdr->codeUint64(&packedFields))
+        {
+            return false;
+        }
+
+        if (mode == XDR_DECODE)
+            lazy.set(LazyScript::Create(cx, fun, packedFields, begin, end, lineno, column));
+    }
+
+    // Code free variables.
+    if (!XDRLazyFreeVariables(xdr, lazy))
+        return false;
+
+    // Code inner functions.
+    {
+        RootedObject func(cx);
+        HeapPtrFunction *innerFunctions = lazy->innerFunctions();
+        size_t numInnerFunctions = lazy->numInnerFunctions();
+        for (size_t i = 0; i < numInnerFunctions; i++) {
+            if (mode == XDR_ENCODE)
+                func = innerFunctions[i];
+
+            if (!XDRInterpretedFunction(xdr, fun, enclosingScript, &func))
+                return false;
+
+            if (mode == XDR_DECODE)
+                innerFunctions[i] = &func->as<JSFunction>();
+        }
+    }
+
+    if (mode == XDR_DECODE) {
+        JS_ASSERT(!lazy->sourceObject());
+        ScriptSourceObject *sourceObject = &enclosingScript->scriptSourceUnwrap();
+
+        // Set the enclosing scope of the lazy function, this would later be
+        // used to define the environment when the function would be used.
+        lazy->setParent(enclosingScope, sourceObject);
+    }
+
+    return true;
+}
+
+template bool
+js::XDRLazyScript(XDRState<XDR_ENCODE> *, HandleObject, HandleScript,
+                  HandleFunction, MutableHandle<LazyScript *>);
+
+template bool
+js::XDRLazyScript(XDRState<XDR_DECODE> *, HandleObject, HandleScript,
+                  HandleFunction, MutableHandle<LazyScript *>);
+
 void
 JSScript::setSourceObject(JSObject *object)
 {
@@ -930,9 +1097,14 @@ JSScript::setSourceObject(JSObject *object)
     sourceObject_ = object;
 }
 
+js::ScriptSourceObject &
+JSScript::scriptSourceUnwrap() const {
+    return UncheckedUnwrap(sourceObject())->as<ScriptSourceObject>();
+}
+
 js::ScriptSource *
 JSScript::scriptSource() const {
-    return UncheckedUnwrap(sourceObject())->as<ScriptSourceObject>().source();
+    return scriptSourceUnwrap().source();
 }
 
 bool
@@ -1294,6 +1466,7 @@ ScriptSource::setSourceCopy(ExclusiveContext *cx, const jschar *src, uint32_t le
     argumentsNotIncluded_ = argumentsNotIncluded;
 
     // There are several cases where source compression is not a good idea:
+    //  - If the script is tiny, then compression will save little or no space.
     //  - If the script is enormous, then decompression can take seconds. With
     //    lazy parsing, decompression is not uncommon, so this can significantly
     //    increase latency.
@@ -1320,8 +1493,9 @@ ScriptSource::setSourceCopy(ExclusiveContext *cx, const jschar *src, uint32_t le
 #else
     bool canCompressOffThread = false;
 #endif
+    const size_t TINY_SCRIPT = 256;
     const size_t HUGE_SCRIPT = 5 * 1024 * 1024;
-    if (length < HUGE_SCRIPT && canCompressOffThread) {
+    if (TINY_SCRIPT <= length && length < HUGE_SCRIPT && canCompressOffThread) {
         task->ss = this;
         task->chars = src;
         ready_ = false;
@@ -1360,48 +1534,46 @@ SourceCompressionTask::work()
     // threadsafe. We have to use the js_* variants.
 
 #ifdef USE_ZLIB
-    const size_t COMPRESS_THRESHOLD = 512;
-    if (nbytes >= COMPRESS_THRESHOLD) {
-        // Try to keep the maximum memory usage down by only allocating half the
-        // size of the string, first.
-        size_t firstSize = nbytes / 2;
-        if (!ss->adjustDataSize(firstSize))
-            return false;
-        Compressor comp(reinterpret_cast<const unsigned char *>(chars), nbytes);
-        if (!comp.init())
-            return false;
-        comp.setOutput(ss->data.compressed, firstSize);
-        bool cont = !abort_;
-        while (cont) {
-            switch (comp.compressMore()) {
-              case Compressor::CONTINUE:
-                break;
-              case Compressor::MOREOUTPUT: {
-                if (comp.outWritten() == nbytes) {
-                    cont = false;
-                    break;
-                }
-
-                // The compressed output is greater than half the size of the
-                // original string. Reallocate to the full size.
-                if (!ss->adjustDataSize(nbytes))
-                    return false;
-                comp.setOutput(ss->data.compressed, nbytes);
-                break;
-              }
-              case Compressor::DONE:
+    // Try to keep the maximum memory usage down by only allocating half the
+    // size of the string, first.
+    size_t firstSize = nbytes / 2;
+    if (!ss->adjustDataSize(firstSize))
+        return false;
+    Compressor comp(reinterpret_cast<const unsigned char *>(chars), nbytes);
+    if (!comp.init())
+        return false;
+    comp.setOutput(ss->data.compressed, firstSize);
+    bool cont = !abort_;
+    while (cont) {
+        switch (comp.compressMore()) {
+          case Compressor::CONTINUE:
+            break;
+          case Compressor::MOREOUTPUT: {
+            if (comp.outWritten() == nbytes) {
                 cont = false;
                 break;
-              case Compressor::OOM:
-                return false;
             }
-            cont = cont && !abort_;
+
+            // The compressed output is greater than half the size of the
+            // original string. Reallocate to the full size.
+            if (!ss->adjustDataSize(nbytes))
+                return false;
+            comp.setOutput(ss->data.compressed, nbytes);
+            break;
+          }
+          case Compressor::DONE:
+            cont = false;
+            break;
+          case Compressor::OOM:
+            return false;
         }
-        compressedLength = comp.outWritten();
-        if (abort_ || compressedLength == nbytes)
-            compressedLength = 0;
+        cont = cont && !abort_;
     }
+    compressedLength = comp.outWritten();
+    if (abort_ || compressedLength == nbytes)
+        compressedLength = 0;
 #endif
+
     if (compressedLength == 0) {
         if (!ss->adjustDataSize(nbytes))
             return false;
@@ -1599,12 +1771,12 @@ ScriptSource::displayURL()
 bool
 ScriptSource::setIntroducedFilename(ExclusiveContext *cx,
                                     const char *callerFilename, unsigned callerLineno,
-                                    const char *introducer, const char *introducerFilename)
+                                    const char *introductionType, const char *introducerFilename)
 {
     JS_ASSERT(!filename_);
     JS_ASSERT(!introducerFilename_);
 
-    introducerType_ = introducer;
+    introductionType_ = introductionType;
 
     if (introducerFilename) {
         introducerFilename_ = js_strdup(cx, introducerFilename);
@@ -1612,24 +1784,24 @@ ScriptSource::setIntroducedFilename(ExclusiveContext *cx,
             return false;
     }
 
-    // Final format:  "{callerFilename} line {callerLineno} > {introducer}"
+    // Final format:  "{callerFilename} line {callerLineno} > {introductionType}"
     // Len = strlen(callerFilename) + strlen(" line ") +
-    //       strlen(toStr(callerLineno)) + strlen(" > ") + strlen(introducer);
+    //       strlen(toStr(callerLineno)) + strlen(" > ") + strlen(introductionType);
     char linenoBuf[15];
     size_t filenameLen = strlen(callerFilename);
     size_t linenoLen = JS_snprintf(linenoBuf, 15, "%u", callerLineno);
-    size_t introducerLen = strlen(introducer);
+    size_t introductionTypeLen = strlen(introductionType);
     size_t len = filenameLen                    +
                  6 /* == strlen(" line ") */    +
                  linenoLen                      +
                  3 /* == strlen(" > ") */       +
-                 introducerLen                  +
+                 introductionTypeLen            +
                  1 /* \0 */;
     filename_ = cx->pod_malloc<char>(len);
     if (!filename_)
         return false;
-    mozilla::DebugOnly<int> checkLen = JS_snprintf(filename_, len, "%s line %s > %s",
-                                                   callerFilename, linenoBuf, introducer);
+    mozilla::DebugOnly<size_t> checkLen = JS_snprintf(filename_, len, "%s line %s > %s",
+                                                      callerFilename, linenoBuf, introductionType);
     JS_ASSERT(checkLen == len - 1);
 
     if (!introducerFilename_)
@@ -3167,10 +3339,7 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
 
     JS_ASSERT(!script->isGenerator());
 
-    {
-        AutoLockForCompilation lock(cx);
-        script->needsArgsObj_ = true;
-    }
+    script->needsArgsObj_ = true;
 
 #ifdef JS_ION
     /*
@@ -3230,14 +3399,12 @@ JSScript::argumentsOptimizationFailed(JSContext *cx, HandleScript script)
 bool
 JSScript::varIsAliased(uint32_t varSlot)
 {
-    AutoThreadSafeAccess ts(this);
     return bindings.bindingIsAliased(bindings.numArgs() + varSlot);
 }
 
 bool
 JSScript::formalIsAliased(unsigned argSlot)
 {
-    AutoThreadSafeAccess ts(this);
     return bindings.bindingIsAliased(argSlot);
 }
 
@@ -3247,30 +3414,18 @@ JSScript::formalLivesInArgumentsObject(unsigned argSlot)
     return argsObjAliasesFormals() && !formalIsAliased(argSlot);
 }
 
-LazyScript::LazyScript(JSFunction *fun, void *table, uint32_t numFreeVariables, uint32_t numInnerFunctions,
-                       JSVersion version, uint32_t begin, uint32_t end, uint32_t lineno, uint32_t column)
+LazyScript::LazyScript(JSFunction *fun, void *table, uint64_t packedFields, uint32_t begin, uint32_t end, uint32_t lineno, uint32_t column)
   : script_(nullptr),
     function_(fun),
     enclosingScope_(nullptr),
     sourceObject_(nullptr),
     table_(table),
-    version_(version),
-    numFreeVariables_(numFreeVariables),
-    numInnerFunctions_(numInnerFunctions),
-    generatorKindBits_(GeneratorKindAsBits(NotGenerator)),
-    strict_(false),
-    bindingsAccessedDynamically_(false),
-    hasDebuggerStatement_(false),
-    directlyInsideEval_(false),
-    usesArgumentsAndApply_(false),
-    hasBeenCloned_(false),
-    treatAsRunOnce_(false),
+    packedFields_(packedFields),
     begin_(begin),
     end_(end),
     lineno_(lineno),
     column_(column)
 {
-    JS_ASSERT(this->version() == version);
     JS_ASSERT(begin <= end);
 }
 
@@ -3306,14 +3461,23 @@ LazyScript::sourceObject() const
 }
 
 /* static */ LazyScript *
-LazyScript::Create(ExclusiveContext *cx, HandleFunction fun,
-                   uint32_t numFreeVariables, uint32_t numInnerFunctions, JSVersion version,
-                   uint32_t begin, uint32_t end, uint32_t lineno, uint32_t column)
+LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
+                      uint64_t packedFields, uint32_t begin, uint32_t end,
+                      uint32_t lineno, uint32_t column)
 {
-    JS_ASSERT(begin <= end);
+    union {
+        PackedView p;
+        uint64_t packed;
+    };
 
-    size_t bytes = (numFreeVariables * sizeof(HeapPtrAtom))
-                 + (numInnerFunctions * sizeof(HeapPtrFunction));
+    packed = packedFields;
+
+    // Reset runtime flags to obtain a fresh LazyScript.
+    p.hasBeenCloned = false;
+    p.treatAsRunOnce = false;
+
+    size_t bytes = (p.numFreeVariables * sizeof(HeapPtrAtom))
+                 + (p.numInnerFunctions * sizeof(HeapPtrFunction));
 
     void *table = nullptr;
     if (bytes) {
@@ -3328,8 +3492,75 @@ LazyScript::Create(ExclusiveContext *cx, HandleFunction fun,
 
     cx->compartment()->scheduleDelazificationForDebugMode();
 
-    return new (res) LazyScript(fun, table, numFreeVariables, numInnerFunctions, version,
-                                begin, end, lineno, column);
+    return new (res) LazyScript(fun, table, packed, begin, end, lineno, column);
+}
+
+/* static */ LazyScript *
+LazyScript::CreateRaw(ExclusiveContext *cx, HandleFunction fun,
+                      uint32_t numFreeVariables, uint32_t numInnerFunctions, JSVersion version,
+                      uint32_t begin, uint32_t end, uint32_t lineno, uint32_t column)
+{
+    union {
+        PackedView p;
+        uint64_t packedFields;
+    };
+
+    p.version = version;
+    p.numFreeVariables = numFreeVariables;
+    p.numInnerFunctions = numInnerFunctions;
+    p.generatorKindBits = GeneratorKindAsBits(NotGenerator);
+    p.strict = false;
+    p.bindingsAccessedDynamically = false;
+    p.hasDebuggerStatement = false;
+    p.directlyInsideEval = false;
+    p.usesArgumentsAndApply = false;
+
+    LazyScript *res = LazyScript::CreateRaw(cx, fun, packedFields, begin, end, lineno, column);
+    JS_ASSERT(res->version() == version);
+    return res;
+}
+
+/* static */ LazyScript *
+LazyScript::Create(ExclusiveContext *cx, HandleFunction fun,
+                   uint64_t packedFields, uint32_t begin, uint32_t end,
+                   uint32_t lineno, uint32_t column)
+{
+    // Dummy atom which is not a valid property name.
+    RootedAtom dummyAtom(cx, cx->names().comma);
+
+    // Dummy function which is not a valid function as this is the one which is
+    // holding this lazy script.
+    HandleFunction dummyFun = fun;
+
+    LazyScript *res = LazyScript::CreateRaw(cx, fun, packedFields, begin, end, lineno, column);
+    if (!res)
+        return nullptr;
+
+    // Fill with dummies, to be GC-safe after the initialization of the free
+    // variables and inner functions.
+    size_t i, num;
+    HeapPtrAtom *variables = res->freeVariables();
+    for (i = 0, num = res->numFreeVariables(); i < num; i++)
+        variables[i].init(dummyAtom);
+
+    HeapPtrFunction *functions = res->innerFunctions();
+    for (i = 0, num = res->numInnerFunctions(); i < num; i++)
+        functions[i].init(dummyFun);
+
+    return res;
+}
+
+void
+LazyScript::initRuntimeFields(uint64_t packedFields)
+{
+    union {
+        PackedView p;
+        uint64_t packed;
+    };
+
+    packed = packedFields;
+    p_.hasBeenCloned = p.hasBeenCloned;
+    p_.treatAsRunOnce = p.treatAsRunOnce;
 }
 
 uint32_t

@@ -423,6 +423,13 @@ js::RunScript(JSContext *cx, RunState &state)
     return Interpret(cx, state);
 }
 
+struct AutoGCIfNeeded
+{
+    JSContext *cx_;
+    AutoGCIfNeeded(JSContext *cx) : cx_(cx) {}
+    ~AutoGCIfNeeded() { js::gc::GCIfNeeded(cx_); }
+};
+
 /*
  * Find a function reference and its 'this' value implicit first parameter
  * under argc arguments on cx's stack, and call the function.  Push missing
@@ -437,6 +444,9 @@ js::Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct)
 
     /* We should never enter a new script while cx->iterValue is live. */
     JS_ASSERT(cx->iterValue.isMagic(JS_NO_ITER_VALUE));
+
+    /* Perform GC if necessary on exit from the function. */
+    AutoGCIfNeeded gcIfNeeded(cx);
 
     /* MaybeConstruct is a subset of InitialFrameFlags */
     InitialFrameFlags initial = (InitialFrameFlags) construct;
@@ -489,7 +499,7 @@ js::Invoke(JSContext *cx, CallArgs args, MaybeConstruct construct)
 }
 
 bool
-js::Invoke(JSContext *cx, const Value &thisv, const Value &fval, unsigned argc, Value *argv,
+js::Invoke(JSContext *cx, const Value &thisv, const Value &fval, unsigned argc, const Value *argv,
            MutableHandleValue rval)
 {
     InvokeArgs args(cx);
@@ -545,9 +555,10 @@ js::InvokeConstructor(JSContext *cx, CallArgs args)
             return ok;
         }
 
-        if (!fun->isInterpretedConstructor())
-            return ReportIsNotFunction(cx, args.calleev(), args.length() + 1, CONSTRUCT);
-
+        if (!fun->isInterpretedConstructor()) {
+            RootedValue orig(cx, ObjectValue(*fun->originalFunction()));
+            return ReportIsNotFunction(cx, orig, args.length() + 1, CONSTRUCT);
+        }
         if (!Invoke(cx, args, CONSTRUCT))
             return false;
 
@@ -1309,7 +1320,7 @@ SetObjectElementOperation(JSContext *cx, Handle<JSObject*> obj, HandleId id, con
         if ((uint32_t)i >= length) {
             // Annotate script if provided with information (e.g. baseline)
             if (script && script->hasBaselineScript() && *pc == JSOP_SETELEM)
-                script->baselineScript()->noteArrayWriteHole(cx, script->pcToOffset(pc));
+                script->baselineScript()->noteArrayWriteHole(script->pcToOffset(pc));
         }
     }
 #endif

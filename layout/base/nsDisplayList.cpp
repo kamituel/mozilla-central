@@ -1217,8 +1217,7 @@ void nsDisplayList::PaintForFrame(nsDisplayListBuilder* aBuilder,
   if (usingDisplayport &&
       !(root->GetContentFlags() & Layer::CONTENT_OPAQUE)) {
     // See bug 693938, attachment 567017
-    NS_WARNING("We don't support transparent content with displayports, force it to be opqaue");
-    root->SetContentFlags(Layer::CONTENT_OPAQUE);
+    NS_WARNING("Transparent content with displayports can be expensive.");
   }
 
   layerManager->SetRoot(root);
@@ -3268,7 +3267,7 @@ nsDisplayMixBlendMode::BuildLayer(nsDisplayListBuilder* aBuilder,
     return nullptr;
   }
 
-  container->SetMixBlendMode(nsCSSRendering::GetGFXBlendMode(mFrame->StyleDisplay()->mMixBlendMode));
+  container->DeprecatedSetMixBlendMode(nsCSSRendering::GetGFXBlendMode(mFrame->StyleDisplay()->mMixBlendMode));
 
   return container.forget();
 }
@@ -4890,7 +4889,7 @@ nsDisplaySVGEffects::BuildLayer(nsDisplayListBuilder* aBuilder,
     return nullptr;
 
   nsIFrame* firstFrame =
-    nsLayoutUtils::FirstContinuationOrSpecialSibling(mFrame);
+    nsLayoutUtils::FirstContinuationOrIBSplitSibling(mFrame);
   nsSVGEffects::EffectProperties effectProperties =
     nsSVGEffects::GetEffectProperties(firstFrame);
 
@@ -4955,7 +4954,7 @@ void
 nsDisplaySVGEffects::PrintEffects(nsACString& aTo)
 {
   nsIFrame* firstFrame =
-    nsLayoutUtils::FirstContinuationOrSpecialSibling(mFrame);
+    nsLayoutUtils::FirstContinuationOrIBSplitSibling(mFrame);
   nsSVGEffects::EffectProperties effectProperties =
     nsSVGEffects::GetEffectProperties(firstFrame);
   bool isOK = true;

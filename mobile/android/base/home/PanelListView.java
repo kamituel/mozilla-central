@@ -6,6 +6,7 @@
 package org.mozilla.gecko.home;
 
 import org.mozilla.gecko.R;
+import org.mozilla.gecko.home.HomeConfig.ItemHandler;
 import org.mozilla.gecko.home.HomeConfig.ViewConfig;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
 import org.mozilla.gecko.home.PanelLayout.DatasetBacked;
@@ -28,13 +29,13 @@ public class PanelListView extends HomeListView
 
     private static final String LOGTAG = "GeckoPanelListView";
 
-    private final PanelListAdapter mAdapter;
+    private final PanelViewAdapter mAdapter;
     private final ViewConfig mViewConfig;
 
     public PanelListView(Context context, ViewConfig viewConfig) {
         super(context);
         mViewConfig = viewConfig;
-        mAdapter = new PanelListAdapter(context);
+        mAdapter = new PanelViewAdapter(context, viewConfig.getItemType());
         setAdapter(mAdapter);
         setOnItemClickListener(new PanelListItemClickListener());
     }
@@ -43,23 +44,6 @@ public class PanelListView extends HomeListView
     public void setDataset(Cursor cursor) {
         Log.d(LOGTAG, "Setting dataset: " + mViewConfig.getDatasetId());
         mAdapter.swapCursor(cursor);
-    }
-
-    private class PanelListAdapter extends CursorAdapter {
-        public PanelListAdapter(Context context) {
-            super(context, null, 0);
-        }
-
-        @Override
-        public void bindView(View view, Context context, Cursor cursor) {
-            final PanelListRow row = (PanelListRow) view;
-            row.updateFromCursor(cursor);
-        }
-
-        @Override
-        public View newView(Context context, Cursor cursor, ViewGroup parent) {
-            return LayoutInflater.from(parent.getContext()).inflate(R.layout.panel_list_row, parent, false);
-        }
     }
 
     private class PanelListItemClickListener implements AdapterView.OnItemClickListener {
@@ -73,7 +57,12 @@ public class PanelListView extends HomeListView
             int urlIndex = cursor.getColumnIndexOrThrow(HomeItems.URL);
             final String url = cursor.getString(urlIndex);
 
-            mUrlOpenListener.onUrlOpen(url, EnumSet.of(OnUrlOpenListener.Flags.OPEN_WITH_INTENT));
+            EnumSet<OnUrlOpenListener.Flags> flags = EnumSet.noneOf(OnUrlOpenListener.Flags.class);
+            if (mViewConfig.getItemHandler() == ItemHandler.INTENT) {
+                flags.add(OnUrlOpenListener.Flags.OPEN_WITH_INTENT);
+            }
+
+            mUrlOpenListener.onUrlOpen(url, flags);
         }
     }
 }

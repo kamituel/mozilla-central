@@ -7,6 +7,7 @@ package org.mozilla.gecko.home;
 
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.db.BrowserContract.HomeItems;
+import org.mozilla.gecko.home.HomeConfig.ItemHandler;
 import org.mozilla.gecko.home.HomeConfig.ViewConfig;
 import org.mozilla.gecko.home.HomePager.OnUrlOpenListener;
 import org.mozilla.gecko.home.PanelLayout.DatasetBacked;
@@ -27,14 +28,15 @@ public class PanelGridView extends GridView
                            implements DatasetBacked, PanelView {
     private static final String LOGTAG = "GeckoPanelGridView";
 
-    private final PanelGridViewAdapter mAdapter;
+    private final ViewConfig mViewConfig;
+    private final PanelViewAdapter mAdapter;
     protected OnUrlOpenListener mUrlOpenListener;
 
     public PanelGridView(Context context, ViewConfig viewConfig) {
         super(context, null, R.attr.panelGridViewStyle);
-        mAdapter = new PanelGridViewAdapter(context);
+        mViewConfig = viewConfig;
+        mAdapter = new PanelViewAdapter(context, viewConfig.getItemType());
         setAdapter(mAdapter);
-        setNumColumns(AUTO_FIT);
         setOnItemClickListener(new PanelGridItemClickListener());
     }
 
@@ -54,24 +56,6 @@ public class PanelGridView extends GridView
         mUrlOpenListener = listener;
     }
 
-    private class PanelGridViewAdapter extends CursorAdapter {
-
-        public PanelGridViewAdapter(Context context) {
-            super(context, null, 0);
-        }
-
-        @Override
-        public void bindView(View bindView, Context context, Cursor cursor) {
-            final PanelGridItemView item = (PanelGridItemView) bindView;
-            item.updateFromCursor(cursor);
-        }
-
-        @Override
-        public View newView(Context context, Cursor cursor, ViewGroup parent) {
-            return new PanelGridItemView(context);
-        }
-    }
-
     private class PanelGridItemClickListener implements AdapterView.OnItemClickListener {
         @Override
         public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
@@ -83,7 +67,12 @@ public class PanelGridView extends GridView
             int urlIndex = cursor.getColumnIndexOrThrow(HomeItems.URL);
             final String url = cursor.getString(urlIndex);
 
-            mUrlOpenListener.onUrlOpen(url, EnumSet.of(OnUrlOpenListener.Flags.OPEN_WITH_INTENT));
+            EnumSet<OnUrlOpenListener.Flags> flags = EnumSet.noneOf(OnUrlOpenListener.Flags.class);
+            if (mViewConfig.getItemHandler() == ItemHandler.INTENT) {
+                flags.add(OnUrlOpenListener.Flags.OPEN_WITH_INTENT);
+            }
+
+            mUrlOpenListener.onUrlOpen(url, flags);
         }
     }
 }
