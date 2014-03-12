@@ -82,6 +82,7 @@
 #include "mozilla/GuardObjects.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/TimeStamp.h"
 
 #include <math.h>
 #include <stdint.h>
@@ -90,6 +91,7 @@
 
 #include "xpcpublic.h"
 #include "js/Tracer.h"
+#include "js/WeakMapPtr.h"
 #include "pldhash.h"
 #include "nscore.h"
 #include "nsXPCOM.h"
@@ -212,16 +214,9 @@ extern const char XPC_XPCONNECT_CONTRACTID[];
     return (result || !src) ? NS_OK : NS_ERROR_OUT_OF_MEMORY
 
 
-#define WRAPPER_SLOTS (JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS | \
-                       JSCLASS_HAS_RESERVED_SLOTS(1))
+#define WRAPPER_SLOTS (JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS )
 
 #define INVALID_OBJECT ((JSObject *)1)
-
-// NB: This slot isn't actually reserved for us on globals, because SpiderMonkey
-// uses the first N slots on globals internally. The fact that we use it for
-// wrapped global objects is totally broken. But due to a happy coincidence, the
-// JS engine never uses that slot. This still needs fixing though. See bug 760095.
-#define WN_XRAYEXPANDOCHAIN_SLOT 0
 
 // If IS_WN_CLASS for the JSClass of an object is true, the object is a
 // wrappednative wrapper, holding the XPCWrappedNative in its private slot.
@@ -233,18 +228,6 @@ static inline bool IS_WN_CLASS(const js::Class* clazz)
 static inline bool IS_WN_REFLECTOR(JSObject *obj)
 {
     return IS_WN_CLASS(js::GetObjectClass(obj));
-}
-
-inline void SetWNExpandoChain(JSObject *obj, JSObject *chain)
-{
-    MOZ_ASSERT(IS_WN_REFLECTOR(obj));
-    JS_SetReservedSlot(obj, WN_XRAYEXPANDOCHAIN_SLOT, JS::ObjectOrNullValue(chain));
-}
-
-inline JSObject* GetWNExpandoChain(JSObject *obj)
-{
-    MOZ_ASSERT(IS_WN_REFLECTOR(obj));
-    return JS_GetReservedSlot(obj, WN_XRAYEXPANDOCHAIN_SLOT).toObjectOrNull();
 }
 
 /***************************************************************************
@@ -566,7 +549,8 @@ public:
     static void ActivityCallback(void *arg, bool active);
     static void CTypesActivityCallback(JSContext *cx,
                                        js::CTypesActivityType type);
-    static bool OperationCallback(JSContext *cx);
+    static bool InterruptCallback(JSContext *cx);
+    static void OutOfMemoryCallback(JSContext *cx);
 
     size_t SizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf);
 
@@ -923,24 +907,19 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* lookupGeneric */                                          \
         nullptr, /* lookupProperty */                                         \
         nullptr, /* lookupElement */                                          \
-        nullptr, /* lookupSpecial */                                          \
         nullptr, /* defineGeneric */                                          \
         nullptr, /* defineProperty */                                         \
         nullptr, /* defineElement */                                          \
-        nullptr, /* defineSpecial */                                          \
         nullptr, /* getGeneric    */                                          \
         nullptr, /* getProperty    */                                         \
         nullptr, /* getElement    */                                          \
-        nullptr, /* getSpecial    */                                          \
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
         nullptr, /* setElement    */                                          \
-        nullptr, /* setSpecial    */                                          \
         nullptr, /* getGenericAttributes  */                                  \
         nullptr, /* setGenericAttributes  */                                  \
         nullptr, /* deleteProperty */                                         \
         nullptr, /* deleteElement */                                          \
-        nullptr, /* deleteSpecial */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
         nullptr, /* slice */                                                  \
         XPC_WN_JSOp_Enumerate,                                                \
@@ -952,24 +931,19 @@ XPC_WN_JSOp_ThisObject(JSContext *cx, JS::HandleObject obj);
         nullptr, /* lookupGeneric */                                          \
         nullptr, /* lookupProperty */                                         \
         nullptr, /* lookupElement */                                          \
-        nullptr, /* lookupSpecial */                                          \
         nullptr, /* defineGeneric */                                          \
         nullptr, /* defineProperty */                                         \
         nullptr, /* defineElement */                                          \
-        nullptr, /* defineSpecial */                                          \
         nullptr, /* getGeneric    */                                          \
         nullptr, /* getProperty    */                                         \
         nullptr, /* getElement    */                                          \
-        nullptr, /* getSpecial    */                                          \
         nullptr, /* setGeneric    */                                          \
         nullptr, /* setProperty    */                                         \
         nullptr, /* setElement    */                                          \
-        nullptr, /* setSpecial    */                                          \
         nullptr, /* getGenericAttributes  */                                  \
         nullptr, /* setGenericAttributes  */                                  \
         nullptr, /* deleteProperty */                                         \
         nullptr, /* deleteElement */                                          \
-        nullptr, /* deleteSpecial */                                          \
         nullptr, nullptr, /* watch/unwatch */                                 \
         nullptr, /* slice */                                                  \
         XPC_WN_JSOp_Enumerate,                                                \
@@ -1036,6 +1010,12 @@ public:
         return nsJSPrincipals::get(JS_GetCompartmentPrincipals(c));
     }
 
+    JSObject*
+    GetExpandoChain(JSObject *target);
+
+    bool
+    SetExpandoChain(JSContext *cx, JS::HandleObject target, JS::HandleObject chain);
+
     void RemoveWrappedNativeProtos();
 
     static void
@@ -1049,6 +1029,8 @@ public:
         mGlobalJSObject.trace(trc, "XPCWrappedNativeScope::mGlobalJSObject");
         if (mXBLScope)
             mXBLScope.trace(trc, "XPCWrappedNativeScope::mXBLScope");
+        if (mXrayExpandos.initialized())
+            mXrayExpandos.trace(trc);
     }
 
     static void
@@ -1167,6 +1149,8 @@ private:
     XPCContext*                      mContext;
 
     nsAutoPtr<DOMExpandoSet> mDOMExpandoSet;
+
+    JS::WeakMapPtr<JSObject*, JSObject*> mXrayExpandos;
 
     bool mIsXBLScope;
 
@@ -2780,8 +2764,9 @@ void PopJSContextNoScriptContext();
 class XPCJSContextStack
 {
 public:
-    XPCJSContextStack()
-      : mSafeJSContext(nullptr)
+    XPCJSContextStack(XPCJSRuntime *aRuntime)
+      : mRuntime(aRuntime)
+      , mSafeJSContext(nullptr)
     { }
 
     virtual ~XPCJSContextStack();
@@ -2814,6 +2799,7 @@ private:
     bool Push(JSContext *cx);
 
     AutoInfallibleTArray<XPCJSContextInfo, 16> mStack;
+    XPCJSRuntime* mRuntime;
     JSContext*  mSafeJSContext;
 };
 
@@ -2945,8 +2931,7 @@ public:
      * @param cx The JSContext, this can be null, we don't do anything then
      */
     AutoScriptEvaluate(JSContext * cx MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-         : mJSContext(cx), mState(0), mErrorReporterSet(false),
-           mEvaluated(false) {
+         : mJSContext(cx), mErrorReporterSet(false), mEvaluated(false) {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
@@ -2965,7 +2950,7 @@ public:
     ~AutoScriptEvaluate();
 private:
     JSContext* mJSContext;
-    JSExceptionState* mState;
+    mozilla::Maybe<JS::AutoSaveExceptionState> mState;
     bool mErrorReporterSet;
     bool mEvaluated;
     mozilla::Maybe<JSAutoCompartment> mAutoCompartment;
@@ -3628,9 +3613,9 @@ DefineStaticJSVals(JSContext *cx);
 } // namespace dom
 } // namespace mozilla
 
-NS_EXPORT_(bool)
+bool
 xpc_LocalizeRuntime(JSRuntime *rt);
-NS_EXPORT_(void)
+void
 xpc_DelocalizeRuntime(JSRuntime *rt);
 
 /***************************************************************************/

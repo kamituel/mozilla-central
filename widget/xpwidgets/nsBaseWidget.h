@@ -210,6 +210,7 @@ public:
 
   void NotifyWindowDestroyed();
   void NotifySizeMoveDone();
+  void NotifyWindowMoved(int32_t aX, int32_t aY);
 
   // Should be called by derived implementations to notify on system color and
   // theme changes.
@@ -409,6 +410,9 @@ protected:
   bool              mUseLayersAcceleration;
   bool              mForceLayersAcceleration;
   bool              mTemporarilyUseBasicLayerManager;
+  // Windows with out-of-process tabs always require OMTC. This flag designates
+  // such windows.
+  bool              mRequireOffMainThreadCompositing;
   bool              mUseAttachedEvents;
   bool              mContextInitialized;
   nsIntRect         mBounds;

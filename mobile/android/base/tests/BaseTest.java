@@ -483,12 +483,12 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
     }
 
     public final void verifyHomePagerHidden() {
-        final View homePagerView = mSolo.getView(R.id.home_pager);
+        final View homePagerContainer = mSolo.getView(R.id.home_pager_container);
 
         boolean rc = waitForCondition(new Condition() {
             @Override
             public boolean isSatisfied() {
-                return homePagerView.getVisibility() != View.VISIBLE;
+                return homePagerContainer.getVisibility() != View.VISIBLE;
             }
         }, MAX_WAIT_HOME_PAGER_HIDDEN_MS);
 
@@ -872,5 +872,28 @@ abstract class BaseTest extends ActivityInstrumentationTestCase2<Activity> {
         }
 
         return null;
+    }
+
+    /**
+     * Abstract class for running small test cases within a BaseTest.
+     */
+    abstract class TestCase implements Runnable {
+        /**
+         * Implement tests here. setUp and tearDown for the test case
+         * should be handled by the parent test. This is so we can avoid the
+         * overhead of starting Gecko and creating profiles.
+         */
+        protected abstract void test() throws Exception;
+
+        @Override
+        public void run() {
+            try {
+                test();
+            } catch (Exception e) {
+                mAsserter.ok(false,
+                             "Test " + this.getClass().getName() + " threw exception: " + e,
+                             "");
+            }
+        }
     }
 }

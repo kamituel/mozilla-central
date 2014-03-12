@@ -943,12 +943,11 @@ RenderFrameParent::OwnerContentChanged(nsIContent* aContent)
 }
 
 void
-RenderFrameParent::NotifyInputEvent(const WidgetInputEvent& aEvent,
-                                    ScrollableLayerGuid* aOutTargetGuid,
-                                    WidgetInputEvent* aOutEvent)
+RenderFrameParent::NotifyInputEvent(WidgetInputEvent& aEvent,
+                                    ScrollableLayerGuid* aOutTargetGuid)
 {
   if (GetApzcTreeManager()) {
-    GetApzcTreeManager()->ReceiveInputEvent(aEvent, aOutTargetGuid, aOutEvent);
+    GetApzcTreeManager()->ReceiveInputEvent(aEvent, aOutTargetGuid);
   }
 }
 
@@ -1133,6 +1132,11 @@ void
 RenderFrameParent::ContentReceivedTouch(const ScrollableLayerGuid& aGuid,
                                         bool aPreventDefault)
 {
+  if (aGuid.mLayersId != mLayersId) {
+    // Guard against bad data from hijacked child processes
+    NS_ERROR("Unexpected layers id in ContentReceivedTouch; dropping message...");
+    return;
+  }
   if (GetApzcTreeManager()) {
     GetApzcTreeManager()->ContentReceivedTouch(aGuid, aPreventDefault);
   }

@@ -143,6 +143,7 @@ class nsDocShell : public nsDocLoader,
     friend class nsDSURIContentListener;
 
 public:
+    MOZ_DECLARE_REFCOUNTED_TYPENAME(nsDocShell)
     // Object Management
     nsDocShell();
 
@@ -899,6 +900,7 @@ private:
     nsCOMPtr<nsIPrincipal> mParentCharsetPrincipal;
     nsTObserverArray<nsWeakPtr> mPrivacyObservers;
     nsTObserverArray<nsWeakPtr> mReflowObservers;
+    nsTObserverArray<nsWeakPtr> mScrollObservers;
     nsCString         mOriginalUriString;
 
     // Separate function to do the actual name (i.e. not _top, _self etc.)

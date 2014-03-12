@@ -116,7 +116,6 @@ WebGLContext::WebGLContext()
     mOptionsFrozen = false;
 
     mActiveTexture = 0;
-    mWebGLError = LOCAL_GL_NO_ERROR;
     mPixelStoreFlipY = false;
     mPixelStorePremultiplyAlpha = false;
     mPixelStoreColorspaceConversion = BROWSER_DEFAULT_WEBGL;
@@ -1220,10 +1219,8 @@ void
 WebGLContext::DummyFramebufferOperation(const char *info)
 {
     GLenum status = CheckFramebufferStatus(LOCAL_GL_FRAMEBUFFER);
-    if (status == LOCAL_GL_FRAMEBUFFER_COMPLETE)
-        return;
-    else
-        return ErrorInvalidFramebufferOperation("%s: incomplete framebuffer", info);
+    if (status != LOCAL_GL_FRAMEBUFFER_COMPLETE)
+        ErrorInvalidFramebufferOperation("%s: incomplete framebuffer", info);
 }
 
 // We use this timer for many things. Here are the things that it is activated for:
@@ -1291,7 +1288,7 @@ WebGLContext::RobustnessTimerCallback(nsITimer* timer)
                                              true);
         // Set all flags back to the state they were in before the context was
         // lost.
-        mContextLostErrorSet = false;
+        mEmitContextLostErrorOnce = true;
         mAllowRestore = true;
     }
 

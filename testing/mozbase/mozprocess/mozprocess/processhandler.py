@@ -40,8 +40,8 @@ class ProcessHandlerMixin(object):
     :param ignore_children: causes system to ignore child processes when True, defaults to False (which tracks child processes).
     :param kill_on_timeout: when True, the process will be killed when a timeout is reached. When False, the caller is responsible for killing the process. Failure to do so could cause a call to wait() to hang indefinitely. (Defaults to True.)
     :param processOutputLine: function or list of functions to be called for each line of output produced by the process (defaults to None).
-    :param onTimeout: function to be called when the process times out.
-    :param onFinish: function to be called when the process terminates normally without timing out.
+    :param onTimeout: function or list of functions to be called when the process times out.
+    :param onFinish: function or list of functions to be called when the process terminates normally without timing out.
     :param kwargs: additional keyword args to pass directly into Popen.
 
     NOTE: Child processes will be tracked by default.  If for any reason
@@ -613,7 +613,11 @@ falling back to not using job objects for managing child processes"""
         if callable(processOutputLine):
             processOutputLine = [processOutputLine]
         self.processOutputLineHandlers = list(processOutputLine)
+        if callable(onTimeout):
+            onTimeout = [onTimeout]
         self.onTimeoutHandlers = list(onTimeout)
+        if callable(onFinish):
+            onFinish = [onFinish]
         self.onFinishHandlers = list(onFinish)
 
         # It is common for people to pass in the entire array with the cmd and
@@ -893,9 +897,6 @@ falling back to not using job objects for managing child processes"""
 ### default output handlers
 ### these should be callables that take the output line
 
-def print_output(line):
-    print line
-
 class StoreOutput(object):
     """accumulate stdout"""
 
@@ -905,22 +906,27 @@ class StoreOutput(object):
     def __call__(self, line):
         self.output.append(line)
 
-class LogOutput(object):
+class StreamOutput(object):
+    """pass output to a stream and flush"""
+
+    def __init__(self, stream):
+        self.stream = stream
+
+    def __call__(self, line):
+        self.stream.write(line + '\n')
+        self.stream.flush()
+
+class LogOutput(StreamOutput):
     """pass output to a file"""
 
     def __init__(self, filename):
-        self.filename = filename
-        self.file = None
-
-    def __call__(self, line):
-        if self.file is None:
-            self.file = file(self.filename, 'a')
-        self.file.write(line + '\n')
-        self.file.flush()
+        self.file_obj = open(filename, 'a')
+        StreamOutput.__init__(self, self.file_obj)
 
     def __del__(self):
-        if self.file is not None:
-            self.file.close()
+        if self.file_obj is not None:
+            self.file_obj.close()
+
 
 ### front end class with the default handlers
 
@@ -940,18 +946,22 @@ class ProcessHandler(ProcessHandlerMixin):
     appended to the given file.
     """
 
-    def __init__(self, cmd, logfile=None, storeOutput=True, **kwargs):
+    def __init__(self, cmd, logfile=None, stream=None,  storeOutput=True, **kwargs):
         kwargs.setdefault('processOutputLine', [])
         if callable(kwargs['processOutputLine']):
             kwargs['processOutputLine'] = [kwargs['processOutputLine']]
 
-        # Print to standard output only if no outputline provided
-        if not kwargs['processOutputLine']:
-            kwargs['processOutputLine'].append(print_output)
-
         if logfile:
             logoutput = LogOutput(logfile)
             kwargs['processOutputLine'].append(logoutput)
+
+        if stream:
+            streamoutput = StreamOutput(stream)
+            kwargs['processOutputLine'].append(streamoutput)
+
+        # Print to standard output only if no outputline provided
+        if not kwargs['processOutputLine']:
+            kwargs['processOutputLine'].append(StreamOutput(sys.stdout))
 
         self.output = None
         if storeOutput:

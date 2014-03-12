@@ -20,12 +20,13 @@
 #include "mozilla/mozalloc.h"           // for operator delete
 #include "nsAString.h"
 #include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsMathUtils.h"                // for NS_lround
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsRect.h"                     // for nsIntRect
 #include "nsSize.h"                     // for nsIntSize
 #include "nsString.h"                   // for nsAutoCString
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
+#include "TextRenderer.h"
 #include "GeckoProfiler.h"
 
 namespace mozilla {
@@ -52,8 +53,18 @@ ThebesLayerComposite::~ThebesLayerComposite()
 bool
 ThebesLayerComposite::SetCompositableHost(CompositableHost* aHost)
 {
-  mBuffer = static_cast<ContentHost*>(aHost);
-  return true;
+  switch (aHost->GetType()) {
+    case BUFFER_CONTENT:
+    case BUFFER_CONTENT_DIRECT:
+    case BUFFER_CONTENT_INC:
+    case BUFFER_TILED:
+    case COMPOSITABLE_CONTENT_SINGLE:
+    case COMPOSITABLE_CONTENT_DOUBLE:
+      mBuffer = static_cast<ContentHost*>(aHost);
+      return true;
+    default:
+      return false;
+  }
 }
 
 void
@@ -116,7 +127,7 @@ ThebesLayerComposite::RenderLayer(const nsIntRect& aClipRect)
   }
 #endif
 
-  EffectChain effectChain;
+  EffectChain effectChain(this);
   LayerManagerComposite::AutoAddMaskEffect autoMaskEffect(mMaskLayer, effectChain);
 
   nsIntRegion visibleRegion = GetEffectiveVisibleRegion();

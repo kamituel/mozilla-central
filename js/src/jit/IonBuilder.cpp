@@ -54,7 +54,7 @@ class jit::BaselineFrameInspector
 };
 
 BaselineFrameInspector *
-jit::NewBaselineFrameInspector(TempAllocator *temp, BaselineFrame *frame)
+jit::NewBaselineFrameInspector(TempAllocator *temp, BaselineFrame *frame, CompileInfo *info)
 {
     JS_ASSERT(frame);
 
@@ -91,10 +91,10 @@ jit::NewBaselineFrameInspector(TempAllocator *temp, BaselineFrame *frame)
     if (!inspector->varTypes.reserve(frame->script()->nfixed()))
         return nullptr;
     for (size_t i = 0; i < frame->script()->nfixed(); i++) {
-        if (script->varIsAliased(i))
+        if (info->isSlotAliasedAtOsr(i + info->firstLocalSlot()))
             inspector->varTypes.infallibleAppend(types::Type::UndefinedType());
         else
-            inspector->varTypes.infallibleAppend(types::GetValueType(frame->unaliasedVar(i)));
+            inspector->varTypes.infallibleAppend(types::GetValueType(frame->unaliasedLocal(i)));
     }
 
     return inspector;
@@ -617,8 +617,7 @@ IonBuilder::build()
     }
 #endif
 
-    if (!initParameters())
-        return false;
+    initParameters();
 
     // Initialize local variables.
     for (uint32_t i = 0; i < info().nlocals(); i++) {
@@ -910,20 +909,18 @@ IonBuilder::rewriteParameters()
     }
 }
 
-bool
+void
 IonBuilder::initParameters()
 {
     if (!info().funMaybeLazy())
-        return true;
+        return;
 
     // If we are doing OSR on a frame which initially executed in the
     // interpreter and didn't accumulate type information, try to use that OSR
     // frame to determine possible initial types for 'this' and parameters.
 
-    if (thisTypes->empty() && baselineFrame_) {
-        if (!thisTypes->addType(baselineFrame_->thisType, alloc_->lifoAlloc()))
-            return false;
-    }
+    if (thisTypes->empty() && baselineFrame_)
+        thisTypes->addType(baselineFrame_->thisType, alloc_->lifoAlloc());
 
     MParameter *param = MParameter::New(alloc(), MParameter::THIS_SLOT, thisTypes);
     current->add(param);
@@ -934,16 +931,13 @@ IonBuilder::initParameters()
         if (types->empty() && baselineFrame_ &&
             !script_->baselineScript()->modifiesArguments())
         {
-            if (!types->addType(baselineFrame_->argTypes[i], alloc_->lifoAlloc()))
-                return false;
+            types->addType(baselineFrame_->argTypes[i], alloc_->lifoAlloc());
         }
 
         param = MParameter::New(alloc(), i, types);
         current->add(param);
         current->initSlot(info().argSlotUnchecked(i), param);
     }
-
-    return true;
 }
 
 bool
@@ -1127,11 +1121,10 @@ IonBuilder::maybeAddOsrTypeBarriers()
         headerPhi++;
 
     for (uint32_t i = info().startArgSlot(); i < osrBlock->stackDepth(); i++, headerPhi++) {
-
         // Aliased slots are never accessed, since they need to go through
         // the callobject. The typebarriers are added there and can be
-        // discared here.
-        if (info().isSlotAliased(i))
+        // discarded here.
+        if (info().isSlotAliasedAtOsr(i))
             continue;
 
         MInstruction *def = osrBlock->getSlot(i)->toInstruction();
@@ -1262,7 +1255,7 @@ IonBuilder::traverseBytecode()
             switch (op) {
               case JSOP_POP:
               case JSOP_POPN:
-              case JSOP_POPNV:
+              case JSOP_DUPAT:
               case JSOP_DUP:
               case JSOP_DUP2:
               case JSOP_PICK:
@@ -1512,14 +1505,9 @@ IonBuilder::inspectOpcode(JSOp op)
             current->pop();
         return true;
 
-      case JSOP_POPNV:
-      {
-        MDefinition *mins = current->pop();
-        for (uint32_t i = 0, n = GET_UINT16(pc); i < n; i++)
-            current->pop();
-        current->push(mins);
+      case JSOP_DUPAT:
+        current->pushSlot(current->stackDepth() - 1 - GET_UINT24(pc));
         return true;
-      }
 
       case JSOP_NEWINIT:
         if (GET_UINT8(pc) == JSProto_Array)
@@ -2695,6 +2683,7 @@ IonBuilder::doWhileLoop(JSOp op, jssrcnote *sn)
     JS_ASSERT(loopHead == ifne + GetJumpOffset(ifne));
 
     jsbytecode *loopEntry = GetNextPc(loopHead);
+    bool canOsr = LoopEntryCanIonOsr(loopEntry);
     bool osr = info().hasOsrAt(loopEntry);
 
     if (osr) {
@@ -2705,7 +2694,8 @@ IonBuilder::doWhileLoop(JSOp op, jssrcnote *sn)
         setCurrentAndSpecializePhis(preheader);
     }
 
-    MBasicBlock *header = newPendingLoopHeader(current, pc, osr);
+    unsigned stackPhiCount = 0;
+    MBasicBlock *header = newPendingLoopHeader(current, pc, osr, canOsr, stackPhiCount);
     if (!header)
         return ControlStatus_Error;
     current->end(MGoto::New(alloc(), header));
@@ -2755,6 +2745,7 @@ IonBuilder::whileOrForInLoop(jssrcnote *sn)
     JS_ASSERT(GetNextPc(pc) == ifne + GetJumpOffset(ifne));
 
     jsbytecode *loopEntry = pc + GetJumpOffset(pc);
+    bool canOsr = LoopEntryCanIonOsr(loopEntry);
     bool osr = info().hasOsrAt(loopEntry);
 
     if (osr) {
@@ -2765,7 +2756,15 @@ IonBuilder::whileOrForInLoop(jssrcnote *sn)
         setCurrentAndSpecializePhis(preheader);
     }
 
-    MBasicBlock *header = newPendingLoopHeader(current, pc, osr);
+    unsigned stackPhiCount;
+    if (SN_TYPE(sn) == SRC_FOR_OF)
+        stackPhiCount = 2;
+    else if (SN_TYPE(sn) == SRC_FOR_IN)
+        stackPhiCount = 1;
+    else
+        stackPhiCount = 0;
+
+    MBasicBlock *header = newPendingLoopHeader(current, pc, osr, canOsr, stackPhiCount);
     if (!header)
         return ControlStatus_Error;
     current->end(MGoto::New(alloc(), header));
@@ -2840,6 +2839,7 @@ IonBuilder::forLoop(JSOp op, jssrcnote *sn)
     bodyStart = GetNextPc(bodyStart);
 
     bool osr = info().hasOsrAt(loopEntry);
+    bool canOsr = LoopEntryCanIonOsr(loopEntry);
 
     if (osr) {
         MBasicBlock *preheader = newOsrPreheader(current, loopEntry);
@@ -2849,7 +2849,8 @@ IonBuilder::forLoop(JSOp op, jssrcnote *sn)
         setCurrentAndSpecializePhis(preheader);
     }
 
-    MBasicBlock *header = newPendingLoopHeader(current, pc, osr);
+    unsigned stackPhiCount = 0;
+    MBasicBlock *header = newPendingLoopHeader(current, pc, osr, canOsr, stackPhiCount);
     if (!header)
         return ControlStatus_Error;
     current->end(MGoto::New(alloc(), header));
@@ -4964,14 +4965,12 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     types::TemporaryTypeSet *observed = bytecodeTypes(pc);
     if (observed->empty()) {
         if (BytecodeFlowsToBitop(pc)) {
-            if (!observed->addType(types::Type::Int32Type(), alloc_->lifoAlloc()))
-                return false;
+            observed->addType(types::Type::Int32Type(), alloc_->lifoAlloc());
         } else if (*GetNextPc(pc) == JSOP_POS) {
             // Note: this is lame, overspecialized on the code patterns used
             // by asm.js and should be replaced by a more general mechanism.
             // See bug 870847.
-            if (!observed->addType(types::Type::DoubleType(), alloc_->lifoAlloc()))
-                return false;
+            observed->addType(types::Type::DoubleType(), alloc_->lifoAlloc());
         }
     }
 
@@ -5635,7 +5634,7 @@ IonBuilder::newBlock(MBasicBlock *predecessor, jsbytecode *pc, uint32_t loopDept
 MBasicBlock *
 IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopEntry)
 {
-    JS_ASSERT((JSOp)*loopEntry == JSOP_LOOPENTRY);
+    JS_ASSERT(LoopEntryCanIonOsr(loopEntry));
     JS_ASSERT(loopEntry == info().osrPc());
 
     // Create two blocks: one for the OSR entry with no predecessors, one for
@@ -5776,11 +5775,11 @@ IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopEntry)
     for (uint32_t i = info().startArgSlot(); i < osrBlock->stackDepth(); i++) {
         MDefinition *existing = current->getSlot(i);
         MDefinition *def = osrBlock->getSlot(i);
-        JS_ASSERT_IF(!needsArgsObj || !info().isSlotAliased(i), def->type() == MIRType_Value);
+        JS_ASSERT_IF(!needsArgsObj || !info().isSlotAliasedAtOsr(i), def->type() == MIRType_Value);
 
         // Aliased slots are never accessed, since they need to go through
         // the callobject. No need to type them here.
-        if (info().isSlotAliased(i))
+        if (info().isSlotAliasedAtOsr(i))
             continue;
 
         def->setResultType(existing->type());
@@ -5801,10 +5800,15 @@ IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopEntry)
 }
 
 MBasicBlock *
-IonBuilder::newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool osr)
+IonBuilder::newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool osr, bool canOsr,
+                                 unsigned stackPhiCount)
 {
     loopDepth_++;
-    MBasicBlock *block = MBasicBlock::NewPendingLoopHeader(graph(), info(), predecessor, pc);
+    // If this site can OSR, all values on the expression stack are part of the loop.
+    if (canOsr)
+        stackPhiCount = predecessor->stackDepth() - info().firstStackSlot();
+    MBasicBlock *block = MBasicBlock::NewPendingLoopHeader(graph(), info(), predecessor, pc,
+                                                           stackPhiCount);
     if (!addBlock(block, loopDepth_))
         return nullptr;
 
@@ -5820,7 +5824,7 @@ IonBuilder::newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool 
 
             // The value of aliased args and slots are in the callobject. So we can't
             // the value from the baseline frame.
-            if (info().isSlotAliased(i))
+            if (info().isSlotAliasedAtOsr(i))
                 continue;
 
             // Don't bother with expression stack values. The stack should be
@@ -5928,12 +5932,6 @@ IonBuilder::maybeInsertResume()
 static bool
 ClassHasEffectlessLookup(const Class *clasp, PropertyName *name)
 {
-    if (IsTypedArrayClass(clasp)) {
-        // Typed arrays have a lookupGeneric hook, but it only handles
-        // integers, not names.
-        JS_ASSERT(name);
-        return true;
-    }
     return clasp->isNative() && !clasp->ops.lookupGeneric;
 }
 
@@ -6120,7 +6118,7 @@ IonBuilder::testSingletonPropertyTypes(MDefinition *obj, JSObject *singleton, Pr
         return false;
     }
 
-    JSObject *proto = GetClassPrototypePure(&script()->global(), key);
+    JSObject *proto = GetBuiltinPrototypePure(&script()->global(), key);
     if (proto)
         return testSingletonProperty(proto, name) == singleton;
 
@@ -6611,8 +6609,9 @@ bool
 IonBuilder::checkTypedObjectIndexInBounds(size_t elemSize,
                                           MDefinition *obj,
                                           MDefinition *index,
+                                          TypeDescrSet objDescrs,
                                           MDefinition **indexAsByteOffset,
-                                          TypeDescrSet objDescrs)
+                                          bool *canBeNeutered)
 {
     // Ensure index is an integer.
     MInstruction *idInt32 = MToInt32::New(alloc(), index);
@@ -6626,14 +6625,23 @@ IonBuilder::checkTypedObjectIndexInBounds(size_t elemSize,
     MDefinition *length;
     if (objDescrs.hasKnownArrayLength(&lenOfAll)) {
         length = constantInt(lenOfAll);
+
+        // If we are not loading the length from the object itself,
+        // then we still need to check if the object was neutered.
+        *canBeNeutered = true;
     } else {
-        MInstruction *lengthValue = MLoadFixedSlot::New(alloc(), obj, JS_DATUM_SLOT_LENGTH);
+        MInstruction *lengthValue = MLoadFixedSlot::New(alloc(), obj, JS_TYPEDOBJ_SLOT_LENGTH);
         current->add(lengthValue);
 
         MInstruction *length32 = MTruncateToInt32::New(alloc(), lengthValue);
         current->add(length32);
 
         length = length32;
+
+        // If we are loading the length from the object itself,
+        // then we do not need an extra neuter check, because the length
+        // will have been set to 0 when the object was neutered.
+        *canBeNeutered = false;
     }
 
     index = addBoundsCheck(idInt32, length);
@@ -6664,25 +6672,31 @@ IonBuilder::getElemTryScalarElemOfTypedObject(bool *emitted,
         return true;
     JS_ASSERT(elemSize == ScalarTypeDescr::alignment(elemType));
 
+    bool canBeNeutered;
     MDefinition *indexAsByteOffset;
-    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, &indexAsByteOffset, objDescrs))
+    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, objDescrs,
+                                       &indexAsByteOffset, &canBeNeutered))
+    {
         return false;
+    }
 
-    return pushScalarLoadFromTypedObject(emitted, obj, indexAsByteOffset, elemType);
+    return pushScalarLoadFromTypedObject(emitted, obj, indexAsByteOffset, elemType, canBeNeutered);
 }
 
 bool
 IonBuilder::pushScalarLoadFromTypedObject(bool *emitted,
                                           MDefinition *obj,
                                           MDefinition *offset,
-                                          ScalarTypeDescr::Type elemType)
+                                          ScalarTypeDescr::Type elemType,
+                                          bool canBeNeutered)
 {
     size_t size = ScalarTypeDescr::size(elemType);
     JS_ASSERT(size == ScalarTypeDescr::alignment(elemType));
 
     // Find location within the owner object.
     MDefinition *elements, *scaledOffset;
-    loadTypedObjectElements(obj, offset, size, &elements, &scaledOffset);
+    loadTypedObjectElements(obj, offset, size, canBeNeutered,
+                            &elements, &scaledOffset);
 
     // Load the element.
     MLoadTypedArrayElement *load = MLoadTypedArrayElement::New(alloc(), elements, scaledOffset, elemType);
@@ -6723,12 +6737,16 @@ IonBuilder::getElemTryComplexElemOfTypedObject(bool *emitted,
     MDefinition *type = loadTypedObjectType(obj);
     MDefinition *elemTypeObj = typeObjectForElementFromArrayStructType(type);
 
+    bool canBeNeutered;
     MDefinition *indexAsByteOffset;
-    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, &indexAsByteOffset, objDescrs))
+    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, objDescrs,
+                                       &indexAsByteOffset, &canBeNeutered))
+    {
         return false;
+    }
 
     return pushDerivedTypedObject(emitted, obj, indexAsByteOffset,
-                                  elemDescrs, elemTypeObj);
+                                  elemDescrs, elemTypeObj, canBeNeutered);
 }
 
 bool
@@ -6736,13 +6754,14 @@ IonBuilder::pushDerivedTypedObject(bool *emitted,
                                    MDefinition *obj,
                                    MDefinition *offset,
                                    TypeDescrSet derivedTypeDescrs,
-                                   MDefinition *derivedTypeObj)
+                                   MDefinition *derivedTypeObj,
+                                   bool canBeNeutered)
 {
     // Find location within the owner object.
     MDefinition *owner, *ownerOffset;
-    loadTypedObjectData(obj, offset, &owner, &ownerOffset);
+    loadTypedObjectData(obj, offset, canBeNeutered, &owner, &ownerOffset);
 
-    // Create the derived datum.
+    // Create the derived typed object.
     MInstruction *derivedTypedObj = MNewDerivedTypedObject::New(alloc(),
                                                                 derivedTypeDescrs,
                                                                 derivedTypeObj,
@@ -7064,8 +7083,7 @@ IonBuilder::jsop_getelem_dense(MDefinition *obj, MDefinition *index)
         // Indexed call on an element of an array. Populate the observed types
         // with any objects that could be in the array, to avoid extraneous
         // type barriers.
-        if (!AddObjectsForPropertyRead(obj, nullptr, types))
-            return false;
+        AddObjectsForPropertyRead(obj, nullptr, types);
     }
 
     bool barrier = PropertyReadNeedsTypeBarrier(analysisContext, constraints(), obj, nullptr, types);
@@ -7166,14 +7184,19 @@ IonBuilder::getTypedArrayElements(MDefinition *obj)
     if (obj->isConstant() && obj->toConstant()->value().isObject()) {
         TypedArrayObject *tarr = &obj->toConstant()->value().toObject().as<TypedArrayObject>();
         void *data = tarr->viewData();
+        // Bug 979449 - Optimistically embed the elements and use TI to
+        //              invalidate if we move them.
+        if (!gc::IsInsideNursery(tarr->runtimeFromMainThread(), data)) {
+            // The 'data' pointer can change in rare circumstances
+            // (ArrayBufferObject::changeContents).
+            types::TypeObjectKey *tarrType = types::TypeObjectKey::get(tarr);
+            if (!tarrType->unknownProperties()) {
+                tarrType->watchStateChangeForTypedArrayBuffer(constraints());
 
-        // The 'data' pointer can change in rare circumstances
-        // (ArrayBufferObject::changeContents).
-        types::TypeObjectKey *tarrType = types::TypeObjectKey::get(tarr);
-        tarrType->watchStateChangeForTypedArrayBuffer(constraints());
-
-        obj->setImplicitlyUsedUnchecked();
-        return MConstantElements::New(alloc(), data);
+                obj->setImplicitlyUsedUnchecked();
+                return MConstantElements::New(alloc(), data);
+            }
+        }
     }
     return MTypedArrayElements::New(alloc(), obj);
 }
@@ -7401,7 +7424,7 @@ IonBuilder::setElemTryTypedObject(bool *emitted, MDefinition *obj,
         return true;
 
       case TypeDescr::Scalar:
-        return setElemTryScalarPropOfTypedObject(emitted,
+        return setElemTryScalarElemOfTypedObject(emitted,
                                                  obj,
                                                  index,
                                                  objTypeDescrs,
@@ -7414,7 +7437,7 @@ IonBuilder::setElemTryTypedObject(bool *emitted, MDefinition *obj,
 }
 
 bool
-IonBuilder::setElemTryScalarPropOfTypedObject(bool *emitted,
+IonBuilder::setElemTryScalarElemOfTypedObject(bool *emitted,
                                               MDefinition *obj,
                                               MDefinition *index,
                                               TypeDescrSet objTypeDescrs,
@@ -7428,12 +7451,16 @@ IonBuilder::setElemTryScalarPropOfTypedObject(bool *emitted,
         return true;
     JS_ASSERT(elemSize == ScalarTypeDescr::alignment(elemType));
 
+    bool canBeNeutered;
     MDefinition *indexAsByteOffset;
-    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, &indexAsByteOffset, objTypeDescrs))
+    if (!checkTypedObjectIndexInBounds(elemSize, obj, index, objTypeDescrs,
+                                       &indexAsByteOffset, &canBeNeutered))
+    {
         return false;
+    }
 
     // Store the element
-    if (!storeScalarTypedObjectValue(obj, indexAsByteOffset, elemType, value))
+    if (!storeScalarTypedObjectValue(obj, indexAsByteOffset, elemType, canBeNeutered, value))
         return false;
 
     current->push(value);
@@ -7912,7 +7939,7 @@ IonBuilder::jsop_rest()
 
     // Unroll the argument copy loop. We don't need to do any bounds or hole
     // checking here.
-    MConstant *index;
+    MConstant *index = nullptr;
     for (unsigned i = numFormals; i < numActuals; i++) {
         index = MConstant::New(alloc(), Int32Value(i - numFormals));
         current->add(index);
@@ -7921,6 +7948,9 @@ IonBuilder::jsop_rest()
         MStoreElement *store = MStoreElement::New(alloc(), elements, index, arg,
                                                   /* needsHoleCheck = */ false);
         current->add(store);
+
+        if (NeedsPostBarrier(info(), arg))
+            current->add(MPostWriteBarrier::New(alloc(), array, arg));
     }
 
     // The array's length is incorrectly 0 now, from the template object
@@ -8435,7 +8465,7 @@ IonBuilder::getPropTryScalarPropOfTypedObject(bool *emitted,
     MDefinition *typedObj = current->pop();
 
     return pushScalarLoadFromTypedObject(emitted, typedObj, constantInt(fieldOffset),
-                                         fieldType);
+                                         fieldType, true);
 }
 
 bool
@@ -8459,7 +8489,7 @@ IonBuilder::getPropTryComplexPropOfTypedObject(bool *emitted,
     MDefinition *fieldTypeObj = typeObjectForFieldFromStructType(type, fieldIndex);
 
     return pushDerivedTypedObject(emitted, typedObj, constantInt(fieldOffset),
-                                  fieldDescrs, fieldTypeObj);
+                                  fieldDescrs, fieldTypeObj, true);
 }
 
 bool
@@ -8953,7 +8983,7 @@ IonBuilder::setPropTryScalarPropOfTypedObject(bool *emitted,
 
     // OK! Perform the optimization.
 
-    if (!storeScalarTypedObjectValue(obj, constantInt(fieldOffset), fieldType, value))
+    if (!storeScalarTypedObjectValue(obj, constantInt(fieldOffset), fieldType, true, value))
         return false;
 
     current->push(value);
@@ -9249,8 +9279,7 @@ IonBuilder::jsop_setarg(uint32_t arg)
                 }
                 if (!otherUses) {
                     JS_ASSERT(op->resultTypeSet() == &argTypes[arg]);
-                    if (!argTypes[arg].addType(types::Type::UnknownType(), alloc_->lifoAlloc()))
-                        return false;
+                    argTypes[arg].addType(types::Type::UnknownType(), alloc_->lifoAlloc());
                     if (val->isMul()) {
                         val->setResultType(MIRType_Double);
                         val->toMul()->setSpecialization(MIRType_Double);
@@ -9804,7 +9833,7 @@ IonBuilder::loadTypedObjectType(MDefinition *typedObj)
         return typedObj->toNewDerivedTypedObject()->type();
 
     MInstruction *load = MLoadFixedSlot::New(alloc(), typedObj,
-                                             JS_DATUM_SLOT_TYPE_DESCR);
+                                             JS_TYPEDOBJ_SLOT_TYPE_DESCR);
     current->add(load);
     return load;
 }
@@ -9819,6 +9848,7 @@ IonBuilder::loadTypedObjectType(MDefinition *typedObj)
 void
 IonBuilder::loadTypedObjectData(MDefinition *typedObj,
                                 MDefinition *offset,
+                                bool canBeNeutered,
                                 MDefinition **owner,
                                 MDefinition **ownerOffset)
 {
@@ -9833,12 +9863,22 @@ IonBuilder::loadTypedObjectData(MDefinition *typedObj,
     if (typedObj->isNewDerivedTypedObject()) {
         MNewDerivedTypedObject *ins = typedObj->toNewDerivedTypedObject();
 
+        // Note: we never need to check for neutering on this path,
+        // because when we create the derived typed object, we check
+        // for neutering there, if needed.
+
         MAdd *offsetAdd = MAdd::NewAsmJS(alloc(), ins->offset(), offset, MIRType_Int32);
         current->add(offsetAdd);
 
         *owner = ins->owner();
         *ownerOffset = offsetAdd;
         return;
+    }
+
+    if (canBeNeutered) {
+        MNeuterCheck *chk = MNeuterCheck::New(alloc(), typedObj);
+        current->add(chk);
+        typedObj = chk;
     }
 
     *owner = typedObj;
@@ -9854,11 +9894,12 @@ void
 IonBuilder::loadTypedObjectElements(MDefinition *typedObj,
                                     MDefinition *offset,
                                     int32_t unit,
+                                    bool canBeNeutered,
                                     MDefinition **ownerElements,
                                     MDefinition **ownerScaledOffset)
 {
     MDefinition *owner, *ownerOffset;
-    loadTypedObjectData(typedObj, offset, &owner, &ownerOffset);
+    loadTypedObjectData(typedObj, offset, canBeNeutered, &owner, &ownerOffset);
 
     // Load the element data.
     MTypedObjectElements *elements = MTypedObjectElements::New(alloc(), owner);
@@ -9960,12 +10001,14 @@ bool
 IonBuilder::storeScalarTypedObjectValue(MDefinition *typedObj,
                                         MDefinition *offset,
                                         ScalarTypeDescr::Type type,
+                                        bool canBeNeutered,
                                         MDefinition *value)
 {
     // Find location within the owner object.
     MDefinition *elements, *scaledOffset;
     size_t alignment = ScalarTypeDescr::alignment(type);
-    loadTypedObjectElements(typedObj, offset, alignment, &elements, &scaledOffset);
+    loadTypedObjectElements(typedObj, offset, alignment, canBeNeutered,
+                            &elements, &scaledOffset);
 
     // Clamp value to [0, 255] when type is Uint8Clamped
     MDefinition *toWrite = value;

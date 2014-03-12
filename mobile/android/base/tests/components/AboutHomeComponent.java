@@ -59,6 +59,10 @@ public class AboutHomeComponent extends BaseComponent {
         super(testContext);
     }
 
+    private View getHomePagerContainer() {
+        return mSolo.getView(R.id.home_pager_container);
+    }
+
     private ViewPager getHomePagerView() {
         return (ViewPager) mSolo.getView(R.id.home_pager);
     }
@@ -71,32 +75,38 @@ public class AboutHomeComponent extends BaseComponent {
         assertVisible();
 
         final int expectedPanelIndex = getPanelIndexForDevice(expectedPanel.ordinal());
-        assertEquals("The current HomePager panel is " + expectedPanel,
+        fAssertEquals("The current HomePager panel is " + expectedPanel,
                      expectedPanelIndex, getHomePagerView().getCurrentItem());
         return this;
     }
 
     public AboutHomeComponent assertNotVisible() {
-        assertFalse("The HomePager is not visible",
-                    getHomePagerView().getVisibility() == View.VISIBLE);
+        fAssertTrue("The HomePager is not visible",
+                    getHomePagerContainer().getVisibility() != View.VISIBLE ||
+                    getHomePagerView().getVisibility() != View.VISIBLE);
         return this;
     }
 
     public AboutHomeComponent assertVisible() {
-        assertEquals("The HomePager is visible",
-                     View.VISIBLE, getHomePagerView().getVisibility());
+        fAssertTrue("The HomePager is visible",
+                    getHomePagerContainer().getVisibility() == View.VISIBLE &&
+                    getHomePagerView().getVisibility() == View.VISIBLE);
         return this;
     }
 
     public AboutHomeComponent assertBannerNotVisible() {
-        assertFalse("The HomeBanner is not visible",
-                    getHomeBannerView().getVisibility() == View.VISIBLE);
+        View banner = getHomeBannerView();
+        fAssertTrue("The HomeBanner is not visible",
+                    getHomePagerContainer().getVisibility() != View.VISIBLE ||
+                    banner.getVisibility() != View.VISIBLE ||
+                    banner.getTranslationY() == banner.getHeight());
         return this;
     }
 
     public AboutHomeComponent assertBannerVisible() {
-        assertEquals("The HomeBanner is visible",
-                     View.VISIBLE, getHomeBannerView().getVisibility());
+        fAssertTrue("The HomeBanner is visible",
+                    getHomePagerContainer().getVisibility() == View.VISIBLE &&
+                    getHomeBannerView().getVisibility() == View.VISIBLE);
         return this;
     }
 
@@ -104,7 +114,7 @@ public class AboutHomeComponent extends BaseComponent {
         assertBannerVisible();
 
         final TextView textView = (TextView) getHomeBannerView().findViewById(R.id.text);
-        assertEquals("The correct HomeBanner text is shown",
+        fAssertEquals("The correct HomeBanner text is shown",
                      text, textView.getText().toString());
         return this;
     }
@@ -138,7 +148,7 @@ public class AboutHomeComponent extends BaseComponent {
     }
 
     private void swipeToPanel(final int panelDirection) {
-        assertTrue("Swiping in a valid direction",
+        fAssertTrue("Swiping in a valid direction",
                 panelDirection == Solo.LEFT || panelDirection == Solo.RIGHT);
         assertVisible();
 

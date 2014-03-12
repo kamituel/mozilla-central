@@ -54,20 +54,35 @@ DEFINES['SK_R32_SHIFT'] = 16
 DEFINES['SK_G32_SHIFT'] = 8
 DEFINES['SK_B32_SHIFT'] = 0
 
-if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk2', 'gtk3', 'gonk', 'cocoa'):
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gtk2', 'gtk3', 'qt', 'gonk', 'cocoa'):
     DEFINES['SK_USE_POSIX_THREADS'] = 1
 
 if CONFIG['INTEL_ARCHITECTURE'] and CONFIG['HAVE_TOOLCHAIN_SUPPORT_MSSSE3']:
     DEFINES['SK_BUILD_SSSE3'] = 1
 
+if CONFIG['MOZ_WIDGET_TOOLKIT'] in ('android', 'gonk'):
+    DEFINES['SK_FONTHOST_CAIRO_STANDALONE'] = 0
+
 if (CONFIG['MOZ_WIDGET_TOOLKIT'] == 'android') or \
    (CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa') or \
    (CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk') or \
+   CONFIG['MOZ_WIDGET_QT'] or \
    CONFIG['MOZ_WIDGET_GTK']:
     DEFINES['SK_FONTHOST_DOES_NOT_USE_FONTMGR'] = 1
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':
     DEFINES['SKIA_DLL'] = 1
+    DEFINES['GR_DLL'] = 1
+
+if CONFIG['INTEL_ARCHITECTURE'] and CONFIG['GNU_CC']:
+    SOURCES['trunk/src/opts/SkBitmapFilter_opts_SSE2.cpp'].flags += ['-msse2']
+    SOURCES['trunk/src/opts/SkBitmapProcState_opts_SSE2.cpp'].flags += ['-msse2']
+    SOURCES['trunk/src/opts/SkBitmapProcState_opts_SSSE3.cpp'].flags += ['-mssse3']
+    SOURCES['trunk/src/opts/SkBlitRect_opts_SSE2.cpp'].flags += ['-msse2']
+    SOURCES['trunk/src/opts/SkBlitRow_opts_SSE2.cpp'].flags += ['-msse2']
+    SOURCES['trunk/src/opts/SkBlurImage_opts_SSE2.cpp'].flags += ['-msse2']
+    SOURCES['trunk/src/opts/SkMorphology_opts_SSE2.cpp'].flags += ['-msse2']
+    SOURCES['trunk/src/opts/SkUtils_opts_SSE2.cpp'].flags += ['-msse2']
 
 DEFINES['SKIA_IMPLEMENTATION'] = 1
 DEFINES['GR_IMPLEMENTATION'] = 1
@@ -169,6 +184,7 @@ def generate_separated_sources(platform_sources):
     },
     'android': {
       # 'trunk/src/ports/SkDebug_android.cpp',
+      'trunk/src/ports/SkFontHost_android_old.cpp',
       'trunk/src/ports/SkFontHost_cairo.cpp',
       # 'trunk/src/ports/SkFontHost_FreeType.cpp',
       # 'trunk/src/ports/SkFontHost_FreeType_common.cpp',
@@ -270,6 +286,9 @@ def write_mozbuild(includes, sources):
   write_list(f, 'SOURCES', sources['mac'], 4)
 
   f.write("if CONFIG['MOZ_WIDGET_GTK']:\n")
+  write_list(f, 'SOURCES', sources['linux'], 4)
+
+  f.write("if CONFIG['MOZ_WIDGET_QT']:\n")
   write_list(f, 'SOURCES', sources['linux'], 4)
 
   f.write("if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'windows':\n")
