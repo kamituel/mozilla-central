@@ -8,6 +8,7 @@
 #define mozilla_psm__CertVerifier_h
 
 #include "insanity/pkixtypes.h"
+#include "OCSPCache.h"
 
 namespace mozilla { namespace psm {
 
@@ -67,6 +68,8 @@ public:
                ocsp_get_config ogc);
   ~CertVerifier();
 
+  void ClearOCSPCache() { mOCSPCache.Clear(); }
+
   const implementation_config mImplementation;
 #ifndef NSS_NO_LIBPKIX
   const bool mMissingCertDownloadEnabled;
@@ -83,7 +86,10 @@ private:
       void* pinArg,
       const Flags flags,
       /*optional*/ const SECItem* stapledOCSPResponse,
-      /*optional out*/ insanity::pkix::ScopedCERTCertList* validationChain);
+      /*optional out*/ insanity::pkix::ScopedCERTCertList* validationChain,
+      /*optional out*/ SECOidTag* evOidPolicy);
+
+  OCSPCache mOCSPCache;
 };
 
 void InitCertVerifierLog();

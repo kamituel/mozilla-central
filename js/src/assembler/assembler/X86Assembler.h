@@ -440,6 +440,7 @@ public:
     };
 
     size_t size() const { return m_formatter.size(); }
+    size_t allocSize() const { return m_formatter.allocSize(); }
     unsigned char *buffer() const { return m_formatter.buffer(); }
     bool oom() const { return m_formatter.oom(); }
 
@@ -1201,7 +1202,6 @@ public:
         // Otherwise, [%base+offset] -> %eax.
         spew("cmpxchg    %s, %s0x%x(%s)",
              nameIReg(src), PRETTY_PRINT_OFFSET(offset), nameIReg(base));
-        m_formatter.oneByteOp(PRE_LOCK);
         m_formatter.twoByteOp(OP2_CMPXCHG_GvEw, src, base, offset);
     }
 
@@ -1404,6 +1404,14 @@ public:
             m_formatter.oneByteOp(OP_GROUP1_EvIz, GROUP1_OP_CMP, addr);
             m_formatter.immediate32(imm);
         }
+    }
+
+    void cmpw_rr(RegisterID src, RegisterID dst)
+    {
+        spew("cmpw       %s, %s",
+             nameIReg(2, src), nameIReg(2, dst));
+        m_formatter.prefix(PRE_OPERAND_SIZE);
+        m_formatter.oneByteOp(OP_CMP_EvGv, src, dst);
     }
 
     void cmpw_rm(RegisterID src, int offset, RegisterID base, RegisterID index, int scale)
@@ -2063,6 +2071,13 @@ public:
         m_formatter.twoByteOp(OP2_MOVSX_GvEb, dst, addr);
     }
 #endif
+
+    void movzwl_rr(RegisterID src, RegisterID dst)
+    {
+        spew("movzwl     %s, %s",
+             nameIReg(2, src), nameIReg(4, dst));
+        m_formatter.twoByteOp(OP2_MOVZX_GvEw, dst, src);
+    }
 
     void movzwl_mr(int offset, RegisterID base, RegisterID dst)
     {
@@ -3853,6 +3868,7 @@ private:
         // Administrative methods:
 
         size_t size() const { return m_buffer.size(); }
+        size_t allocSize() const { return m_buffer.allocSize(); }
         unsigned char *buffer() const { return m_buffer.buffer(); }
         bool oom() const { return m_buffer.oom(); }
         bool isAligned(int alignment) const { return m_buffer.isAligned(alignment); }

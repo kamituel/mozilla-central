@@ -22,13 +22,12 @@
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/workers/Workers.h"
 #include "mozilla/ErrorResult.h"
-#include "mozilla/HoldDropJSObjects.h"
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
 #include "nsCycleCollector.h"
 #include "nsIXPConnect.h"
 #include "MainThreadUtils.h"
-#include "nsTraceRefcnt.h"
+#include "nsISupportsImpl.h"
 #include "qsObjectHelper.h"
 #include "xpcpublic.h"
 #include "nsIVariant.h"
@@ -118,6 +117,7 @@ ThrowMethodFailedWithDetails(JSContext* cx, ErrorResult& rv,
   }
   if (rv.IsNotEnoughArgsError()) {
     rv.ReportNotEnoughArgsError(cx, ifaceName, memberName);
+    return false;
   }
   return Throw(cx, rv.ErrorCode());
 }
@@ -262,12 +262,6 @@ IsNotDateOrRegExp(JSContext* cx, JS::Handle<JSObject*> obj)
 {
   MOZ_ASSERT(obj);
   return !JS_ObjectIsDate(cx, obj) && !JS_ObjectIsRegExp(cx, obj);
-}
-
-MOZ_ALWAYS_INLINE bool
-IsArrayLike(JSContext* cx, JS::Handle<JSObject*> obj)
-{
-  return IsNotDateOrRegExp(cx, obj);
 }
 
 MOZ_ALWAYS_INLINE bool
@@ -1473,6 +1467,9 @@ WantsQueryInterface
 bool
 ThrowingConstructor(JSContext* cx, unsigned argc, JS::Value* vp);
 
+bool
+ThrowConstructorWithoutNew(JSContext* cx, const char* name);
+
 // vp is allowed to be null; in that case no get will be attempted,
 // and *found will simply indicate whether the property exists.
 bool
@@ -1660,7 +1657,8 @@ public:
 // sequence types.
 template<typename T,
          bool isDictionary=IsBaseOf<DictionaryBase, T>::value,
-         bool isTypedArray=IsBaseOf<AllTypedArraysBase, T>::value>
+         bool isTypedArray=IsBaseOf<AllTypedArraysBase, T>::value,
+         bool isOwningUnion=IsBaseOf<AllOwningUnionBase, T>::value>
 class SequenceTracer
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
@@ -1668,7 +1666,7 @@ class SequenceTracer
 
 // sequence<object> or sequence<object?>
 template<>
-class SequenceTracer<JSObject*, false, false>
+class SequenceTracer<JSObject*, false, false, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1682,7 +1680,7 @@ public:
 
 // sequence<any>
 template<>
-class SequenceTracer<JS::Value, false, false>
+class SequenceTracer<JS::Value, false, false, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1696,7 +1694,7 @@ public:
 
 // sequence<sequence<T>>
 template<typename T>
-class SequenceTracer<Sequence<T>, false, false>
+class SequenceTracer<Sequence<T>, false, false, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1710,7 +1708,7 @@ public:
 
 // sequence<sequence<T>> as return value
 template<typename T>
-class SequenceTracer<nsTArray<T>, false, false>
+class SequenceTracer<nsTArray<T>, false, false, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1724,7 +1722,7 @@ public:
 
 // sequence<someDictionary>
 template<typename T>
-class SequenceTracer<T, true, false>
+class SequenceTracer<T, true, false, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1738,7 +1736,7 @@ public:
 
 // sequence<SomeTypedArray>
 template<typename T>
-class SequenceTracer<T, false, true>
+class SequenceTracer<T, false, true, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1750,9 +1748,23 @@ public:
   }
 };
 
+// sequence<SomeOwningUnion>
+template<typename T>
+class SequenceTracer<T, false, false, true>
+{
+  explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
+
+public:
+  static void TraceSequence(JSTracer* trc, T* arrayp, T* end) {
+    for (; arrayp != end; ++arrayp) {
+      arrayp->TraceUnion(trc);
+    }
+  }
+};
+
 // sequence<T?> with T? being a Nullable<T>
 template<typename T>
-class SequenceTracer<Nullable<T>, false, false>
+class SequenceTracer<Nullable<T>, false, false, false>
 {
   explicit SequenceTracer() MOZ_DELETE; // Should never be instantiated
 
@@ -1955,14 +1967,12 @@ extern NativePropertyHooks sWorkerNativePropertyHooks;
 // the real JSNative in the mNative member of a JSNativeHolder in the
 // CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT slot of the JSFunction object for a
 // specific interface object. We also store the NativeProperties in the
-// JSNativeHolder. The CONSTRUCTOR_XRAY_EXPANDO_SLOT is used to store the
-// expando chain of the Xray for the interface object.
+// JSNativeHolder.
 // Note that some interface objects are not yet a JSFunction but a normal
 // JSObject with a DOMJSClass, those do not use these slots.
 
 enum {
-  CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT = 0,
-  CONSTRUCTOR_XRAY_EXPANDO_SLOT
+  CONSTRUCTOR_NATIVE_HOLDER_RESERVED_SLOT = 0
 };
 
 bool
@@ -2006,11 +2016,6 @@ inline void
 MustInheritFromNonRefcountedDOMObject(NonRefcountedDOMObject*)
 {
 }
-
-// Set the chain of expando objects for various consumers of the given object.
-// For Paris Bindings only. See the relevant infrastructure in XrayWrapper.cpp.
-JSObject* GetXrayExpandoChain(JSObject *obj);
-void SetXrayExpandoChain(JSObject *obj, JSObject *chain);
 
 /**
  * This creates a JSString containing the value that the toString function for
@@ -2434,7 +2439,9 @@ CreateGlobal(JSContext* aCx, T* aObject, nsWrapperCache* aCache,
     return nullptr;
   }
 
-  mozilla::HoldJSObjects(aObject);
+  MOZ_ALWAYS_TRUE(TryPreserveWrapper(global));
+
+  MOZ_ASSERT(UnwrapDOMObjectToISupports(global));
 
   return global;
 }

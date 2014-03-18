@@ -28,6 +28,10 @@ function newUint8Worker() {
     index += offset;
   };
 
+  context.Buf.getReadAvailable = function() {
+    return buf.length - index;
+  };
+
   worker.debug = do_print;
 
   return worker;
@@ -1680,7 +1684,7 @@ add_test(function test_update_icc_contact() {
   let contactHelper = context.ICCContactHelper;
   let ril = context.RIL;
 
-  function do_test(aSimType, aContactType, aContact, aPin2, aFileType, aEnhancedPhoneBook) {
+  function do_test(aSimType, aContactType, aContact, aPin2, aFileType, aHaveIapIndex, aEnhancedPhoneBook) {
     ril.appType = aSimType;
     ril._isCdma = (aSimType === CARD_APPTYPE_RUIM);
     ril.iccInfoPrivate.cst = (aEnhancedPhoneBook) ? [0x0, 0x0C, 0x0, 0x0, 0x0]
@@ -1725,7 +1729,14 @@ add_test(function test_update_icc_contact() {
     recordHelper.readIAP = function(fileId, recordNumber, onsuccess, onerror) {
       do_check_eq(fileId, IAP_FILE_ID);
       do_check_eq(recordNumber, ADN_RECORD_ID);
-      onsuccess([EMAIL_RECORD_ID, ANR0_RECORD_ID]);
+      onsuccess((aHaveIapIndex) ? [EMAIL_RECORD_ID, ANR0_RECORD_ID]
+                                : [0xff, 0xff]);
+    };
+
+    recordHelper.updateIAP = function(fileId, recordNumber, iap, onsuccess, onerror) {
+      do_check_eq(fileId, IAP_FILE_ID);
+      do_check_eq(recordNumber, ADN_RECORD_ID);
+      onsuccess();
     };
 
     recordHelper.updateEmail = function(pbr, recordNumber, email, adnRecordId, onsuccess, onerror) {
@@ -1752,16 +1763,28 @@ add_test(function test_update_icc_contact() {
       onsuccess();
     };
 
+    recordHelper.findFreeRecordId = function(fileId, onsuccess, onerror) {
+      let recordId = 0;
+      if (fileId === EMAIL_FILE_ID) {
+        recordId = EMAIL_RECORD_ID;
+      } else if (fileId === ANR0_FILE_ID) {
+        recordId = ANR0_RECORD_ID;
+      }
+      onsuccess(recordId);
+    };
+
+    let isSuccess = false;
     let onsuccess = function onsuccess() {
       do_print("updateICCContact success");
+      isSuccess = true;
     };
 
     let onerror = function onerror(errorMsg) {
       do_print("updateICCContact failed: " + errorMsg);
-      do_check_true(false);
     };
 
     contactHelper.updateICCContact(aSimType, aContactType, aContact, aPin2, onsuccess, onerror);
+    do_check_true(isSuccess);
   }
 
   let contacts = [
@@ -1779,6 +1802,22 @@ add_test(function test_update_icc_contact() {
       recordId: ADN_RECORD_ID,
       alphaId:  "test2",
       number:   "123456",
+    },
+    // a contact with email but no anr.
+    {
+      pbrIndex: 0,
+      recordId: ADN_RECORD_ID,
+      alphaId:  "test3",
+      number:   "123456",
+      email:    "test@mail.com"
+    },
+    // a contact with anr but no email.
+    {
+      pbrIndex: 0,
+      recordId: ADN_RECORD_ID,
+      alphaId:  "test4",
+      number:   "123456",
+      anr:      ["+654321"]
     }];
 
   for (let i = 0; i < contacts.length; i++) {
@@ -1793,7 +1832,8 @@ add_test(function test_update_icc_contact() {
     // USIM
     do_print("Test update USIM adn contacts");
     do_test(CARD_APPTYPE_USIM, "adn", contact, null, ICC_USIM_TYPE1_TAG);
-    do_test(CARD_APPTYPE_USIM, "adn", contact, null, ICC_USIM_TYPE2_TAG);
+    do_test(CARD_APPTYPE_USIM, "adn", contact, null, ICC_USIM_TYPE2_TAG, true);
+    do_test(CARD_APPTYPE_USIM, "adn", contact, null, ICC_USIM_TYPE2_TAG, false);
 
     do_print("Test update USIM fdn contacts");
     do_test(CARD_APPTYPE_USIM, "fdn", contact, "1234");
@@ -1807,8 +1847,9 @@ add_test(function test_update_icc_contact() {
 
     // RUIM with enhanced phone book
     do_print("Test update RUIM adn contacts with enhanced phone book");
-    do_test(CARD_APPTYPE_RUIM, "adn", contact, null, ICC_USIM_TYPE1_TAG, true);
-    do_test(CARD_APPTYPE_RUIM, "adn", contact, null, ICC_USIM_TYPE2_TAG, true);
+    do_test(CARD_APPTYPE_RUIM, "adn", contact, null, ICC_USIM_TYPE1_TAG, null, true);
+    do_test(CARD_APPTYPE_RUIM, "adn", contact, null, ICC_USIM_TYPE2_TAG, true, true);
+    do_test(CARD_APPTYPE_RUIM, "adn", contact, null, ICC_USIM_TYPE2_TAG, false, true);
 
     do_print("Test update RUIM fdn contacts with enhanced phone book");
     do_test(CARD_APPTYPE_RUIM, "fdn", contact, "1234", null, true);
@@ -2102,6 +2143,34 @@ add_test(function test_error_message_update_icc_contact() {
   run_next_test();
 });
 
+add_test(function test_process_icc_io_error() {
+  let worker = newUint8Worker();
+  let context = worker.ContextPool._contexts[0];
+  let ioHelper = context.ICCIOHelper;
+
+  function do_test(errorCode, expectedErrorMsg) {
+    let called = false;
+    function errorCb(errorMsg) {
+      called = true;
+      do_check_eq(errorMsg, expectedErrorMsg);
+    }
+
+    ioHelper.processICCIOError({rilRequestError: errorCode,
+                                fileId: 0xffff,
+                                command: 0xff,
+                                sw1: 0xff,
+                                sw2: 0xff,
+                                onerror: errorCb});
+    do_check_true(called);
+  }
+
+  for (let i = 0; i < ERROR_REJECTED_BY_REMOTE + 1; i++) {
+    do_test(i, RIL_ERROR_TO_GECKO_ERROR[i]);
+  }
+
+  run_next_test();
+});
+
 add_test(function test_personalization_state() {
   let worker = newUint8Worker();
   let context = worker.ContextPool._contexts[0];
@@ -2109,10 +2178,11 @@ add_test(function test_personalization_state() {
 
   context.ICCRecordHelper.readICCID = function fakeReadICCID() {};
 
-  function testPersonalization(cardPersoState, geckoCardState) {
+  function testPersonalization(isCdma, cardPersoState, geckoCardState) {
     let iccStatus = {
       cardState: CARD_STATE_PRESENT,
-      gsmUmtsSubscriptionAppIndex: 0,
+      gsmUmtsSubscriptionAppIndex: (!isCdma) ? 0 : -1,
+      cdmaSubscriptionAppIndex: (isCdma) ? 0 : -1,
       apps: [
         {
           app_state: CARD_APPSTATE_SUBSCRIPTION_PERSO,
@@ -2120,24 +2190,52 @@ add_test(function test_personalization_state() {
         }],
     };
 
+    ril._isCdma = isCdma;
     ril._processICCStatus(iccStatus);
     do_check_eq(ril.cardState, geckoCardState);
   }
 
-  testPersonalization(CARD_PERSOSUBSTATE_SIM_NETWORK,
+  // Test GSM personalization state.
+  testPersonalization(false, CARD_PERSOSUBSTATE_SIM_NETWORK,
                       GECKO_CARDSTATE_NETWORK_LOCKED);
-  testPersonalization(CARD_PERSOSUBSTATE_SIM_CORPORATE,
+  testPersonalization(false, CARD_PERSOSUBSTATE_SIM_CORPORATE,
                       GECKO_CARDSTATE_CORPORATE_LOCKED);
-  testPersonalization(CARD_PERSOSUBSTATE_SIM_SERVICE_PROVIDER,
+  testPersonalization(false, CARD_PERSOSUBSTATE_SIM_SERVICE_PROVIDER,
                       GECKO_CARDSTATE_SERVICE_PROVIDER_LOCKED);
-  testPersonalization(CARD_PERSOSUBSTATE_SIM_NETWORK_PUK,
+  testPersonalization(false, CARD_PERSOSUBSTATE_SIM_NETWORK_PUK,
                       GECKO_CARDSTATE_NETWORK_PUK_REQUIRED);
-  testPersonalization(CARD_PERSOSUBSTATE_SIM_CORPORATE_PUK,
+  testPersonalization(false, CARD_PERSOSUBSTATE_SIM_CORPORATE_PUK,
                       GECKO_CARDSTATE_CORPORATE_PUK_REQUIRED);
-  testPersonalization(CARD_PERSOSUBSTATE_SIM_SERVICE_PROVIDER_PUK,
+  testPersonalization(false, CARD_PERSOSUBSTATE_SIM_SERVICE_PROVIDER_PUK,
                       GECKO_CARDSTATE_SERVICE_PROVIDER_PUK_REQUIRED);
-  testPersonalization(CARD_PERSOSUBSTATE_READY,
+  testPersonalization(false, CARD_PERSOSUBSTATE_READY,
                       GECKO_CARDSTATE_PERSONALIZATION_READY);
+
+  // Test CDMA personalization state.
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_NETWORK1,
+                      GECKO_CARDSTATE_NETWORK1_LOCKED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_NETWORK2,
+                      GECKO_CARDSTATE_NETWORK2_LOCKED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_HRPD,
+                      GECKO_CARDSTATE_HRPD_NETWORK_LOCKED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_CORPORATE,
+                      GECKO_CARDSTATE_RUIM_CORPORATE_LOCKED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_SERVICE_PROVIDER,
+                      GECKO_CARDSTATE_RUIM_SERVICE_PROVIDER_LOCKED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_RUIM,
+                      GECKO_CARDSTATE_RUIM_LOCKED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_NETWORK1_PUK,
+                      GECKO_CARDSTATE_NETWORK1_PUK_REQUIRED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_NETWORK2_PUK,
+                      GECKO_CARDSTATE_NETWORK2_PUK_REQUIRED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_HRPD_PUK,
+                      GECKO_CARDSTATE_HRPD_NETWORK_PUK_REQUIRED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_CORPORATE_PUK,
+                      GECKO_CARDSTATE_RUIM_CORPORATE_PUK_REQUIRED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_SERVICE_PROVIDER_PUK,
+                      GECKO_CARDSTATE_RUIM_SERVICE_PROVIDER_PUK_REQUIRED);
+  testPersonalization(true, CARD_PERSOSUBSTATE_RUIM_RUIM_PUK,
+                      GECKO_CARDSTATE_RUIM_PUK_REQUIRED);
 
   run_next_test();
 });
@@ -2296,11 +2394,21 @@ add_test(function test_unlock_card_lock_corporateLocked() {
 
   let GECKO_CARDLOCK_TO_PASSWORD_TYPE = {};
   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK] = "pin";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK1] = "pin";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK2] = "pin";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_HNCK] = "pin";
   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_CCK] = "pin";
   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_SPCK] = "pin";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_RCCK] = "pin";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_RSPCK] = "pin";
   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK_PUK] = "puk";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK1_PUK] = "puk";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_NCK2_PUK] = "puk";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_HNCK_PUK] = "puk";
   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_CCK_PUK] = "puk";
   GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_SPCK_PUK] = "puk";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_RCCK_PUK] = "puk";
+  GECKO_CARDLOCK_TO_PASSWORD_TYPE[GECKO_CARDLOCK_RSPCK_PUK] = "puk";
 
   function do_test(aLock, aPassword) {
     buf.sendParcel = function fakeSendParcel () {
@@ -2324,11 +2432,21 @@ add_test(function test_unlock_card_lock_corporateLocked() {
   }
 
   do_test(GECKO_CARDLOCK_NCK, pin);
+  do_test(GECKO_CARDLOCK_NCK1, pin);
+  do_test(GECKO_CARDLOCK_NCK2, pin);
+  do_test(GECKO_CARDLOCK_HNCK, pin);
   do_test(GECKO_CARDLOCK_CCK, pin);
   do_test(GECKO_CARDLOCK_SPCK, pin);
+  do_test(GECKO_CARDLOCK_RCCK, pin);
+  do_test(GECKO_CARDLOCK_RSPCK, pin);
   do_test(GECKO_CARDLOCK_NCK_PUK, puk);
+  do_test(GECKO_CARDLOCK_NCK1_PUK, puk);
+  do_test(GECKO_CARDLOCK_NCK2_PUK, puk);
+  do_test(GECKO_CARDLOCK_HNCK_PUK, puk);
   do_test(GECKO_CARDLOCK_CCK_PUK, puk);
   do_test(GECKO_CARDLOCK_SPCK_PUK, puk);
+  do_test(GECKO_CARDLOCK_RCCK_PUK, puk);
+  do_test(GECKO_CARDLOCK_RSPCK_PUK, puk);
 
   run_next_test();
 });
@@ -2861,7 +2979,7 @@ add_test(function test_read_new_sms_on_sim() {
     do_check_eq("sms-received", postedMessage.rilMessageType);
     do_check_eq("+0123456789", postedMessage.SMSC);
     do_check_eq("+9876543210", postedMessage.sender);
-    do_check_eq("How are you?", postedMessage.fullBody);
+    do_check_eq("How are you?", postedMessage.body);
   }
 
   do_test();
@@ -3016,6 +3134,54 @@ add_test(function test_icc_io_get_response_for_linear_fixed_structure() {
     do_check_eq(options.recordSize, 0x1A);
     do_check_eq(options.totalRecords, 0x01);
   }
+
+  run_next_test();
+});
+
+/**
+ * Verify reading EF_ICCID.
+ */
+add_test(function test_handling_iccid() {
+  let worker = newUint8Worker();
+  let context = worker.ContextPool._contexts[0];
+  let record = context.ICCRecordHelper;
+  let helper = context.GsmPDUHelper;
+  let ril = context.RIL;
+  let buf = context.Buf;
+  let io = context.ICCIOHelper;
+
+  ril.reportStkServiceIsRunning = function fakeReportStkServiceIsRunning() {
+  };
+
+  function do_test(rawICCID, expectedICCID) {
+    io.loadTransparentEF = function fakeLoadTransparentEF(options) {
+      // Write data size
+      buf.writeInt32(rawICCID.length);
+
+      // Write data
+      for (let i = 0; i < rawICCID.length; i += 2) {
+        helper.writeHexOctet(parseInt(rawICCID.substr(i, 2), 16));
+      }
+
+      // Write string delimiter
+      buf.writeStringDelimiter(rawICCID.length);
+
+      if (options.callback) {
+        options.callback(options);
+      }
+    };
+
+    record.readICCID();
+
+    do_check_eq(ril.iccInfo.iccid, expectedICCID);
+  }
+
+  // Invalid char at high nibbile + low nibbile contains 0xF.
+  do_test("9868002E90909F001519", "89860020909");
+  // Invalid char at low nibbile.
+  do_test("986800E2909090001519", "8986002090909005191");
+  // Valid ICCID.
+  do_test("98101430121181157002", "89014103211118510720");
 
   run_next_test();
 });

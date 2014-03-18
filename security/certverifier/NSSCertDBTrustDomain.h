@@ -19,6 +19,8 @@ void DisableMD5();
 
 extern const char BUILTIN_ROOTS_MODULE_DEFAULT_NAME[];
 
+void PORT_Free_string(char* str);
+
 // The dir parameter is the path to the directory containing the NSS builtin
 // roots module. Usually this is the same as the path to the other NSS shared
 // libraries. If it is null then the (library) path will be searched.
@@ -47,9 +49,15 @@ class NSSCertDBTrustDomain : public insanity::pkix::TrustDomain
 {
 
 public:
-  NSSCertDBTrustDomain(SECTrustType certDBTrustType,
-                       bool ocspDownloadEnabled, bool ocspStrict,
-                       void* pinArg);
+  enum OCSPFetching {
+    NeverFetchOCSP = 0,
+    FetchOCSPForDVSoftFail = 1,
+    FetchOCSPForDVHardFail = 2,
+    FetchOCSPForEV = 3,
+    LocalOnlyOCSPForEV = 4,
+  };
+  NSSCertDBTrustDomain(SECTrustType certDBTrustType, OCSPFetching ocspFetching,
+                       OCSPCache& ocspCache, void* pinArg);
 
   virtual SECStatus FindPotentialIssuers(
                         const SECItem* encodedIssuerName,
@@ -57,6 +65,7 @@ public:
                 /*out*/ insanity::pkix::ScopedCERTCertList& results);
 
   virtual SECStatus GetCertTrust(insanity::pkix::EndEntityOrCA endEntityOrCA,
+                                 SECOidTag policy,
                                  const CERTCertificate* candidateCert,
                          /*out*/ TrustLevel* trustLevel);
 
@@ -70,9 +79,13 @@ public:
                        /*optional*/ const SECItem* stapledOCSPResponse);
 
 private:
+  SECStatus VerifyAndMaybeCacheEncodedOCSPResponse(
+    const CERTCertificate* cert, CERTCertificate* issuerCert, PRTime time,
+    const SECItem* encodedResponse);
+
   const SECTrustType mCertDBTrustType;
-  const bool mOCSPDownloadEnabled;
-  const bool mOCSPStrict;
+  const OCSPFetching mOCSPFetching;
+  OCSPCache& mOCSPCache; // non-owning!
   void* mPinArg; // non-owning!
 };
 

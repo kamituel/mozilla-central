@@ -10,11 +10,19 @@ let {console} = Cu.import("resource://gre/modules/devtools/Console.jsm", {});
 let promise = devtools.require("sdk/core/promise");
 let {getInplaceEditorForSpan: inplaceEditor} = devtools.require("devtools/shared/inplace-editor");
 
+//Services.prefs.setBoolPref("devtools.dump.emit", true);
+
+gDevTools.testing = true;
+SimpleTest.registerCleanupFunction(() => {
+  gDevTools.testing = false;
+});
+
 // Clear preferences that may be set during the course of tests.
 function clearUserPrefs() {
   Services.prefs.clearUserPref("devtools.inspector.htmlPanelOpen");
   Services.prefs.clearUserPref("devtools.inspector.sidebarOpen");
   Services.prefs.clearUserPref("devtools.inspector.activeSidebar");
+  Services.prefs.clearUserPref("devtools.dump.emit");
 }
 
 registerCleanupFunction(clearUserPrefs);
@@ -68,7 +76,6 @@ function openInspector() {
 function getContainerForRawNode(markupView, rawNode) {
   let front = markupView.walker.frontForRawNode(rawNode);
   let container = markupView.getContainer(front);
-  ok(container, "A markup-container object was found");
   return container;
 }
 
@@ -118,7 +125,7 @@ function hoverContainer(nodeOrSelector, inspector) {
   info("Hovering over the markup-container for node " + nodeOrSelector);
   let highlit = inspector.toolbox.once("node-highlight");
   let container = getContainerForRawNode(inspector.markup, getNode(nodeOrSelector));
-  EventUtils.synthesizeMouse(container.tagLine, 2, 2, {type: "mousemove"},
+  EventUtils.synthesizeMouseAtCenter(container.tagLine, {type: "mousemove"},
     inspector.markup.doc.defaultView);
   return highlit;
 }
@@ -146,8 +153,9 @@ function clickContainer(nodeOrSelector, inspector) {
  * @return {Boolean}
  */
 function isHighlighterVisible() {
-  let outline = gBrowser.selectedBrowser.parentNode.querySelector(".highlighter-container .highlighter-outline");
-  return outline && !outline.hasAttribute("hidden");
+  let highlighter = gBrowser.selectedBrowser.parentNode
+                            .querySelector(".highlighter-container .box-model-root");
+  return highlighter && !highlighter.hasAttribute("hidden");
 }
 
 /**
@@ -162,7 +170,7 @@ function mouseLeaveMarkupView(inspector) {
   // Find another element to mouseover over in order to leave the markup-view
   let btn = inspector.toolbox.doc.querySelector(".toolbox-dock-button");
 
-  EventUtils.synthesizeMouse(btn, 2, 2, {type: "mousemove"},
+  EventUtils.synthesizeMouseAtCenter(btn, {type: "mousemove"},
     inspector.toolbox.doc.defaultView);
   executeSoon(def.resolve);
 
@@ -239,4 +247,27 @@ function redoChange(inspector) {
   let mutated = inspector.once("markupmutation");
   inspector.markup.undo.redo();
   return mutated;
+}
+
+/**
+ * Get the selector-search input box from the inspector panel
+ * @return {DOMNode}
+ */
+function getSelectorSearchBox(inspector) {
+  return inspector.panelWin.document.getElementById("inspector-searchbox");
+}
+
+/**
+ * Using the inspector panel's selector search box, search for a given selector.
+ * The selector input string will be entered in the input field and the <ENTER>
+ * keypress will be simulated.
+ * This function won't wait for any events and is not async. It's up to callers
+ * to subscribe to events and react accordingly.
+ */
+function searchUsingSelectorSearch(selector, inspector) {
+  info("Entering \"" + selector + "\" into the selector-search input field");
+  let field = getSelectorSearchBox(inspector);
+  field.focus();
+  field.value = selector;
+  EventUtils.sendKey("return", inspector.panelWin);
 }

@@ -58,6 +58,7 @@ Cu.import("resource://gre/modules/osfile/_PromiseWorker.jsm", this);
 Cu.import("resource://gre/modules/Services.jsm", this);
 Cu.import("resource://gre/modules/TelemetryStopwatch.jsm", this);
 Cu.import("resource://gre/modules/AsyncShutdown.jsm", this);
+let Native = Cu.import("resource://gre/modules/osfile/osfile_native.jsm", {});
 
 /**
  * Constructors for decoding standard exceptions
@@ -107,7 +108,7 @@ function lazyPathGetter(constProp, dirKey) {
     }
 
     return path;
-  }
+  };
 }
 
 for (let [constProp, dirKey] of [
@@ -156,16 +157,17 @@ let Scheduler = {
   queue: Promise.resolve(),
 
   /**
-   * The latest message sent and still waiting for a reply. This
-   * field is stored only in DEBUG builds, to avoid hoarding memory in
-   * release builds.
+   * The latest message sent and still waiting for a reply. In DEBUG
+   * builds, the entire message is stored, which may be memory-consuming.
+   * In non-DEBUG builds, only the method name is stored.
    */
   latestSent: undefined,
 
   /**
    * The latest reply received, or null if we are waiting for a reply.
-   * This field is stored only in DEBUG builds, to avoid hoarding
-   * memory in release builds.
+   * In DEBUG builds, the entire response is stored, which may be
+   * memory-consuming.  In non-DEBUG builds, only exceptions and
+   * method names are stored.
    */
   latestReceived: undefined,
 
@@ -241,18 +243,22 @@ let Scheduler = {
       options = methodArgs[methodArgs.length - 1];
     }
     return this.push(() => Task.spawn(function*() {
+      Scheduler.latestReceived = null;
       if (OS.Constants.Sys.DEBUG) {
         // Update possibly memory-expensive debugging information
-        Scheduler.latestReceived = null;
-        Scheduler.latestSent = [method, ...args];
+        Scheduler.latestSent = [Date.now(), method, ...args];
+      } else {
+        Scheduler.latestSent = [Date.now(), method];
       }
       let data;
       let reply;
+      let isError = false;
       try {
         data = yield worker.post(method, ...args);
         reply = data;
       } catch (error if error instanceof PromiseWorker.WorkerError) {
         reply = error;
+        isError = true;
         throw EXCEPTION_CONSTRUCTORS[error.data.exn || "OSError"](error.data);
       } catch (error if error instanceof ErrorEvent) {
         reply = error;
@@ -260,12 +266,17 @@ let Scheduler = {
         if (message == "uncaught exception: [object StopIteration]") {
           throw StopIteration;
         }
+        isError = true;
         throw new Error(message, error.filename, error.lineno);
       } finally {
+        Scheduler.latestSent = Scheduler.latestSent.slice(0, 2);
         if (OS.Constants.Sys.DEBUG) {
           // Update possibly memory-expensive debugging information
-          Scheduler.latestSent = null;
-          Scheduler.latestReceived = reply;
+          Scheduler.latestReceived = [Date.now(), reply];
+        } else if (isError) {
+          Scheduler.latestReceived = [Date.now(), reply.message, reply.fileName, reply.lineNumber];
+        } else {
+          Scheduler.latestReceived = [Date.now()];
         }
         if (firstLaunch) {
           Scheduler._updateTelemetry();
@@ -338,7 +349,7 @@ const PREF_OSFILE_LOG_REDIRECT = "toolkit.osfile.log.redirect";
  * @param bool oldPref
  *        An optional value that the DEBUG flag was set to previously.
  */
-let readDebugPref = function readDebugPref(prefName, oldPref = false) {
+function readDebugPref(prefName, oldPref = false) {
   let pref = oldPref;
   try {
     pref = Services.prefs.getBoolPref(prefName);
@@ -368,6 +379,19 @@ Services.prefs.addObserver(PREF_OSFILE_LOG_REDIRECT,
     SharedAll.Config.TEST = readDebugPref(PREF_OSFILE_LOG_REDIRECT, OS.Shared.TEST);
   }, false);
 SharedAll.Config.TEST = readDebugPref(PREF_OSFILE_LOG_REDIRECT, false);
+
+
+/**
+ * If |true|, use the native implementaiton of OS.File methods
+ * whenever possible. Otherwise, force the use of the JS version.
+ */
+let nativeWheneverAvailable = true;
+const PREF_OSFILE_NATIVE = "toolkit.osfile.native";
+Services.prefs.addObserver(PREF_OSFILE_NATIVE,
+  function prefObserver(aSubject, aTopic, aData) {
+    nativeWheneverAvailable = readDebugPref(PREF_OSFILE_NATIVE, nativeWheneverAvailable);
+  }, false);
+
 
 // Update worker's DEBUG flag if it's true.
 // Don't start the worker just for this, though.
@@ -903,12 +927,32 @@ File.makeDir = function makeDir(path, options) {
  * read from the file.
  */
 File.read = function read(path, bytes, options = {}) {
-  let promise = Scheduler.post("read",
-    [Type.path.toMsg(path), bytes, options], path);
-  return promise.then(
-    function onSuccess(data) {
-      return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
-    });
+  if (typeof bytes == "object") {
+    // Passing |bytes| as an argument is deprecated.
+    // We should now be passing it as a field of |options|.
+    options = bytes || {};
+  } else {
+    options = clone(options, ["outExecutionDuration"]);
+    if (typeof bytes != "undefined") {
+      options.bytes = bytes;
+    }
+  }
+
+  if (options.compression || !nativeWheneverAvailable) {
+    // We need to use the JS implementation.
+    let promise = Scheduler.post("read",
+      [Type.path.toMsg(path), bytes, options], path);
+    return promise.then(
+      function onSuccess(data) {
+        if (typeof data == "string") {
+          return data;
+        }
+        return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+      });
+  }
+
+  // Otherwise, use the native implementation.
+  return Scheduler.push(() => Native.read(path, options));
 };
 
 /**
@@ -1299,17 +1343,35 @@ this.OS.Path = Path;
 AsyncShutdown.profileBeforeChange.addBlocker(
   "OS.File: flush I/O queued before profile-before-change",
   // Wait until the latest currently enqueued promise is satisfied/rejected
-  (() => Scheduler.queue),
+  function() {
+    let DEBUG = false;
+    try {
+      DEBUG = Services.prefs.getBoolPref("toolkit.osfile.debug.failshutdown");
+    } catch (ex) {
+      // Ignore
+    }
+    if (DEBUG) {
+      // Return a promise that will never be satisfied
+      return Promise.defer().promise;
+    } else {
+      return Scheduler.queue;
+    }
+  },
   function getDetails() {
     let result = {
       launched: Scheduler.launched,
       shutdown: Scheduler.shutdown,
+      worker: !!worker,
       pendingReset: !!Scheduler.resetTimer,
+      latestSent: Scheduler.latestSent,
+      latestReceived: Scheduler.latestReceived
     };
-    if (OS.Constants.Sys.DEBUG) {
-      result.latestSent = Scheduler.latestSent;
-      result.latestReceived - Scheduler.latestReceived;
-    };
+    // Convert dates to strings for better readability
+    for (let key of ["latestSent", "latestReceived"]) {
+      if (result[key] && typeof result[key][0] == "number") {
+        result[key][0] = Date(result[key][0]);
+      }
+    }
     return result;
   }
 );

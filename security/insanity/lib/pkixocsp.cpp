@@ -55,13 +55,23 @@ public:
   Context(TrustDomain& trustDomain,
           const CERTCertificate& cert,
           CERTCertificate& issuerCert,
-          PRTime time)
+          PRTime time,
+          PRTime* thisUpdate,
+          PRTime* validThrough)
     : trustDomain(trustDomain)
     , cert(cert)
     , issuerCert(issuerCert)
     , time(time)
     , certStatus(CertStatus::Unknown)
+    , thisUpdate(thisUpdate)
+    , validThrough(validThrough)
   {
+    if (thisUpdate) {
+      *thisUpdate = 0;
+    }
+    if (validThrough) {
+      *validThrough = 0;
+    }
   }
 
   TrustDomain& trustDomain;
@@ -69,6 +79,8 @@ public:
   CERTCertificate& issuerCert;
   const PRTime time;
   CertStatus certStatus;
+  PRTime* thisUpdate;
+  PRTime* validThrough;
 
 private:
   Context(const Context&); // delete
@@ -115,7 +127,8 @@ CheckOCSPResponseSignerCert(TrustDomain& trustDomain,
   // are validating for should be passed to CheckIssuerIndependentProperties.
   rv = CheckIssuerIndependentProperties(trustDomain, cert, time,
                                         MustBeEndEntity, 0,
-                                        SEC_OID_OCSP_RESPONDER, 0);
+                                        SEC_OID_OCSP_RESPONDER,
+                                        SEC_OID_X509_ANY_POLICY, 0);
   if (rv != Success) {
     return rv;
   }
@@ -302,7 +315,9 @@ SECStatus
 VerifyEncodedOCSPResponse(TrustDomain& trustDomain,
                           const CERTCertificate* cert,
                           CERTCertificate* issuerCert, PRTime time,
-                          const SECItem* encodedResponse)
+                          const SECItem* encodedResponse,
+                          PRTime* thisUpdate,
+                          PRTime* validThrough)
 {
   PR_ASSERT(cert);
   PR_ASSERT(issuerCert);
@@ -318,7 +333,8 @@ VerifyEncodedOCSPResponse(TrustDomain& trustDomain,
     return SECFailure;
   }
 
-  Context context(trustDomain, *cert, *issuerCert, time);
+  Context context(trustDomain, *cert, *issuerCert, time, thisUpdate,
+                  validThrough);
 
   if (der::Nested(input, der::SEQUENCE,
                   bind(OCSPResponse, _1, ref(context))) != der::Success) {
@@ -587,6 +603,11 @@ SingleResponse(der::Input& input, Context& context)
   }
 
   if (!match) {
+    // This response does not reference the certificate we're interested in.
+    // By consuming the rest of our input and returning successfully, we can
+    // continue processing and examine another response that might have what
+    // we want.
+    input.SkipToEnd();
     return der::Success;
   }
 
@@ -683,6 +704,13 @@ SingleResponse(der::Input& input, Context& context)
     }
   }
 
+  if (context.thisUpdate) {
+    *context.thisUpdate = thisUpdate;
+  }
+  if (context.validThrough) {
+    *context.validThrough = notAfter;
+  }
+
   return der::Success;
 }
 
@@ -722,6 +750,10 @@ CertID(der::Input& input, const Context& context, /*out*/ bool& match)
   const CERTCertificate& issuerCert = context.issuerCert;
 
   if (!SECITEM_ItemsAreEqual(&serialNumber, &cert.serialNumber)) {
+    // This does not reference the certificate we're interested in.
+    // Consume the rest of the input and return successfully to
+    // potentially continue processing other responses.
+    input.SkipToEnd();
     return der::Success;
   }
 
@@ -729,6 +761,8 @@ CertID(der::Input& input, const Context& context, /*out*/ bool& match)
 
   SECOidTag hashAlg = SECOID_GetAlgorithmTag(&hashAlgorithm);
   if (hashAlg != SEC_OID_SHA1) {
+    // Again, not interested in this response. Consume input, return success.
+    input.SkipToEnd();
     return der::Success;
   }
 
@@ -745,6 +779,8 @@ CertID(der::Input& input, const Context& context, /*out*/ bool& match)
     return der::Failure;
   }
   if (memcmp(hashBuf, issuerNameHash.data, issuerNameHash.len)) {
+    // Again, not interested in this response. Consume input, return success.
+    input.SkipToEnd();
     return der::Success;
   }
 

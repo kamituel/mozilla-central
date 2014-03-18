@@ -77,6 +77,8 @@ const MIN_PROGRESS_EVENT_DELAY = 1500;
 
 const WEBAPP_RUNTIME = Services.appinfo.ID == "webapprt@mozilla.org";
 
+const chromeWindowType = WEBAPP_RUNTIME ? "webapprt:webapp" : "navigator:browser";
+
 XPCOMUtils.defineLazyGetter(this, "NetUtil", function() {
   Cu.import("resource://gre/modules/NetUtil.jsm");
   return NetUtil;
@@ -133,6 +135,7 @@ this.DOMApplicationRegistry = {
   webapps: { },
   children: [ ],
   allAppsLaunchable: false,
+  _updateHandlers: [ ],
 
   init: function() {
     this.messages = ["Webapps:Install", "Webapps:Uninstall",
@@ -546,43 +549,9 @@ this.DOMApplicationRegistry = {
     }.bind(this)).then(null, Cu.reportError);
   },
 
-#ifdef MOZ_WIDGET_GONK
-  fixIndexedDb: function() {
-    debug("Fixing indexedDb folder names");
-    let idbDir = FileUtils.getDir("indexedDBPDir", ["indexedDB"]);
-
-    if (!idbDir.exists() || !idbDir.isDirectory()) {
-      return;
-    }
-
-    let re = /^(\d+)\+(.*)\+(f|t)$/;
-
-    let entries = idbDir.directoryEntries;
-    while (entries.hasMoreElements()) {
-      let entry = entries.getNext().QueryInterface(Ci.nsIFile);
-      if (!entry.isDirectory()) {
-        continue;
-      }
-
-      let newName = entry.leafName.replace(re, "$1+$3+$2");
-      if (newName != entry.leafName) {
-        try {
-          entry.moveTo(idbDir, newName);
-        } catch(e) { }
-      }
-    }
-  },
-#endif
-
   loadAndUpdateApps: function() {
     return Task.spawn(function() {
       let runUpdate = AppsUtils.isFirstRun(Services.prefs);
-
-#ifdef MOZ_WIDGET_GONK
-      if (runUpdate) {
-        this.fixIndexedDb();
-      }
-#endif
 
       yield this.loadCurrentRegistry();
 
@@ -1230,6 +1199,23 @@ this.DOMApplicationRegistry = {
     });
   },
 
+  registerUpdateHandler: function(aHandler) {
+    this._updateHandlers.push(aHandler);
+  },
+
+  unregisterUpdateHandler: function(aHandler) {
+    let index = this._updateHandlers.indexOf(aHandler);
+    if (index != -1) {
+      this._updateHandlers.splice(index, 1);
+    }
+  },
+
+  notifyUpdateHandlers: function(aApp, aManifest, aZipPath) {
+    for (let updateHandler of this._updateHandlers) {
+      updateHandler(aApp, aManifest, aZipPath);
+    }
+  },
+
   _getAppDir: function(aId) {
     return FileUtils.getDir(DIRECTORY_NAME, ["webapps", aId], true, true);
   },
@@ -1521,6 +1507,13 @@ this.DOMApplicationRegistry = {
         this._saveApps().then(() => {
           // Update the handlers and permissions for this app.
           this.updateAppHandlers(aOldManifest, aData, app);
+
+          this._loadJSONAsync(staged.path).then((aUpdateManifest) => {
+            let appObject = AppsUtils.cloneAppObject(app);
+            appObject.updateManifest = aUpdateManifest;
+            this.notifyUpdateHandlers(appObject, aData, appFile.path);
+          });
+
           if (supportUseCurrentProfile()) {
             PermissionsInstaller.installPermissions(
               { manifest: aData,
@@ -1930,6 +1923,8 @@ this.DOMApplicationRegistry = {
     let manifest;
     if (aNewManifest) {
       this.updateAppHandlers(aOldManifest, aNewManifest, aApp);
+
+      this.notifyUpdateHandlers(AppsUtils.cloneAppObject(aApp), aNewManifest);
 
       // Store the new manifest.
       let dir = this._getAppDir(aId).path;
@@ -2703,7 +2698,7 @@ onInstallSuccessAck: function onInstallSuccessAck(aManifestURL,
   _ensureSufficientStorage: function(aNewApp) {
     let deferred = Promise.defer();
 
-    let navigator = Services.wm.getMostRecentWindow("navigator:browser")
+    let navigator = Services.wm.getMostRecentWindow(chromeWindowType)
                             .navigator;
     let deviceStorage = null;
 

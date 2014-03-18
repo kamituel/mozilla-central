@@ -33,8 +33,8 @@ function onError(e) {
 }
 
 var capabilities = [ 'previewSizes', 'pictureSizes', 'fileFormats', 'maxFocusAreas', 'minExposureCompensation',
-                     'maxExposureCompensation', 'stepExposureCompensation', 'maxMeteringAreas', 'videoSizes', 
-                     'recorderProfiles'];
+                     'maxExposureCompensation', 'stepExposureCompensation', 'maxMeteringAreas', 'videoSizes',
+                     'recorderProfiles', 'zoomRatios', 'isoModes'];
 
 var Camera = {
   cameraObj: null,
@@ -49,6 +49,7 @@ var Camera = {
   _zoomRatios: null,
   _sceneModes: null,
   _focusModes: null,
+  _zoomRatios: null,
   _testsCompleted: 0,
   _shutter: 0,
   _config: {
@@ -66,6 +67,12 @@ var Camera = {
   },
   setFocus: function camera_setfocus(mode) {
     this.cameraObj.focus = mode;
+  },
+  setZoom: function camera_setZoom(zoom) {
+    this.cameraObj.zoom = zoom;
+  },
+  getZoom: function camera_getZoom() {
+    return this.cameraObj.zoom;
   },
   getFileFormats: function camera_formats() {
     this._fileFormats = this.cameraObj.capabilities.fileFormats;
@@ -90,6 +97,9 @@ var Camera = {
   },
   getPreviewSizes: function camera_preview() {
     this._previewSizes = this.cameraObj.capabilities.previewSizes;
+  },
+  getZoomRatios: function camera_preview() {
+    this._zoomRatios = this.cameraObj.capabilities.zoomRatios;
   },
   takePictureSuccess: function taken_foto(blob) {
     var img = new Image();
@@ -137,9 +147,22 @@ var Camera = {
     Camera.getPreviewSizes();
     Camera.getFileFormats();
     Camera.getFocusModes();
+    Camera.getZoomRatios();
     ok(Camera._previewSizes.length > 0, "previewSizes length = " + Camera._previewSizes.length);
     ok(Camera._pictureSizes.length > 0, "picturesizes length = " + Camera._pictureSizes.length);
     ok(Camera._fileFormats.length > 0, "file formats length = " + Camera._fileFormats.length);
+    ok(camcap.isoModes.length == 0, "ISO modes length = " + camcap.isoModes.length);
+
+    // The emulator doesn't support zoom, so these parameters will be very constrained
+    // For more ambitious tests, see test_camera_fake_parameters.html
+    ok(Camera._zoomRatios.length == 1, "zoom ratios length = " + Camera._zoomRatios.length);
+    ok(Camera.cameraObj.zoom == 1.0, "zoom = " + Camera.cameraObj.zoom);
+    // Test snapping to supported values
+    Camera.cameraObj.zoom = 0.9;
+    ok(Camera.cameraObj.zoom == 1.0, "zoom = " + Camera.cameraObj.zoom);
+    Camera.cameraObj.zoom = 1.1;
+    ok(Camera.cameraObj.zoom == 1.0, "zoom = " + Camera.cameraObj.zoom);
+
     Camera._tests = new Array();
     for (var i in Camera._pictureSizes) {
       for (var l in Camera._fileFormats) {

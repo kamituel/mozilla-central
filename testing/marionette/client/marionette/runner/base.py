@@ -42,10 +42,17 @@ class MarionetteTestResult(unittest._TextTestResult, TestResultCollection):
     def __init__(self, *args, **kwargs):
         self.marionette = kwargs.pop('marionette')
         TestResultCollection.__init__(self, 'MarionetteTest')
-        unittest._TextTestResult.__init__(self, *args, **kwargs)
         self.passed = 0
         self.testsRun = 0
         self.result_modifiers = [] # used by mixins to modify the result
+        pid = kwargs.pop('b2g_pid')
+        if pid:
+            if B2GTestResultMixin not in self.__class__.__bases__:
+                bases = [b for b in self.__class__.__bases__]
+                bases.append(B2GTestResultMixin)
+                self.__class__.__bases__ = tuple(bases)
+            B2GTestResultMixin.__init__(self, b2g_pid=pid)
+        unittest._TextTestResult.__init__(self, *args, **kwargs)
 
     @property
     def skipped(self):
@@ -240,17 +247,30 @@ class MarionetteTextTestRunner(unittest.TextTestRunner):
     def __init__(self, **kwargs):
         self.marionette = kwargs['marionette']
         self.capabilities = kwargs.pop('capabilities')
+        self.pre_run_functions = []
+        self.b2g_pid = None
         del kwargs['marionette']
+
+        if self.capabilities['device'] != 'desktop' and self.capabilities['b2g']:
+            def b2g_pre_run():
+                dm_type = os.environ.get('DM_TRANS', 'adb')
+                if dm_type == 'adb':
+                    self.b2g_pid = get_b2g_pid(get_dm(self.marionette))
+            self.pre_run_functions.append(b2g_pre_run)
+
         unittest.TextTestRunner.__init__(self, **kwargs)
 
     def _makeResult(self):
         return self.resultclass(self.stream,
                                 self.descriptions,
                                 self.verbosity,
-                                marionette=self.marionette)
+                                marionette=self.marionette,
+                                b2g_pid=self.b2g_pid)
 
     def run(self, test):
         "Run the given test case or test suite."
+        for pre_run_func in self.pre_run_functions:
+            pre_run_func()
         result = self._makeResult()
         if hasattr(self, 'failfast'):
             result.failfast = self.failfast
@@ -309,40 +329,6 @@ class MarionetteTextTestRunner(unittest.TextTestRunner):
         else:
             self.stream.write("\n")
         return result
-
-
-class B2GMarionetteTestResult(MarionetteTestResult, B2GTestResultMixin):
-
-    def __init__(self, *args, **kwargs):
-        # stupid hack because _TextTestRunner doesn't accept **kwargs
-        b2g_pid = kwargs.pop('b2g_pid')
-        MarionetteTestResult.__init__(self, *args, **kwargs)
-        kwargs['b2g_pid'] = b2g_pid
-        B2GTestResultMixin.__init__(self, *args, **kwargs)
- 
-
-class B2GMarionetteTextTestRunner(MarionetteTextTestRunner):
-
-    resultclass = B2GMarionetteTestResult
-
-    def __init__(self, **kwargs):
-        MarionetteTextTestRunner.__init__(self, **kwargs)
-        if self.capabilities['device'] != 'desktop':
-            self.resultclass = B2GMarionetteTestResult
-        self.b2g_pid = None
-
-    def _makeResult(self):
-        return self.resultclass(self.stream,
-                                self.descriptions,
-                                self.verbosity,
-                                marionette=self.marionette,
-                                b2g_pid=self.b2g_pid)
-
-    def run(self, test):
-        dm_type = os.environ.get('DM_TRANS', 'adb')
-        if dm_type == 'adb':
-            self.b2g_pid = get_b2g_pid(get_dm(self.marionette))
-        return super(B2GMarionetteTextTestRunner, self).run(test)
 
 
 class BaseMarionetteOptions(OptionParser):
@@ -548,7 +534,6 @@ class BaseMarionetteTestRunner(object):
         self.logger = logger
         self.noWindow = noWindow
         self.httpd = None
-        self.baseurl = None
         self.marionette = None
         self.logcat_dir = logcat_dir
         self.xml_output = xml_output
@@ -634,17 +619,18 @@ class BaseMarionetteTestRunner(object):
         self.todo = 0
         self.failures = []
 
-    def start_httpd(self):
-        host = moznetwork.get_ip()
+    def start_httpd(self, need_external_ip):
+        host = "127.0.0.1"
+        if need_external_ip:
+            host = moznetwork.get_ip()
         self.httpd = MozHttpd(host=host,
                               port=0,
                               docroot=os.path.join(os.path.dirname(os.path.dirname(__file__)), 'www'))
         self.httpd.start()
-        self.baseurl = 'http://%s:%d/' % (host, self.httpd.httpd.server_port)
-        self.logger.info('running webserver on %s' % self.baseurl)
+        self.marionette.baseurl = 'http://%s:%d/' % (host, self.httpd.httpd.server_port)
+        self.logger.info('running webserver on %s' % self.marionette.baseurl)
 
     def start_marionette(self):
-        assert(self.baseurl is not None)
         if self.bin:
             if self.address:
                 host, port = self.address.split(':')
@@ -657,7 +643,6 @@ class BaseMarionetteTestRunner(object):
                                          app_args=self.app_args,
                                          bin=self.bin,
                                          profile=self.profile,
-                                         baseurl=self.baseurl,
                                          timeout=self.timeout,
                                          device_serial=self.device_serial)
         elif self.address:
@@ -668,13 +653,12 @@ class BaseMarionetteTestRunner(object):
                 connection.connect((host,int(port)))
                 connection.close()
             except Exception, e:
-                raise Exception("Could not connect to given marionette host:port: %s" % e)
+                raise Exception("Connection attempt to %s:%s failed with error: %s" %(host,port,e))
             if self.emulator:
                 self.marionette = Marionette.getMarionetteOrExit(
                                              host=host, port=int(port),
                                              connectToRunningEmulator=True,
                                              homedir=self.homedir,
-                                             baseurl=self.baseurl,
                                              logcat_dir=self.logcat_dir,
                                              gecko_path=self.gecko_path,
                                              symbols_path=self.symbols_path,
@@ -683,7 +667,6 @@ class BaseMarionetteTestRunner(object):
             else:
                 self.marionette = Marionette(host=host,
                                              port=int(port),
-                                             baseurl=self.baseurl,
                                              timeout=self.timeout,
                                              device_serial=self.device_serial)
         elif self.emulator:
@@ -693,7 +676,6 @@ class BaseMarionetteTestRunner(object):
                                          emulatorImg=self.emulatorImg,
                                          emulator_res=self.emulator_res,
                                          homedir=self.homedir,
-                                         baseurl=self.baseurl,
                                          noWindow=self.noWindow,
                                          logcat_dir=self.logcat_dir,
                                          gecko_path=self.gecko_path,
@@ -752,10 +734,7 @@ class BaseMarionetteTestRunner(object):
         self.reset_test_stats()
         starttime = datetime.utcnow()
 
-        if not self.httpd:
-            print "starting httpd"
-            self.start_httpd()
-
+        need_external_ip = True
         if not self.marionette:
             self.start_marionette()
             if self.emulator:
@@ -763,9 +742,14 @@ class BaseMarionetteTestRunner(object):
             # Retrieve capabilities for later use
             if not self._capabilities:
                 self.capabilities
+            # if we're working against a desktop version, we usually don't need
+            # an external ip
+            if self._capabilities['device'] == "desktop":
+                need_external_ip = False
 
-        if self.capabilities['device'] != 'desktop':
-            self.textrunnerclass = B2GMarionetteTextTestRunner
+        if not self.httpd:
+            print "starting httpd"
+            self.start_httpd(need_external_ip)
 
         for test in tests:
             self.add_test(test)

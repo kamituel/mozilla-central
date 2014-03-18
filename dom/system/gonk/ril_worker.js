@@ -213,7 +213,6 @@ function RilObject(aContext) {
   this.currentCalls = {};
   this.currentConference = {state: null, participants: {}};
   this.currentDataCalls = {};
-  this._receivedSmsSegmentsMap = {};
   this._pendingSentSmsMap = {};
   this.pendingNetworkType = {};
   this._receivedSmsCbPagesMap = {};
@@ -242,13 +241,6 @@ RilObject.prototype = {
    * Existing data calls.
    */
   currentDataCalls: null,
-
-  /**
-   * Hash map for received multipart sms fragments. Messages are hashed with
-   * its sender address and concatenation reference number. Three additional
-   * attributes `segmentMaxSeq`, `receivedSegments`, `segments` are inserted.
-   */
-  _receivedSmsSegmentsMap: null,
 
   /**
    * Outgoing messages waiting for SMS-STATUS-REPORT.
@@ -378,7 +370,7 @@ RilObject.prototype = {
       this.deactivateDataCall(datacall);
     }
 
-    // Don't clean up this._receivedSmsSegmentsMap or this._pendingSentSmsMap
+    // Don't clean up this._pendingSentSmsMap
     // because on rild restart: we may continue with the pending segments.
 
     /**
@@ -487,15 +479,25 @@ RilObject.prototype = {
         this.enterICCPUK2(options);
         break;
       case GECKO_CARDLOCK_NCK:
-      case GECKO_CARDLOCK_CCK: // Fall through.
-      case GECKO_CARDLOCK_SPCK: {
+      case GECKO_CARDLOCK_NCK1:
+      case GECKO_CARDLOCK_NCK2:
+      case GECKO_CARDLOCK_HNCK:
+      case GECKO_CARDLOCK_CCK:
+      case GECKO_CARDLOCK_SPCK:
+      case GECKO_CARDLOCK_RCCK: // Fall through.
+      case GECKO_CARDLOCK_RSPCK: {
         let type = GECKO_PERSO_LOCK_TO_CARD_PERSO_LOCK[options.lockType];
         this.enterDepersonalization(type, options.pin, options);
         break;
       }
       case GECKO_CARDLOCK_NCK_PUK:
-      case GECKO_CARDLOCK_CCK_PUK: // Fall through.
-      case GECKO_CARDLOCK_SPCK_PUK: {
+      case GECKO_CARDLOCK_NCK1_PUK:
+      case GECKO_CARDLOCK_NCK2_PUK:
+      case GECKO_CARDLOCK_HNCK_PUK:
+      case GECKO_CARDLOCK_CCK_PUK:
+      case GECKO_CARDLOCK_SPCK_PUK:
+      case GECKO_CARDLOCK_RCCK_PUK: // Fall through.
+      case GECKO_CARDLOCK_RSPCK_PUK: {
         let type = GECKO_PERSO_LOCK_TO_CARD_PERSO_LOCK[options.lockType];
         this.enterDepersonalization(type, options.puk, options);
         break;
@@ -1456,14 +1458,19 @@ RilObject.prototype = {
       this.exitEmergencyCbMode();
     }
 
-    options.request = REQUEST_DIAL;
-    this.sendDialRequest(options);
+    if (this._isCdma && Object.keys(this.currentCalls).length == 1) {
+      // Make a Cdma 3way call.
+      options.featureStr = options.number;
+      this.sendCdmaFlashCommand(options);
+    } else {
+      options.request = REQUEST_DIAL;
+      this.sendDialRequest(options);
+    }
   },
 
   dialEmergencyNumber: function(options, onerror) {
     options.request = RILQUIRKS_REQUEST_USE_DIAL_EMERGENCY_CALL ?
                       REQUEST_DIAL_EMERGENCY_CALL : REQUEST_DIAL;
-
     if (this.radioState == GECKO_RADIOSTATE_OFF) {
       if (DEBUG) {
         this.context.debug("Automatically enable radio for an emergency call.");
@@ -1478,7 +1485,13 @@ RilObject.prototype = {
       return;
     }
 
-    this.sendDialRequest(options);
+    if (this._isCdma && Object.keys(this.currentCalls).length == 1) {
+      // Make a Cdma 3way call.
+      options.featureStr = options.number;
+      this.sendCdmaFlashCommand(options);
+    } else {
+      this.sendDialRequest(options);
+    }
   },
 
   sendDialRequest: function(options) {
@@ -1490,6 +1503,15 @@ RilObject.prototype = {
     // TODO Why do we need this extra 0? It was put it in to make this
     // match the format of the binary message.
     Buf.writeInt32(0);
+    Buf.sendParcel();
+  },
+
+  sendCdmaFlashCommand: function(options) {
+    let Buf = this.context.Buf;
+    options.isCdma = true;
+    options.request = REQUEST_CDMA_FLASH;
+    Buf.newParcel(options.request, options);
+    Buf.writeString(options.featureStr);
     Buf.sendParcel();
   },
 
@@ -1608,22 +1630,37 @@ RilObject.prototype = {
 
   holdCall: function(options) {
     let call = this.currentCalls[options.callIndex];
-    if (call && call.state == CALL_STATE_ACTIVE) {
-      let Buf = this.context.Buf;
-      if (this._isCdma) {
-        Buf.newParcel(REQUEST_CDMA_FLASH);
-        Buf.writeString("");
-        Buf.sendParcel();
-      } else {
-        Buf.simpleRequest(REQUEST_SWITCH_HOLDING_AND_ACTIVE);
-      }
+    if (!call) {
+      options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+      options.success = false;
+      this.sendChromeMessage(options);
+      return;
     }
-  },
+
+    let Buf = this.context.Buf;
+    if (this._isCdma) {
+      options.featureStr = "";
+      this.sendCdmaFlashCommand(options);
+    } else if (call.state == CALL_STATE_ACTIVE) {
+      Buf.simpleRequest(REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE, options);
+    }
+ },
 
   resumeCall: function(options) {
     let call = this.currentCalls[options.callIndex];
-    if (call && call.state == CALL_STATE_HOLDING) {
-      this.context.Buf.simpleRequest(REQUEST_SWITCH_HOLDING_AND_ACTIVE);
+    if (!call) {
+      options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+      options.success = false;
+      this.sendChromeMessage(options);
+      return;
+    }
+
+    let Buf = this.context.Buf;
+    if (this._isCdma) {
+      options.featureStr = "";
+      this.sendCdmaFlashCommand(options);
+    } else if (call.state == CALL_STATE_HOLDING) {
+      Buf.simpleRequest(REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE, options);
     }
   },
 
@@ -1631,24 +1668,52 @@ RilObject.prototype = {
   _hasConferenceRequest: false,
 
   conferenceCall: function(options) {
-    this._hasConferenceRequest = true;
-    this.context.Buf.simpleRequest(REQUEST_CONFERENCE, options);
+    let Buf = this.context.Buf;
+    if (this._isCdma) {
+      options.featureStr = "";
+      this.sendCdmaFlashCommand(options);
+    } else {
+      this._hasConferenceRequest = true;
+      Buf.simpleRequest(REQUEST_CONFERENCE, options);
+    }
   },
 
   separateCall: function(options) {
+    let call = this.currentCalls[options.callIndex];
+    if (!call) {
+      options.errorName = "removeError";
+      options.errorMsg = GECKO_ERROR_GENERIC_FAILURE;
+      options.success = false;
+      this.sendChromeMessage(options);
+      return;
+    }
+
     let Buf = this.context.Buf;
-    Buf.newParcel(REQUEST_SEPARATE_CONNECTION, options);
-    Buf.writeInt32(1);
-    Buf.writeInt32(options.callIndex);
-    Buf.sendParcel();
-  },
+    if (this._isCdma) {
+      options.featureStr = "";
+      this.sendCdmaFlashCommand(options);
+    } else {
+      Buf.newParcel(REQUEST_SEPARATE_CONNECTION, options);
+      Buf.writeInt32(1);
+      Buf.writeInt32(options.callIndex);
+      Buf.sendParcel();
+    }
+ },
 
   holdConference: function() {
-    this.context.Buf.simpleRequest(REQUEST_SWITCH_HOLDING_AND_ACTIVE);
+    if (this._isCdma) {
+      return;
+    }
+
+    this.context.Buf.simpleRequest(REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE);
   },
 
   resumeConference: function() {
-    this.context.Buf.simpleRequest(REQUEST_SWITCH_HOLDING_AND_ACTIVE);
+    if (this._isCdma) {
+      return;
+    }
+
+    this.context.Buf.simpleRequest(REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE);
   },
 
   /**
@@ -1739,6 +1804,15 @@ RilObject.prototype = {
     Buf.writeInt32(success ? 0 : 1);
     Buf.writeInt32(cause);
     Buf.sendParcel();
+  },
+
+  /**
+   * Update received MWI into EF_MWIS.
+   */
+  updateMwis: function(options) {
+    if (this.context.ICCUtilsHelper.isICCServiceAvailable("MWIS")) {
+      this.context.SimRecordHelper.updateMWIS(options.mwi);
+    }
   },
 
   setCellBroadcastDisabled: function(options) {
@@ -3889,8 +3963,9 @@ RilObject.prototype = {
       }
       currentDataCall.gw = updatedDataCall.gw;
       if (updatedDataCall.dns) {
-        currentDataCall.dns[0] = updatedDataCall.dns[0];
-        currentDataCall.dns[1] = updatedDataCall.dns[1];
+        currentDataCall.dns = updatedDataCall.dns.slice();
+      } else {
+        currentDataCall.dns = [];
       }
       currentDataCall.rilMessageType = "datacallstatechange";
       this.sendChromeMessage(currentDataCall);
@@ -4322,55 +4397,19 @@ RilObject.prototype = {
   },
 
   /**
-   * Helper for processing multipart SMS.
+   * Helper to delegate the received sms segment to RadioInterface to process.
    *
    * @param message
    *        Received sms message.
    *
-   * @return A failure cause defined in 3GPP 23.040 clause 9.2.3.22.
+   * @return MOZ_FCS_WAIT_FOR_EXPLICIT_ACK
    */
   _processSmsMultipart: function(message) {
-    if (message.header && message.header.segmentMaxSeq &&
-        (message.header.segmentMaxSeq > 1)) {
-      message = this._processReceivedSmsSegment(message);
-    } else {
-      if (message.encoding == PDU_DCS_MSG_CODING_8BITS_ALPHABET) {
-        message.fullData = message.data;
-        delete message.data;
-      } else {
-        message.fullBody = message.body;
-        delete message.body;
-      }
-    }
+    message.rilMessageType = "sms-received";
 
-    if (message) {
-      message.result = PDU_FCS_OK;
-      if (message.messageClass == GECKO_SMS_MESSAGE_CLASSES[PDU_DCS_MSG_CLASS_2]) {
-        // `MS shall ensure that the message has been to the SMS data field in
-        // the (U)SIM before sending an ACK to the SC.`  ~ 3GPP 23.038 clause 4
-        message.result = PDU_FCS_RESERVED;
-      }
+    this.sendChromeMessage(message);
 
-      if (message.messageType == PDU_CDMA_MSG_TYPE_BROADCAST) {
-        message.rilMessageType = "broadcastsms-received";
-      } else {
-        message.rilMessageType = "sms-received";
-      }
-
-      this.sendChromeMessage(message);
-
-      // Update MWI Status into ICC if present.
-      if (message.mwi &&
-          this.context.ICCUtilsHelper.isICCServiceAvailable("MWIS")) {
-        this.context.SimRecordHelper.updateMWIS(message.mwi);
-      }
-
-      // We will acknowledge receipt of the SMS after we try to store it
-      // in the database.
-      return MOZ_FCS_WAIT_FOR_EXPLICIT_ACK;
-    }
-
-    return PDU_FCS_OK;
+    return MOZ_FCS_WAIT_FOR_EXPLICIT_ACK;
   },
 
   /**
@@ -4527,95 +4566,6 @@ RilObject.prototype = {
     message.data = message.data.subarray(index);
 
     return this._processSmsMultipart(message);
-  },
-
-  /**
-   * Helper for processing received multipart SMS.
-   *
-   * @return null for handled segments, and an object containing full message
-   *         body/data once all segments are received.
-   */
-  _processReceivedSmsSegment: function(original) {
-    let hash = original.sender + ":" + original.header.segmentRef;
-    let seq = original.header.segmentSeq;
-
-    let options = this._receivedSmsSegmentsMap[hash];
-    if (!options) {
-      options = original;
-      this._receivedSmsSegmentsMap[hash] = options;
-
-      options.segmentMaxSeq = original.header.segmentMaxSeq;
-      options.receivedSegments = 0;
-      options.segments = [];
-    } else if (options.segments[seq]) {
-      // Duplicated segment?
-      if (DEBUG) {
-        this.context.debug("Got duplicated segment no." + seq +
-                           " of a multipart SMS: " + JSON.stringify(original));
-      }
-      return null;
-    }
-
-    if (options.encoding == PDU_DCS_MSG_CODING_8BITS_ALPHABET) {
-      options.segments[seq] = original.data;
-      delete original.data;
-    } else {
-      options.segments[seq] = original.body;
-      delete original.body;
-    }
-    options.receivedSegments++;
-
-    // The port information is only available in 1st segment for CDMA WAP Push.
-    // If the segments of a WAP Push are not received in sequence
-    // (e.g., SMS with seq == 1 is not the 1st segment received by the device),
-    // we have to retrieve the port information from 1st segment and
-    // save it into the cached options.header.
-    if (original.teleservice === PDU_CDMA_MSG_TELESERIVCIE_ID_WAP && seq === 1) {
-      if (!options.header.originatorPort && original.header.originatorPort) {
-        options.header.originatorPort = original.header.originatorPort;
-      }
-
-      if (!options.header.destinationPort && original.header.destinationPort) {
-        options.header.destinationPort = original.header.destinationPort;
-      }
-    }
-
-    if (options.receivedSegments < options.segmentMaxSeq) {
-      if (DEBUG) {
-        this.context.debug("Got segment no." + seq + " of a multipart SMS: " +
-                           JSON.stringify(options));
-      }
-      return null;
-    }
-
-    // Remove from map
-    delete this._receivedSmsSegmentsMap[hash];
-
-    // Rebuild full body
-    if (options.encoding == PDU_DCS_MSG_CODING_8BITS_ALPHABET) {
-      // Uint8Array doesn't have `concat`, so we have to merge all segements
-      // by hand.
-      let fullDataLen = 0;
-      for (let i = 1; i <= options.segmentMaxSeq; i++) {
-        fullDataLen += options.segments[i].length;
-      }
-
-      options.fullData = new Uint8Array(fullDataLen);
-      for (let d= 0, i = 1; i <= options.segmentMaxSeq; i++) {
-        let data = options.segments[i];
-        for (let j = 0; j < data.length; j++) {
-          options.fullData[d++] = data[j];
-        }
-      }
-    } else {
-      options.fullBody = options.segments.join("");
-    }
-
-    if (DEBUG) {
-      this.context.debug("Got full multipart SMS: " + JSON.stringify(options));
-    }
-
-    return options;
   },
 
   /**
@@ -5282,31 +5232,27 @@ RilObject.prototype[REQUEST_HANGUP_FOREGROUND_RESUME_BACKGROUND] = function REQU
   this.getCurrentCalls();
 };
 RilObject.prototype[REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE] = function REQUEST_SWITCH_WAITING_OR_HOLDING_AND_ACTIVE(length, options) {
-  if (options.rilRequestError) {
-    return;
-  }
-
-  this.getCurrentCalls();
-};
-RilObject.prototype[REQUEST_SWITCH_HOLDING_AND_ACTIVE] = function REQUEST_SWITCH_HOLDING_AND_ACTIVE(length, options) {
-  if (options.rilRequestError) {
-    return;
-  }
-
-  // XXX Normally we should get a UNSOLICITED_RESPONSE_CALL_STATE_CHANGED parcel
-  // notifying us of call state changes, but sometimes we don't (have no idea why).
-  // this.getCurrentCalls() helps update the call state actively.
-  this.getCurrentCalls();
-};
-RilObject.prototype[REQUEST_CONFERENCE] = function REQUEST_CONFERENCE(length, options) {
-  if (options.rilRequestError) {
-    this._hasConferenceRequest = false;
-    options = {rilMessageType: "conferenceError",
-               errorName: "addError",
-               errorMsg: RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError]};
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
+
+  this.sendChromeMessage(options);
+  this.getCurrentCalls();
+};
+RilObject.prototype[REQUEST_CONFERENCE] = function REQUEST_CONFERENCE(length, options) {
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    this._hasConferenceRequest = false;
+    options.errorName = "addError";
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendChromeMessage(options);
+    return;
+  }
+
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_UDUB] = null;
 RilObject.prototype[REQUEST_LAST_CALL_FAIL_CAUSE] = function REQUEST_LAST_CALL_FAIL_CAUSE(length, options) {
@@ -5893,13 +5839,15 @@ RilObject.prototype[REQUEST_BASEBAND_VERSION] = function REQUEST_BASEBAND_VERSIO
   if (DEBUG) this.context.debug("Baseband version: " + this.basebandVersion);
 };
 RilObject.prototype[REQUEST_SEPARATE_CONNECTION] = function REQUEST_SEPARATE_CONNECTION(length, options) {
-  if (options.rilRequestError) {
-    options = {rilMessageType: "conferenceError",
-               errorName: "removeError",
-               errorMsg: RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError]};
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    options.errorName = "removeError";
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
     this.sendChromeMessage(options);
     return;
   }
+
+  this.sendChromeMessage(options);
 };
 RilObject.prototype[REQUEST_SET_MUTE] = null;
 RilObject.prototype[REQUEST_GET_MUTE] = null;
@@ -6064,13 +6012,8 @@ RilObject.prototype[REQUEST_GET_PREFERRED_NETWORK_TYPE] = function REQUEST_GET_P
     return;
   }
 
-  let Buf = this.context.Buf;
-  let networkType = RIL_PREFERRED_NETWORK_TYPE_TO_GECKO.indexOf(GECKO_PREFERRED_NETWORK_TYPE_DEFAULT);
-  let responseLen = Buf.readInt32(); // Number of INT32 responsed.
-  if (responseLen) {
-    this.preferredNetworkType = networkType = Buf.readInt32();
-  }
-  options.networkType = networkType;
+  let results = this.context.Buf.readInt32List();
+  options.networkType = this.preferredNetworkType = results[0];
   options.success = true;
 
   this.sendChromeMessage(options);
@@ -6115,7 +6058,19 @@ RilObject.prototype[REQUEST_CDMA_QUERY_PREFERRED_VOICE_PRIVACY_MODE] = function 
   options.enabled = enabled[0] ? true : false;
   this.sendChromeMessage(options);
 };
-RilObject.prototype[REQUEST_CDMA_FLASH] = null;
+RilObject.prototype[REQUEST_CDMA_FLASH] = function REQUEST_CDMA_FLASH(length, options) {
+  options.success = (options.rilRequestError === 0);
+  if (!options.success) {
+    if (options.rilMessageType === "conferenceCall") {
+      options.errorName = "addError";
+    } else if (options.rilMessageType === "separateCall") {
+      options.errorName = "removeError";
+    }
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  }
+
+  this.sendChromeMessage(options);
+};
 RilObject.prototype[REQUEST_CDMA_BURST_DTMF] = null;
 RilObject.prototype[REQUEST_CDMA_VALIDATE_AND_WRITE_AKEY] = null;
 RilObject.prototype[REQUEST_CDMA_SEND_SMS] = function REQUEST_CDMA_SEND_SMS(length, options) {
@@ -6673,12 +6628,25 @@ GsmPDUHelperObject.prototype = {
   },
 
   /**
-   * Convert a semi-octet (number) to a GSM BCD char.
+   * Convert a semi-octet (number) to a GSM BCD char, or return empty string
+   * if invalid semiOctet and supressException is set to true.
+   *
+   * @param semiOctet
+   *        Nibble to be converted to.
+   * @param [optional] supressException
+   *        Supress exception if invalid semiOctet and supressException is set
+   *        to true.
+   *
+   * @return GSM BCD char, or empty string.
    */
   bcdChars: "0123456789*#,;",
-  semiOctetToBcdChar: function(semiOctet) {
+  semiOctetToBcdChar: function(semiOctet, supressException) {
     if (semiOctet >= 14) {
-      throw new RangeError();
+      if (supressException) {
+        return "";
+      } else {
+        throw new RangeError();
+      }
     }
 
     return this.bcdChars.charAt(semiOctet);
@@ -6718,10 +6686,13 @@ GsmPDUHelperObject.prototype = {
    *
    * @param pairs
    *        Number of nibble *pairs* to read.
+   * @param [optional] supressException
+   *        Supress exception if invalid semiOctet and supressException is set
+   *        to true.
    *
    * @return The BCD string.
    */
-  readSwappedNibbleBcdString: function(pairs) {
+  readSwappedNibbleBcdString: function(pairs, supressException) {
     let str = "";
     for (let i = 0; i < pairs; i++) {
       let nibbleH = this.readHexNibble();
@@ -6730,9 +6701,9 @@ GsmPDUHelperObject.prototype = {
         break;
       }
 
-      str += this.semiOctetToBcdChar(nibbleL);
+      str += this.semiOctetToBcdChar(nibbleL, supressException);
       if (nibbleH != 0x0F) {
-        str += this.semiOctetToBcdChar(nibbleH);
+        str += this.semiOctetToBcdChar(nibbleH, supressException);
       }
     }
 
@@ -7523,24 +7494,24 @@ GsmPDUHelperObject.prototype = {
       // D:DELIVER, DR:DELIVER-REPORT, S:SUBMIT, SR:SUBMIT-REPORT,
       // ST:STATUS-REPORT, C:COMMAND
       // M:Mandatory, O:Optional, X:Unavailable
-      //                  D  DR S  SR ST C
-      SMSC:      null, // M  M  M  M  M  M
-      mti:       null, // M  M  M  M  M  M
-      udhi:      null, // M  M  O  M  M  M
-      sender:    null, // M  X  X  X  X  X
-      recipient: null, // X  X  M  X  M  M
-      pid:       null, // M  O  M  O  O  M
-      epid:      null, // M  O  M  O  O  M
-      dcs:       null, // M  O  M  O  O  X
-      mwi:       null, // O  O  O  O  O  O
-      replace:  false, // O  O  O  O  O  O
-      header:    null, // M  M  O  M  M  M
-      body:      null, // M  O  M  O  O  O
-      data:      null, // M  O  M  O  O  O
-      timestamp: null, // M  X  X  X  X  X
-      status:    null, // X  X  X  X  M  X
-      scts:      null, // X  X  X  M  M  X
-      dt:        null, // X  X  X  X  M  X
+      //                          D  DR S  SR ST C
+      SMSC:              null, // M  M  M  M  M  M
+      mti:               null, // M  M  M  M  M  M
+      udhi:              null, // M  M  O  M  M  M
+      sender:            null, // M  X  X  X  X  X
+      recipient:         null, // X  X  M  X  M  M
+      pid:               null, // M  O  M  O  O  M
+      epid:              null, // M  O  M  O  O  M
+      dcs:               null, // M  O  M  O  O  X
+      mwi:               null, // O  O  O  O  O  O
+      replace:          false, // O  O  O  O  O  O
+      header:            null, // M  M  O  M  M  M
+      body:              null, // M  O  M  O  O  O
+      data:              null, // M  O  M  O  O  O
+      sentTimestamp:     null, // M  X  X  X  X  X
+      status:            null, // X  X  X  X  M  X
+      scts:              null, // X  X  X  M  M  X
+      dt:                null, // X  X  X  X  M  X
     };
 
     // SMSC info
@@ -8809,7 +8780,7 @@ CdmaPDUHelperObject.prototype = {
       header:           message.header,
       body:             message.body,
       data:             message.data,
-      timestamp:        message[PDU_CDMA_MSG_USERDATA_TIMESTAMP],
+      sentTimestamp:    message[PDU_CDMA_MSG_USERDATA_TIMESTAMP],
       language:         message[PDU_CDMA_LANGUAGE_INDICATOR],
       status:           null,
       scts:             null,
@@ -11807,7 +11778,9 @@ ICCIOHelperObject.prototype = {
       }
       this.context.debug(errorMsg);
     }
-    onerror(requestError);
+    if (options.onerror) {
+      options.onerror(requestError);
+    }
   },
 };
 ICCIOHelperObject.prototype[ICC_COMMAND_SEEK] = null;
@@ -11860,7 +11833,13 @@ ICCRecordHelperObject.prototype = {
       let strLen = Buf.readInt32();
       let octetLen = strLen / 2;
       RIL.iccInfo.iccid =
-        this.context.GsmPDUHelper.readSwappedNibbleBcdString(octetLen);
+        this.context.GsmPDUHelper.readSwappedNibbleBcdString(octetLen, true);
+      // Consumes the remaining buffer if any.
+      let unReadBuffer = this.context.Buf.getReadAvailable() -
+                         this.context.Buf.PDU_HEX_OCTET_SIZE;
+      if (unReadBuffer > 0) {
+        this.context.Buf.seekIncoming(unReadBuffer);
+      }
       Buf.readStringDelimiter(strLen);
 
       if (DEBUG) this.context.debug("ICCID: " + RIL.iccInfo.iccid);
@@ -12195,7 +12174,7 @@ ICCRecordHelperObject.prototype = {
       callback: onsuccess,
       onerror: onerror
     });
- },
+  },
 
   /**
    * Cache EF_ANR record size.
@@ -14354,6 +14333,10 @@ ICCContactHelperObject.prototype = {
              (Array.isArray(contact.anr) && contact.anr[0]))) {
           // Case 1.
           this.addContactFieldType2(pbr, contact, field, onsuccess, onerror);
+        } else {
+          if (onsuccess) {
+            onsuccess();
+          }
         }
         return;
       }

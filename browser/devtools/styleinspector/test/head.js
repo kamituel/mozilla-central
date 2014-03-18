@@ -6,10 +6,8 @@
 const TEST_BASE_HTTP = "http://example.com/browser/browser/devtools/styleinspector/test/";
 const TEST_BASE_HTTPS = "https://example.com/browser/browser/devtools/styleinspector/test/";
 
+//Services.prefs.setBoolPref("devtools.dump.emit", true);
 Services.prefs.setBoolPref("devtools.debugger.log", true);
-SimpleTest.registerCleanupFunction(() => {
-  Services.prefs.clearUserPref("devtools.debugger.log");
-});
 
 let tempScope = {};
 
@@ -26,6 +24,16 @@ let {CssRuleView, _ElementStyle} = devtools.require("devtools/styleinspector/rul
 let {CssLogic, CssSelector} = devtools.require("devtools/styleinspector/css-logic");
 
 let promise = devtools.require("sdk/core/promise");
+
+gDevTools.testing = true;
+SimpleTest.registerCleanupFunction(() => {
+  gDevTools.testing = false;
+});
+
+SimpleTest.registerCleanupFunction(() => {
+  Services.prefs.clearUserPref("devtools.debugger.log");
+  Services.prefs.clearUserPref("devtools.dump.emit");
+});
 
 let {
   editableField,

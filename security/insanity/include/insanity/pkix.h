@@ -24,6 +24,23 @@
 namespace insanity { namespace pkix {
 
 // ----------------------------------------------------------------------------
+// LIMITED SUPPORT FOR CERTIFICATE POLICIES
+//
+// If SEC_OID_X509_ANY_POLICY is passed as the value of the requiredPolicy
+// parameter then all policy validation will be skipped. Otherwise, path
+// building and validation will be done for the given policy.
+//
+// In RFC 5280 terms:
+//
+//    * user-initial-policy-set = { requiredPolicy }.
+//    * initial-explicit-policy = true
+//    * initial-any-policy-inhibit = true
+//
+// Because we force explicit policy and because we prohibit policy mapping, we
+// do not bother processing the policy mapping, policy constraint, or inhibit
+// anyPolicy extensions.
+//
+// ----------------------------------------------------------------------------
 // ERROR RANKING
 //
 // BuildCertChain prioritizes certain checks ahead of others so that when a
@@ -71,6 +88,7 @@ SECStatus BuildCertChain(TrustDomain& trustDomain,
                          EndEntityOrCA endEntityOrCA,
             /*optional*/ KeyUsages requiredKeyUsagesIfPresent,
             /*optional*/ SECOidTag requiredEKUIfPresent,
+            /*optional*/ SECOidTag requiredPolicy,
             /*optional*/ const SECItem* stapledOCSPResponse,
                  /*out*/ ScopedCERTCertList& results);
 
@@ -85,11 +103,20 @@ SECItem* CreateEncodedOCSPRequest(PLArenaPool* arena,
                                   const CERTCertificate* cert,
                                   const CERTCertificate* issuerCert);
 
+// The optional parameter thisUpdate will be the thisUpdate value of
+// the encoded response if it is considered trustworthy. Only
+// good, unknown, or revoked responses that verify correctly are considered
+// trustworthy. If the response is not trustworthy, thisUpdate will be 0.
+// Similarly, the optional parameter validThrough will be the time through
+// which the encoded response is considered trustworthy (that is, if a response had a
+// thisUpdate time of validThrough, it would be considered trustworthy).
 SECStatus VerifyEncodedOCSPResponse(TrustDomain& trustDomain,
                                     const CERTCertificate* cert,
                                     CERTCertificate* issuerCert,
                                     PRTime time,
-                                    const SECItem* encodedResponse);
+                                    const SECItem* encodedResponse,
+                 /* optional out */ PRTime* thisUpdate,
+                 /* optional out */ PRTime* validThrough);
 
 } } // namespace insanity::pkix
 

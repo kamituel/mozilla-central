@@ -7,15 +7,16 @@
 #include "WorkerScope.h"
 
 #include "jsapi.h"
+#include "mozilla/EventListenerManager.h"
 #include "mozilla/dom/FunctionBinding.h"
 #include "mozilla/dom/DedicatedWorkerGlobalScopeBinding.h"
 #include "mozilla/dom/SharedWorkerGlobalScopeBinding.h"
+#include "mozilla/dom/Console.h"
 
 #ifdef ANDROID
 #include <android/log.h>
 #endif
 
-#include "Console.h"
 #include "Location.h"
 #include "Navigator.h"
 #include "Principal.h"
@@ -42,8 +43,7 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerPrivate* aWorkerPrivate)
 
 WorkerGlobalScope::~WorkerGlobalScope()
 {
-  // Matches the HoldJSObjects in CreateGlobal.
-  mozilla::DropJSObjects(this);
+  mWorkerPrivate->AssertIsOnWorkerThread();
 }
 
 NS_IMPL_CYCLE_COLLECTION_CLASS(WorkerGlobalScope)
@@ -78,17 +78,17 @@ WorkerGlobalScope::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
   MOZ_CRASH("We should never get here!");
 }
 
-WorkerConsole*
-WorkerGlobalScope::Console()
+already_AddRefed<Console>
+WorkerGlobalScope::GetConsole()
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
 
   if (!mConsole) {
-    mConsole = WorkerConsole::Create();
+    mConsole = new Console(nullptr);
     MOZ_ASSERT(mConsole);
   }
 
-  return mConsole;
+  return mConsole.forget();
 }
 
 already_AddRefed<WorkerLocation>
@@ -143,7 +143,7 @@ WorkerGlobalScope::GetOnerror()
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
 
-  nsEventListenerManager *elm = GetExistingListenerManager();
+  EventListenerManager* elm = GetExistingListenerManager();
   return elm ? elm->GetOnErrorEventHandler() : nullptr;
 }
 
@@ -152,7 +152,7 @@ WorkerGlobalScope::SetOnerror(OnErrorEventHandlerNonNull* aHandler)
 {
   mWorkerPrivate->AssertIsOnWorkerThread();
 
-  nsEventListenerManager *elm = GetOrCreateListenerManager();
+  EventListenerManager* elm = GetOrCreateListenerManager();
   if (elm) {
     elm->SetEventHandler(aHandler);
   }
@@ -299,8 +299,8 @@ DedicatedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx)
   // We're wrapping the global, so the scope is undefined.
   JS::Rooted<JSObject*> scope(aCx);
 
-  return DedicatedWorkerGlobalScopeBinding_workers::Wrap(aCx, scope, this,
-                                                         this, options,
+  return DedicatedWorkerGlobalScopeBinding_workers::Wrap(aCx, this, this,
+                                                         options,
                                                          GetWorkerPrincipal());
 }
 
@@ -340,8 +340,7 @@ SharedWorkerGlobalScope::WrapGlobalObject(JSContext* aCx)
   // We're wrapping the global, so the scope is undefined.
   JS::Rooted<JSObject*> scope(aCx);
 
-  return SharedWorkerGlobalScopeBinding_workers::Wrap(aCx, scope, this, this,
-                                                      options,
+  return SharedWorkerGlobalScopeBinding_workers::Wrap(aCx, this, this, options,
                                                       GetWorkerPrincipal());
 }
 

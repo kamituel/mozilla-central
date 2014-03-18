@@ -151,6 +151,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] != 'gonk':
         'fallback/FallbackProcessPriority.cpp',
         'fallback/FallbackScreenPower.cpp',
         'fallback/FallbackSwitch.cpp',
+        'fallback/FallbackThreadPriority.cpp',
         'fallback/FallbackTime.cpp',
         'fallback/FallbackWakeLocks.cpp',
     ]
@@ -188,3 +189,6 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
         '/widget/gonk',
         '/widget/xpwidgets'
     ]
+
+if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
+    CXXFLAGS += ['-I%s/hardware/libhardware_legacy/include' % CONFIG['ANDROID_SOURCE']]

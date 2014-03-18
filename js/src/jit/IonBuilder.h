@@ -30,7 +30,7 @@ class BaselineFrameInspector;
 // Records information about a baseline frame for compilation that is stable
 // when later used off thread.
 BaselineFrameInspector *
-NewBaselineFrameInspector(TempAllocator *temp, BaselineFrame *frame);
+NewBaselineFrameInspector(TempAllocator *temp, BaselineFrame *frame, CompileInfo *info);
 
 class IonBuilder : public MIRGenerator
 {
@@ -110,6 +110,7 @@ class IonBuilder : public MIRGenerator
                 MBasicBlock *ifFalse;
                 jsbytecode *falseEnd;
                 MBasicBlock *ifTrue;    // Set when the end of the true path is reached.
+                MTest *test;
             } branch;
             struct {
                 // Common entry point.
@@ -200,8 +201,8 @@ class IonBuilder : public MIRGenerator
             }
         }
 
-        static CFGState If(jsbytecode *join, MBasicBlock *ifFalse);
-        static CFGState IfElse(jsbytecode *trueEnd, jsbytecode *falseEnd, MBasicBlock *ifFalse);
+        static CFGState If(jsbytecode *join, MTest *test);
+        static CFGState IfElse(jsbytecode *trueEnd, jsbytecode *falseEnd, MTest *test);
         static CFGState AndOr(jsbytecode *join, MBasicBlock *joinStart);
         static CFGState TableSwitch(jsbytecode *exitpc, MTableSwitch *ins);
         static CFGState CondSwitch(IonBuilder *builder, jsbytecode *exitpc, jsbytecode *defaultTarget);
@@ -279,7 +280,8 @@ class IonBuilder : public MIRGenerator
     MBasicBlock *newBlockPopN(MBasicBlock *predecessor, jsbytecode *pc, uint32_t popped);
     MBasicBlock *newBlockAfter(MBasicBlock *at, MBasicBlock *predecessor, jsbytecode *pc);
     MBasicBlock *newOsrPreheader(MBasicBlock *header, jsbytecode *loopEntry);
-    MBasicBlock *newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool osr);
+    MBasicBlock *newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc, bool osr, bool canOsr,
+                                      unsigned stackPhiCount);
     MBasicBlock *newBlock(jsbytecode *pc) {
         return newBlock(nullptr, pc);
     }
@@ -326,7 +328,7 @@ class IonBuilder : public MIRGenerator
 
     void insertRecompileCheck();
 
-    bool initParameters();
+    void initParameters();
     void rewriteParameter(uint32_t slotIdx, MDefinition *param, int32_t argIndex);
     void rewriteParameters();
     bool initScopeChain(MDefinition *callee = nullptr);
@@ -335,6 +337,9 @@ class IonBuilder : public MIRGenerator
 
     MConstant *constant(const Value &v);
     MConstant *constantInt(int32_t i);
+
+    // Filter the type information at tests
+    bool filterTypesAtTest(MTest *test);
 
     // Add a guard which ensure that the set of type which goes through this
     // generated code correspond to the observed types for the bytecode.
@@ -350,6 +355,9 @@ class IonBuilder : public MIRGenerator
     // type, infallibly unboxing ins as needed.  The new instruction will be
     // added to |current| in this case.
     MDefinition *ensureDefiniteType(MDefinition* def, JSValueType definiteType);
+
+    // Creates a MDefinition based on the given def improved with type as TypeSet.
+    MDefinition *ensureDefiniteTypeSet(MDefinition* def, types::TemporaryTypeSet *types);
 
     JSObject *getSingletonPrototype(JSFunction *target);
 
@@ -442,11 +450,13 @@ class IonBuilder : public MIRGenerator
     MDefinition *loadTypedObjectType(MDefinition *value);
     void loadTypedObjectData(MDefinition *typedObj,
                              MDefinition *offset,
+                             bool canBeNeutered,
                              MDefinition **owner,
                              MDefinition **ownerOffset);
     void loadTypedObjectElements(MDefinition *typedObj,
                                  MDefinition *offset,
                                  int32_t unit,
+                                 bool canBeNeutered,
                                  MDefinition **ownerElements,
                                  MDefinition **ownerScaledOffset);
     MDefinition *typeObjectForElementFromArrayStructType(MDefinition *typedObj);
@@ -455,21 +465,27 @@ class IonBuilder : public MIRGenerator
     bool storeScalarTypedObjectValue(MDefinition *typedObj,
                                      MDefinition *offset,
                                      ScalarTypeDescr::Type type,
+                                     bool canBeNeutered,
+                                     bool racy,
                                      MDefinition *value);
     bool checkTypedObjectIndexInBounds(size_t elemSize,
                                        MDefinition *obj,
                                        MDefinition *index,
+                                       TypeDescrSet objTypeDescrs,
                                        MDefinition **indexAsByteOffset,
-                                       TypeDescrSet objTypeDescrs);
+                                       bool *canBeNeutered);
     bool pushDerivedTypedObject(bool *emitted,
                                 MDefinition *obj,
                                 MDefinition *offset,
                                 TypeDescrSet derivedTypeDescrs,
-                                MDefinition *derivedTypeObj);
+                                MDefinition *derivedTypeObj,
+                                bool canBeNeutered);
     bool pushScalarLoadFromTypedObject(bool *emitted,
                                        MDefinition *obj,
                                        MDefinition *offset,
-                                       ScalarTypeDescr::Type type);
+                                       ScalarTypeDescr::Type type,
+                                       bool canBeNeutered);
+    MDefinition *neuterCheck(MDefinition *obj);
 
     // jsop_setelem() helpers.
     bool setElemTryTypedArray(bool *emitted, MDefinition *object,
@@ -484,7 +500,7 @@ class IonBuilder : public MIRGenerator
                              MDefinition *index, MDefinition *value);
     bool setElemTryCache(bool *emitted, MDefinition *object,
                          MDefinition *index, MDefinition *value);
-    bool setElemTryScalarPropOfTypedObject(bool *emitted,
+    bool setElemTryScalarElemOfTypedObject(bool *emitted,
                                            MDefinition *obj,
                                            MDefinition *index,
                                            TypeDescrSet objTypeReprs,
@@ -557,6 +573,9 @@ class IonBuilder : public MIRGenerator
     bool jsop_setelem_typed(ScalarTypeDescr::Type arrayType,
                             SetElemSafety safety,
                             MDefinition *object, MDefinition *index, MDefinition *value);
+    bool jsop_setelem_typed_object(ScalarTypeDescr::Type arrayType,
+                                   SetElemSafety safety, bool racy,
+                                   MDefinition *object, MDefinition *index, MDefinition *value);
     bool jsop_length();
     bool jsop_length_fastPath();
     bool jsop_arguments();
@@ -659,6 +678,8 @@ class IonBuilder : public MIRGenerator
     bool inlineUnsafeSetDenseArrayElement(CallInfo &callInfo, uint32_t base);
     bool inlineUnsafeSetTypedArrayElement(CallInfo &callInfo, uint32_t base,
                                           ScalarTypeDescr::Type arrayType);
+    bool inlineUnsafeSetTypedObjectArrayElement(CallInfo &callInfo, uint32_t base,
+                                                ScalarTypeDescr::Type arrayType);
     InliningStatus inlineNewDenseArray(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForSequentialExecution(CallInfo &callInfo);
     InliningStatus inlineNewDenseArrayForParallelExecution(CallInfo &callInfo);
@@ -667,11 +688,20 @@ class IonBuilder : public MIRGenerator
     InliningStatus inlineUnsafeSetReservedSlot(CallInfo &callInfo);
     InliningStatus inlineUnsafeGetReservedSlot(CallInfo &callInfo);
 
+    // ForkJoin intrinsics
+    InliningStatus inlineForkJoinGetSlice(CallInfo &callInfo);
+
+    // TypedObject intrinsics.
+    InliningStatus inlineObjectIsTypeDescr(CallInfo &callInfo);
+    bool elementAccessIsTypedObjectArrayOfScalarType(MDefinition* obj, MDefinition* id,
+                                                     ScalarTypeDescr::Type *arrayType);
+
     // Utility intrinsics.
     InliningStatus inlineIsCallable(CallInfo &callInfo);
     InliningStatus inlineHaveSameClass(CallInfo &callInfo);
     InliningStatus inlineToObject(CallInfo &callInfo);
     InliningStatus inlineDump(CallInfo &callInfo);
+    InliningStatus inlineHasClass(CallInfo &callInfo, const Class *clasp);
 
     // Testing functions.
     InliningStatus inlineForceSequentialOrInParallelSection(CallInfo &callInfo);

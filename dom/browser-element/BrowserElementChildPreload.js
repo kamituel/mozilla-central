@@ -73,7 +73,6 @@ let SEC_ERROR_CA_CERT_INVALID =   (SEC_ERROR_BASE + 36);
 let SEC_ERROR_UNTRUSTED_ISSUER = (SEC_ERROR_BASE + 20);
 let SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE = (SEC_ERROR_BASE + 30);
 let SEC_ERROR_UNTRUSTED_CERT = (SEC_ERROR_BASE + 21);
-let SEC_ERROR_INADEQUATE_KEY_USAGE = (SEC_ERROR_BASE + 90);
 let SEC_ERROR_EXPIRED_CERTIFICATE = (SEC_ERROR_BASE + 11);
 let SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED = (SEC_ERROR_BASE + 176);
 
@@ -89,7 +88,6 @@ function getErrorClass(errorCode) {
     case SEC_ERROR_UNTRUSTED_ISSUER:
     case SEC_ERROR_EXPIRED_ISSUER_CERTIFICATE:
     case SEC_ERROR_UNTRUSTED_CERT:
-    case SEC_ERROR_INADEQUATE_KEY_USAGE:
     case SSL_ERROR_BAD_CERT_DOMAIN:
     case SEC_ERROR_EXPIRED_CERTIFICATE:
     case SEC_ERROR_CERT_SIGNATURE_ALGORITHM_DISABLED:
@@ -482,6 +480,13 @@ BrowserElementChild.prototype = {
 
   },
 
+  _manifestChangedHandler: function(e) {
+    debug('Got manifestchanged: (' + e.target.href + ')');
+    let manifest = { href: e.target.href };
+    sendAsyncMsg('manifestchange', manifest);
+
+  },
+
   // Processes the "rel" field in <link> tags and forward to specific handlers.
   _linkAddedHandler: function(e) {
     let win = e.target.ownerDocument.defaultView;
@@ -494,7 +499,8 @@ BrowserElementChild.prototype = {
 
     let handlers = {
       'icon': this._iconChangedHandler,
-      'search': this._openSearchHandler
+      'search': this._openSearchHandler,
+      'manifest': this._manifestChangedHandler
     };
 
     debug('Got linkAdded: (' + e.target.href + ') ' + e.target.rel);

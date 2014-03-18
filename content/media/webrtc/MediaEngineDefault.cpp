@@ -267,12 +267,8 @@ MediaEngineDefaultVideoSource::NotifyPull(MediaStreamGraph* aGraph,
 
   if (delta > 0) {
     // nullptr images are allowed
-    if (image) {
-      segment.AppendFrame(image.forget(), delta,
-                          IntSize(mOpts.mWidth, mOpts.mHeight));
-    } else {
-      segment.AppendFrame(nullptr, delta, IntSize(0, 0));
-    }
+    IntSize size(image ? mOpts.mWidth : 0, image ? mOpts.mHeight : 0);
+    segment.AppendFrame(image.forget(), delta, size);
     // This can fail if either a) we haven't added the track yet, or b)
     // we've removed or finished the track.
     if (aSource->AppendToTrack(aID, &segment)) {
@@ -285,6 +281,7 @@ MediaEngineDefaultVideoSource::NotifyPull(MediaStreamGraph* aGraph,
 class SineWaveGenerator : public RefCounted<SineWaveGenerator>
 {
 public:
+  MOZ_DECLARE_REFCOUNTED_TYPENAME(SineWaveGenerator)
   static const int bytesPerSample = 2;
   static const int millisecondsPerSecond = 1000;
   static const int frequency = 1000;

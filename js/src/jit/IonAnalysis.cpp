@@ -799,7 +799,7 @@ TypeAnalyzer::markPhiConsumers()
             bool canConsumeFloat32 = true;
             for (MUseDefIterator use(*phi); canConsumeFloat32 && use; use++) {
                 MDefinition *usedef = use.def();
-                canConsumeFloat32 &= usedef->isPhi() || usedef->canConsumeFloat32();
+                canConsumeFloat32 &= usedef->isPhi() || usedef->canConsumeFloat32(use.use());
             }
             phi->setCanConsumeFloat32(canConsumeFloat32);
             if (canConsumeFloat32 && !addPhiToWorklist(*phi))
@@ -812,12 +812,12 @@ TypeAnalyzer::markPhiConsumers()
             return false;
 
         MPhi *phi = popPhi();
-        JS_ASSERT(phi->canConsumeFloat32());
+        JS_ASSERT(phi->canConsumeFloat32(nullptr /* unused */));
 
         bool validConsumer = true;
         for (MUseDefIterator use(phi); use; use++) {
             MDefinition *def = use.def();
-            if (def->isPhi() && !def->canConsumeFloat32()) {
+            if (def->isPhi() && !def->canConsumeFloat32(use.use())) {
                 validConsumer = false;
                 break;
             }
@@ -830,7 +830,7 @@ TypeAnalyzer::markPhiConsumers()
         phi->setCanConsumeFloat32(false);
         for (size_t i = 0, e = phi->numOperands(); i < e; ++i) {
             MDefinition *input = phi->getOperand(i);
-            if (input->isPhi() && !input->isInWorklist() && input->canConsumeFloat32())
+            if (input->isPhi() && !input->isInWorklist() && input->canConsumeFloat32(nullptr /* unused */))
             {
                 if (!addPhiToWorklist(input->toPhi()))
                     return false;
@@ -976,7 +976,7 @@ TypeAnalyzer::checkFloatCoherency()
 
             for (MUseDefIterator use(*def); use; use++) {
                 MDefinition *consumer = use.def();
-                JS_ASSERT(consumer->isConsistentFloat32Use());
+                JS_ASSERT(consumer->isConsistentFloat32Use(use.use()));
             }
         }
     }
@@ -1647,42 +1647,31 @@ TryEliminateTypeBarrierFromTest(MTypeBarrier *barrier, bool filtersNull, bool fi
         input = inputUnbox->input();
     }
 
-    if (test->getOperand(0) == input && direction == TRUE_BRANCH) {
-        *eliminated = true;
-        if (inputUnbox)
-            inputUnbox->makeInfallible();
-        barrier->replaceAllUsesWith(barrier->input());
-        return;
-    }
+    MDefinition *subject = nullptr;
+    bool removeUndefined;
+    bool removeNull;
+    test->filtersUndefinedOrNull(direction == TRUE_BRANCH, &subject, &removeUndefined, &removeNull);
 
-    if (!test->getOperand(0)->isCompare())
+    // The Test doesn't filter undefined nor null.
+    if (!subject)
         return;
 
-    MCompare *compare = test->getOperand(0)->toCompare();
-    MCompare::CompareType compareType = compare->compareType();
-
-    if (compareType != MCompare::Compare_Undefined && compareType != MCompare::Compare_Null)
-        return;
-    if (compare->getOperand(0) != input)
+    // Make sure the subject equals the input to the TypeBarrier.
+    if (subject != input)
         return;
 
-    JSOp op = compare->jsop();
-    JS_ASSERT(op == JSOP_EQ || op == JSOP_STRICTEQ ||
-              op == JSOP_NE || op == JSOP_STRICTNE);
-
-    if ((direction == TRUE_BRANCH) != (op == JSOP_NE || op == JSOP_STRICTNE))
+    // When the TypeBarrier filters undefined, the test must at least also do,
+    // this, before the TypeBarrier can get removed.
+    if (!removeUndefined && filtersUndefined)
         return;
 
-    // A test 'if (x.f != null)' or 'if (x.f != undefined)' filters both null
-    // and undefined. If strict equality is used, only the specified rhs is
-    // tested for.
-    if (op == JSOP_STRICTEQ || op == JSOP_STRICTNE) {
-        if (compareType == MCompare::Compare_Undefined && !filtersUndefined)
-            return;
-        if (compareType == MCompare::Compare_Null && !filtersNull)
-            return;
-    }
+    // When the TypeBarrier filters null, the test must at least also do,
+    // this, before the TypeBarrier can get removed.
+    if (!removeNull && filtersNull)
+        return;
 
+    // Eliminate the TypeBarrier. The possible TypeBarrier unboxing is kept,
+    // but made infallible.
     *eliminated = true;
     if (inputUnbox)
         inputUnbox->makeInfallible();
@@ -2051,7 +2040,7 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
 
         DebugOnly<unsigned> slotSpan = baseobj->slotSpan();
         if (!DefineNativeProperty(cx, baseobj, id, UndefinedHandleValue, nullptr, nullptr,
-                                  JSPROP_ENUMERATE, 0, 0))
+                                  JSPROP_ENUMERATE, 0))
         {
             return false;
         }
@@ -2065,7 +2054,8 @@ AnalyzePoppedThis(JSContext *cx, types::TypeObject *type,
              block = rp->block(), rp = block->callerResumePoint())
         {
             JSScript *script = rp->block()->info().script();
-            types::AddClearDefiniteFunctionUsesInScript(cx, type, script, block->info().script());
+            if (!types::AddClearDefiniteFunctionUsesInScript(cx, type, script, block->info().script()))
+                return true;
             if (!callerResumePoints.append(rp))
                 return false;
         }

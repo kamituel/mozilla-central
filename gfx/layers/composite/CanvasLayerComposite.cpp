@@ -16,9 +16,9 @@
 #include "mozilla/mozalloc.h"           // for operator delete
 #include "nsAString.h"
 #include "nsAutoPtr.h"                  // for nsRefPtr
+#include "nsISupportsImpl.h"            // for MOZ_COUNT_CTOR, etc
 #include "nsPoint.h"                    // for nsIntPoint
 #include "nsString.h"                   // for nsAutoCString
-#include "nsTraceRefcnt.h"              // for MOZ_COUNT_CTOR, etc
 
 using namespace mozilla;
 using namespace mozilla::layers;
@@ -43,8 +43,16 @@ CanvasLayerComposite::~CanvasLayerComposite()
 bool
 CanvasLayerComposite::SetCompositableHost(CompositableHost* aHost)
 {
-  mImageHost = aHost;
-  return true;
+  switch (aHost->GetType()) {
+    case BUFFER_IMAGE_SINGLE:
+    case BUFFER_IMAGE_BUFFERED:
+    case COMPOSITABLE_IMAGE:
+      mImageHost = aHost;
+      return true;
+    default:
+      return false;
+  }
+
 }
 
 Layer*

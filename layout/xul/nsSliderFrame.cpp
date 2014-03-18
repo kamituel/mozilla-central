@@ -15,12 +15,11 @@
 #include "nsPresContext.h"
 #include "nsIContent.h"
 #include "nsCOMPtr.h"
-#include "nsINameSpaceManager.h"
+#include "nsNameSpaceManager.h"
 #include "nsGkAtoms.h"
 #include "nsHTMLParts.h"
 #include "nsIPresShell.h"
 #include "nsCSSRendering.h"
-#include "nsEventListenerManager.h"
 #include "nsIDOMMouseEvent.h"
 #include "nsScrollbarButtonFrame.h"
 #include "nsISliderListener.h"
@@ -665,6 +664,11 @@ nsSliderFrame::CurrentPositionChanged()
   else
      newThumbRect.y = clientRect.y + NSToCoordRound(pos * mRatio);
 
+#ifdef MOZ_WIDGET_GONK
+  // avoid putting the scroll thumb at subpixel positions which cause needless invalidations
+  nscoord appUnitsPerPixel = PresContext()->AppUnitsPerDevPixel();
+  newThumbRect = newThumbRect.ToNearestPixels(appUnitsPerPixel).ToAppUnits(appUnitsPerPixel);
+#endif
   // set the rect
   thumbFrame->SetRect(newThumbRect);
 

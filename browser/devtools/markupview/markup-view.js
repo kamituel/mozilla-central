@@ -22,7 +22,7 @@ const {gDevTools} = Cu.import("resource:///modules/devtools/gDevTools.jsm", {});
 const {HTMLEditor} = require("devtools/markupview/html-editor");
 const promise = require("sdk/core/promise");
 const {Tooltip} = require("devtools/shared/widgets/Tooltip");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("devtools/toolkit/event-emitter");
 
 Cu.import("resource://gre/modules/devtools/LayoutHelpers.jsm");
 Cu.import("resource://gre/modules/devtools/Templater.jsm");
@@ -165,7 +165,10 @@ MarkupView.prototype = {
   },
 
   _onMouseLeave: function() {
-    this._hideBoxModel();
+    this._hideBoxModel(true);
+    if (this._hoveredNode) {
+      this._containers.get(this._hoveredNode).hovered = false;
+    }
     this._hoveredNode = null;
   },
 
@@ -173,8 +176,8 @@ MarkupView.prototype = {
     this._inspector.toolbox.highlighterUtils.highlightNodeFront(nodeFront, options);
   },
 
-  _hideBoxModel: function() {
-    this._inspector.toolbox.highlighterUtils.unhighlight();
+  _hideBoxModel: function(forceHide) {
+    this._inspector.toolbox.highlighterUtils.unhighlight(forceHide);
   },
 
   _briefBoxModelTimer: null,
@@ -1542,8 +1545,6 @@ MarkupContainer.prototype = {
 
     // Remove event listeners
     this.elt.removeEventListener("dblclick", this._onToggle, false);
-    this.elt.removeEventListener("mouseover", this._onMouseOver, false);
-    this.elt.removeEventListener("mouseout", this._onMouseOut, false);
     this.elt.removeEventListener("mousedown", this._onMouseDown, false);
     this.expander.removeEventListener("click", this._onToggle, false);
 

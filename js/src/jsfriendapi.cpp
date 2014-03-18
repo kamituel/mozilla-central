@@ -80,7 +80,7 @@ JS_SetIsWorkerRuntime(JSRuntime *rt)
 }
 
 JS_FRIEND_API(JSObject *)
-JS_FindCompilationScope(JSContext *cx, JSObject *objArg)
+JS_FindCompilationScope(JSContext *cx, HandleObject objArg)
 {
     RootedObject obj(cx, objArg);
 
@@ -109,10 +109,8 @@ JS_GetObjectFunction(JSObject *obj)
 }
 
 JS_FRIEND_API(bool)
-JS_SplicePrototype(JSContext *cx, JSObject *objArg, JSObject *protoArg)
+JS_SplicePrototype(JSContext *cx, HandleObject obj, HandleObject proto)
 {
-    RootedObject obj(cx, objArg);
-    RootedObject proto(cx, protoArg);
     /*
      * Change the prototype of an object which hasn't been used anywhere
      * and does not share its type with another object. Unlike JS_SetPrototype,
@@ -133,10 +131,9 @@ JS_SplicePrototype(JSContext *cx, JSObject *objArg, JSObject *protoArg)
 }
 
 JS_FRIEND_API(JSObject *)
-JS_NewObjectWithUniqueType(JSContext *cx, const JSClass *clasp, JSObject *protoArg, JSObject *parentArg)
+JS_NewObjectWithUniqueType(JSContext *cx, const JSClass *clasp, HandleObject proto,
+                           HandleObject parent)
 {
-    RootedObject proto(cx, protoArg);
-    RootedObject parent(cx, parentArg);
     /*
      * Create our object with a null proto and then splice in the correct proto
      * after we setSingletonType, so that we don't pollute the default
@@ -288,9 +285,8 @@ DefineHelpProperty(JSContext *cx, HandleObject obj, const char *prop, const char
 }
 
 JS_FRIEND_API(bool)
-JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *objArg, const JSFunctionSpecWithHelp *fs)
+JS_DefineFunctionsWithHelp(JSContext *cx, HandleObject obj, const JSFunctionSpecWithHelp *fs)
 {
-    RootedObject obj(cx, objArg);
     JS_ASSERT(!cx->runtime()->isAtomsCompartment(cx->compartment()));
 
     CHECK_REQUEST(cx);
@@ -391,6 +387,12 @@ JS_FRIEND_API(JSObject *)
 js::GetGlobalForObjectCrossCompartment(JSObject *obj)
 {
     return &obj->global();
+}
+
+JS_FRIEND_API(void)
+js::SetPendingExceptionCrossContext(JSContext *cx, JS::HandleValue v)
+{
+    cx->setPendingException(v);
 }
 
 JS_FRIEND_API(void)
@@ -930,11 +932,18 @@ JS::DisableIncrementalGC(JSRuntime *rt)
     rt->gcIncrementalEnabled = false;
 }
 
-extern JS_FRIEND_API(void)
-JS::DisableGenerationalGC(JSRuntime *rt)
+JS::AutoDisableGenerationalGC::AutoDisableGenerationalGC(JSRuntime *rt)
+  : runtime(rt)
+#if defined(JSGC_GENERATIONAL) && defined(JS_GC_ZEAL)
+  , restartVerifier(rt->gcVerifyPostData)
+#endif
 {
 #ifdef JSGC_GENERATIONAL
     if (IsGenerationalGCEnabled(rt)) {
+#ifdef JS_GC_ZEAL
+        if (restartVerifier)
+            gc::EndVerifyPostBarriers(rt);
+#endif
         MinorGC(rt, JS::gcreason::API);
         rt->gcNursery.disable();
         rt->gcStoreBuffer.disable();
@@ -943,15 +952,18 @@ JS::DisableGenerationalGC(JSRuntime *rt)
     ++rt->gcGenerationalDisabled;
 }
 
-extern JS_FRIEND_API(void)
-JS::EnableGenerationalGC(JSRuntime *rt)
+JS::AutoDisableGenerationalGC::~AutoDisableGenerationalGC()
 {
-    JS_ASSERT(rt->gcGenerationalDisabled > 0);
-    --rt->gcGenerationalDisabled;
+    JS_ASSERT(runtime->gcGenerationalDisabled > 0);
+    --runtime->gcGenerationalDisabled;
 #ifdef JSGC_GENERATIONAL
-    if (IsGenerationalGCEnabled(rt)) {
-        rt->gcNursery.enable();
-        rt->gcStoreBuffer.enable();
+    if (runtime->gcGenerationalDisabled == 0) {
+        runtime->gcNursery.enable();
+        runtime->gcStoreBuffer.enable();
+#ifdef JS_GC_ZEAL
+        if (restartVerifier)
+            gc::StartVerifyPostBarriers(runtime);
+#endif
     }
 #endif
 }
@@ -1139,6 +1151,14 @@ js::SetDefaultJSContextCallback(JSRuntime *rt, DefaultJSContextCallback cb)
 {
     rt->defaultJSContextCallback = cb;
 }
+
+#ifdef DEBUG
+JS_FRIEND_API(void)
+js::Debug_SetActiveJSContext(JSRuntime *rt, JSContext *cx)
+{
+    rt->activeContext = cx;
+}
+#endif
 
 JS_FRIEND_API(void)
 js::SetCTypesActivityCallback(JSRuntime *rt, CTypesActivityCallback cb)

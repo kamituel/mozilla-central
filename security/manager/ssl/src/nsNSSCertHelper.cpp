@@ -2088,7 +2088,7 @@ nsNSSCertificate::CreateTBSCertificateASN1Struct(nsIASN1Sequence **retSequence,
   if (mCert->extensions) {
     SECOidTag ev_oid_tag = SEC_OID_UNKNOWN;
 
-#ifndef NSS_NO_LIBPKIX
+#ifndef MOZ_NO_EV_CERTS
     bool validEV;
     rv = hasValidEVOidTag(ev_oid_tag, validEV);
     if (NS_FAILED(rv))
@@ -2124,7 +2124,7 @@ nsNSSCertificate::CreateASN1Struct(nsIASN1Object** aRetVal)
   GetWindowTitle(getter_Copies(title));
   
   sequence->SetDisplayName(NS_ConvertUTF8toUTF16(title));
-  *aRetVal = sequence.forget().get();
+  sequence.forget(aRetVal);
 
   // This sequence will be contain the tbsCertificate, signatureAlgorithm,
   // and signatureValue.

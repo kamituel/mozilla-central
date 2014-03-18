@@ -37,7 +37,7 @@ class StartRecordingHelper;
 class nsDOMCameraControl MOZ_FINAL : public DOMMediaStream
 {
 public:
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(nsDOMCameraControl, DOMMediaStream)
+  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(nsDOMCameraControl, DOMMediaStream)
   NS_DECL_ISUPPORTS_INHERITED
 
   nsDOMCameraControl(uint32_t aCameraId,
@@ -45,7 +45,6 @@ public:
                      dom::GetCameraCallback* aOnSuccess,
                      dom::CameraErrorCallback* aOnError,
                      nsPIDOMWindow* aWindow);
-  nsRefPtr<ICameraControl> GetNativeCameraControl();
 
   void Shutdown();
 
@@ -80,6 +79,8 @@ public:
   double GetExposureCompensation(ErrorResult& aRv);
   int32_t SensorAngle();
   already_AddRefed<dom::CameraCapabilities> Capabilities();
+  void GetIsoMode(nsString& aMode, ErrorResult& aRv);
+  void SetIsoMode(const nsAString& aMode, ErrorResult& aRv);
 
   // Unsolicited event handlers.
   already_AddRefed<dom::CameraShutterCallback> GetOnShutter();
@@ -167,24 +168,24 @@ protected:
   nsRefPtr<dom::CameraCapabilities>             mCapabilities;
 
   // solicited camera control event handlers
-  nsCOMPtr<dom::GetCameraCallback>              mGetCameraOnSuccessCb;
-  nsCOMPtr<dom::CameraErrorCallback>            mGetCameraOnErrorCb;
-  nsCOMPtr<dom::CameraAutoFocusCallback>        mAutoFocusOnSuccessCb;
-  nsCOMPtr<dom::CameraErrorCallback>            mAutoFocusOnErrorCb;
-  nsCOMPtr<dom::CameraTakePictureCallback>      mTakePictureOnSuccessCb;
-  nsCOMPtr<dom::CameraErrorCallback>            mTakePictureOnErrorCb;
-  nsCOMPtr<dom::CameraStartRecordingCallback>   mStartRecordingOnSuccessCb;
-  nsCOMPtr<dom::CameraErrorCallback>            mStartRecordingOnErrorCb;
-  nsCOMPtr<dom::CameraReleaseCallback>          mReleaseOnSuccessCb;
-  nsCOMPtr<dom::CameraErrorCallback>            mReleaseOnErrorCb;
-  nsCOMPtr<dom::CameraSetConfigurationCallback> mSetConfigurationOnSuccessCb;
-  nsCOMPtr<dom::CameraErrorCallback>            mSetConfigurationOnErrorCb;
+  nsRefPtr<dom::GetCameraCallback>              mGetCameraOnSuccessCb;
+  nsRefPtr<dom::CameraErrorCallback>            mGetCameraOnErrorCb;
+  nsRefPtr<dom::CameraAutoFocusCallback>        mAutoFocusOnSuccessCb;
+  nsRefPtr<dom::CameraErrorCallback>            mAutoFocusOnErrorCb;
+  nsRefPtr<dom::CameraTakePictureCallback>      mTakePictureOnSuccessCb;
+  nsRefPtr<dom::CameraErrorCallback>            mTakePictureOnErrorCb;
+  nsRefPtr<dom::CameraStartRecordingCallback>   mStartRecordingOnSuccessCb;
+  nsRefPtr<dom::CameraErrorCallback>            mStartRecordingOnErrorCb;
+  nsRefPtr<dom::CameraReleaseCallback>          mReleaseOnSuccessCb;
+  nsRefPtr<dom::CameraErrorCallback>            mReleaseOnErrorCb;
+  nsRefPtr<dom::CameraSetConfigurationCallback> mSetConfigurationOnSuccessCb;
+  nsRefPtr<dom::CameraErrorCallback>            mSetConfigurationOnErrorCb;
 
   // unsolicited event handlers
-  nsCOMPtr<dom::CameraShutterCallback>          mOnShutterCb;
-  nsCOMPtr<dom::CameraClosedCallback>           mOnClosedCb;
-  nsCOMPtr<dom::CameraRecorderStateChange>      mOnRecorderStateChangeCb;
-  nsCOMPtr<dom::CameraPreviewStateChange>       mOnPreviewStateChangeCb;
+  nsRefPtr<dom::CameraShutterCallback>          mOnShutterCb;
+  nsRefPtr<dom::CameraClosedCallback>           mOnClosedCb;
+  nsRefPtr<dom::CameraRecorderStateChange>      mOnRecorderStateChangeCb;
+  nsRefPtr<dom::CameraPreviewStateChange>       mOnPreviewStateChangeCb;
 
   // Camera event listener; we only need this weak reference so that
   //  we can remove the listener from the camera when we're done

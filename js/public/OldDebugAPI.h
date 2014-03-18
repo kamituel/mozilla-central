@@ -13,6 +13,7 @@
 
 #include "mozilla/NullPtr.h"
 
+#include "jsapi.h"
 #include "jsbytecode.h"
 
 #include "js/CallArgs.h"
@@ -30,19 +31,14 @@ class ScriptFrameIter;
 extern JS_PUBLIC_API(unsigned)
 JS_PCToLineNumber(JSContext *cx, JSScript *script, jsbytecode *pc);
 
+extern JS_PUBLIC_API(const char *)
+JS_GetScriptFilename(JSScript *script);
+
 namespace JS {
 
 class FrameDescription
 {
   public:
-    FrameDescription(JSScript *script, JSFunction *fun, jsbytecode *pc)
-        : script_(script)
-        , fun_(fun)
-        , pc_(pc)
-        , linenoComputed(false)
-    {
-    }
-
     explicit FrameDescription(const js::ScriptFrameIter& iter);
 
     unsigned lineno() {
@@ -53,17 +49,26 @@ class FrameDescription
         return lineno_;
     }
 
-    Heap<JSScript*> &script() {
-        return script_;
+    const char *filename() const {
+        return JS_GetScriptFilename(script_);
     }
 
-    Heap<JSFunction*> &fun() {
-        return fun_;
+    JSFlatString *funDisplayName() const {
+        return funDisplayName_ ? JS_ASSERT_STRING_IS_FLAT(funDisplayName_) : nullptr;
+    }
+
+    // Both these locations should be traced during GC but otherwise not used;
+    // they are implementation details.
+    Heap<JSScript*> &markedLocation1() {
+        return script_;
+    }
+    Heap<JSString*> &markedLocation2() {
+        return funDisplayName_;
     }
 
   private:
     Heap<JSScript*> script_;
-    Heap<JSFunction*> fun_;
+    Heap<JSString*> funDisplayName_;
     jsbytecode *pc_;
     unsigned lineno_;
     bool linenoComputed;
@@ -220,8 +225,8 @@ JS_ClearInterrupt(JSRuntime *rt, JSInterruptHook *handlerp, void **closurep);
 /************************************************************************/
 
 extern JS_PUBLIC_API(bool)
-JS_SetWatchPoint(JSContext *cx, JSObject *obj, jsid id,
-                 JSWatchPointHandler handler, JSObject *closure);
+JS_SetWatchPoint(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
+                 JSWatchPointHandler handler, JS::HandleObject closure);
 
 extern JS_PUBLIC_API(bool)
 JS_ClearWatchPoint(JSContext *cx, JSObject *obj, jsid id,
@@ -267,7 +272,7 @@ extern JS_PUBLIC_API(void)
 JS_ReleaseFunctionLocalNameArray(JSContext *cx, void *mark);
 
 extern JS_PUBLIC_API(JSScript *)
-JS_GetFunctionScript(JSContext *cx, JSFunction *fun);
+JS_GetFunctionScript(JSContext *cx, JS::HandleFunction fun);
 
 extern JS_PUBLIC_API(JSNative)
 JS_GetFunctionNative(JSContext *cx, JSFunction *fun);
@@ -296,9 +301,6 @@ extern JS_PUBLIC_API(const char *)
 JS_GetDebugClassName(JSObject *obj);
 
 /************************************************************************/
-
-extern JS_PUBLIC_API(const char *)
-JS_GetScriptFilename(JSContext *cx, JSScript *script);
 
 extern JS_PUBLIC_API(const jschar *)
 JS_GetScriptSourceMap(JSContext *cx, JSScript *script);
@@ -358,7 +360,7 @@ typedef struct JSPropertyDescArray {
 typedef struct JSScopeProperty JSScopeProperty;
 
 extern JS_PUBLIC_API(bool)
-JS_GetPropertyDescArray(JSContext *cx, JSObject *obj, JSPropertyDescArray *pda);
+JS_GetPropertyDescArray(JSContext *cx, JS::HandleObject obj, JSPropertyDescArray *pda);
 
 extern JS_PUBLIC_API(void)
 JS_PutPropertyDescArray(JSContext *cx, JSPropertyDescArray *pda);
@@ -527,7 +529,7 @@ JS_DefineProfilingFunctions(JSContext *cx, JSObject *obj);
 
 /* Defined in vm/Debugger.cpp. */
 extern JS_PUBLIC_API(bool)
-JS_DefineDebuggerObject(JSContext *cx, JSObject *obj);
+JS_DefineDebuggerObject(JSContext *cx, JS::HandleObject obj);
 
 extern JS_PUBLIC_API(void)
 JS_DumpPCCounts(JSContext *cx, JSScript *script);

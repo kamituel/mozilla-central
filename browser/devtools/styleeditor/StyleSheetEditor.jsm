@@ -21,7 +21,7 @@ Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/FileUtils.jsm");
 Cu.import("resource://gre/modules/NetUtil.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource:///modules/devtools/shared/event-emitter.js");
+Cu.import("resource://gre/modules/devtools/event-emitter.js");
 Cu.import("resource:///modules/devtools/StyleEditorUtil.jsm");
 
 const LOAD_ERROR = "error-load";
@@ -596,9 +596,9 @@ function prettifyCSS(text)
 
     if (shouldIndent) {
       let la = text[i+1]; // one-character lookahead
-      if (!/\s/.test(la)) {
-        // following character should be a new line (or whitespace) but it isn't
-        // force indentation then
+      if (!/\n/.test(la) || /^\s+$/.test(text.substring(i+1, text.length))) {
+        // following character should be a new line, but isn't,
+        // or it's whitespace at the end of the file
         parts.push(indent + text.substring(partStart, i + 1));
         if (c == "}") {
           parts.push(""); // for extra line separator
