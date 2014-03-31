@@ -9,7 +9,10 @@
 #include "HttpLog.h"
 
 #include "nsHttp.h"
+#include "mozilla/unused.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/TabChild.h"
+#include "mozilla/dom/FileDescriptorSetChild.h"
 #include "mozilla/net/NeckoChild.h"
 #include "mozilla/net/HttpChannelChild.h"
 
@@ -63,7 +66,7 @@ HttpChannelChild::~HttpChannelChild()
 // Override nsHashPropertyBag's AddRef: we don't need thread-safe refcnt
 NS_IMPL_ADDREF(HttpChannelChild)
 
-NS_IMETHODIMP_(nsrefcnt) HttpChannelChild::Release()
+NS_IMETHODIMP_(MozExternalRefCountType) HttpChannelChild::Release()
 {
   NS_PRECONDITION(0 != mRefCnt, "dup release");
   NS_ASSERT_OWNINGTHREAD(HttpChannelChild);
@@ -786,8 +789,8 @@ HttpChannelChild::Redirect1Begin(const uint32_t& newChannelId,
   mResponseHead = new nsHttpResponseHead(responseHead);
   SetCookie(mResponseHead->PeekHeader(nsHttp::Set_Cookie));
 
-  bool rewriteToGET = nsHttp::ShouldRewriteRedirectToGET(
-                               mResponseHead->Status(), mRequestHead.Method());
+  bool rewriteToGET = HttpBaseChannel::ShouldRewriteRedirectToGET(mResponseHead->Status(),
+                                                                  mRequestHead.ParsedMethod());
 
   rv = SetupReplacementChannel(uri, newChannel, !rewriteToGET);
   if (NS_FAILED(rv)) {
@@ -1197,7 +1200,29 @@ HttpChannelChild::AsyncOpen(nsIStreamListener *listener, nsISupports *aContext)
   openArgs.loadFlags() = mLoadFlags;
   openArgs.requestHeaders() = mClientSetRequestHeaders;
   openArgs.requestMethod() = mRequestHead.Method();
-  SerializeInputStream(mUploadStream, openArgs.uploadStream());
+
+  nsTArray<mozilla::ipc::FileDescriptor> fds;
+  SerializeInputStream(mUploadStream, openArgs.uploadStream(), fds);
+
+  PFileDescriptorSetChild* fdSet = nullptr;
+  if (!fds.IsEmpty()) {
+    MOZ_ASSERT(gNeckoChild->Manager());
+
+    fdSet = gNeckoChild->Manager()->SendPFileDescriptorSetConstructor(fds[0]);
+    for (uint32_t i = 1; i < fds.Length(); ++i) {
+      unused << fdSet->SendAddFileDescriptor(fds[i]);
+    }
+  }
+
+  OptionalFileDescriptorSet optionalFDs;
+  if (fdSet) {
+    optionalFDs = fdSet;
+  } else {
+    optionalFDs = mozilla::void_t();
+  }
+
+  openArgs.fds() = optionalFDs;
+
   openArgs.uploadStreamHasHeaders() = mUploadStreamHasHeaders;
   openArgs.priority() = mPriority;
   openArgs.redirectionLimit() = mRedirectionLimit;
@@ -1217,6 +1242,13 @@ HttpChannelChild::AsyncOpen(nsIStreamListener *listener, nsISupports *aContext)
   gNeckoChild->SendPHttpChannelConstructor(this, tabChild,
                                            IPC::SerializedLoadContext(this),
                                            openArgs);
+
+  if (fdSet) {
+    FileDescriptorSetChild* fdSetActor =
+      static_cast<FileDescriptorSetChild*>(fdSet);
+
+    fdSetActor->ForgetFileDescriptors(fds);
+  }
 
   return NS_OK;
 }

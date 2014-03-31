@@ -587,6 +587,12 @@ GetJunkScopeGlobal()
     return GetNativeForGlobal(junkScope);
 }
 
+JSObject *
+GetSafeJSContextGlobal()
+{
+    return XPCJSRuntime::Get()->GetJSContextStack()->GetSafeJSContextGlobal();
+}
+
 nsGlobalWindow*
 WindowOrNull(JSObject *aObj)
 {
@@ -1523,7 +1529,6 @@ ReloadPrefsCallback(const char *pref, void *data)
     }
 
     bool useBaseline = Preferences::GetBool(JS_OPTIONS_DOT_STR "baselinejit") && !safeMode;
-    bool useTypeInference = Preferences::GetBool(JS_OPTIONS_DOT_STR "typeinference") && !safeMode;
     bool useIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "ion") && !safeMode;
     bool useAsmJS = Preferences::GetBool(JS_OPTIONS_DOT_STR "asmjs") && !safeMode;
 
@@ -1535,7 +1540,6 @@ ReloadPrefsCallback(const char *pref, void *data)
     bool useIonEager = Preferences::GetBool(JS_OPTIONS_DOT_STR "ion.unsafe_eager_compilation");
 
     JS::RuntimeOptionsRef(rt).setBaseline(useBaseline)
-                             .setTypeInference(useTypeInference)
                              .setIon(useIon)
                            .  setAsmJS(useAsmJS);
 
@@ -2351,6 +2355,11 @@ ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats &rtStats,
         KIND_NONHEAP, rtStats.runtime.gc.nurseryCommitted,
         "Memory being used by the GC's nursery.");
 
+    RREPORT_BYTES(rtPath + NS_LITERAL_CSTRING("runtime/gc/nursery-huge-slots"),
+        KIND_NONHEAP, rtStats.runtime.gc.nurseryHugeSlots,
+        "Out-of-line slots and elements belonging to objects in the "
+        "nursery.");
+
     RREPORT_BYTES(rtPath + NS_LITERAL_CSTRING("runtime/gc/store-buffer/vals"),
         KIND_HEAP, rtStats.runtime.gc.storeBufferVals,
         "Values in the store buffer.");
@@ -2393,8 +2402,8 @@ ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats &rtStats,
         "GC arenas in non-empty chunks that is decommitted, i.e. it takes up "
         "address space but no physical memory or swap space.");
 
-    REPORT_GC_BYTES(rtPath2 + NS_LITERAL_CSTRING("runtime/gc/nursery-decommitted"),
-        rtStats.runtime.gc.nurseryDecommitted,
+    REPORT_BYTES(rtPath2 + NS_LITERAL_CSTRING("runtime/gc/nursery-decommitted"),
+        KIND_NONHEAP, rtStats.runtime.gc.nurseryDecommitted,
         "Memory allocated to the GC's nursery this is decommitted, i.e. it takes up "
         "address space but no physical memory or swap space.");
 
@@ -2989,7 +2998,6 @@ class XPCJSSourceHook: public js::SourceHook {
 
 static const JSWrapObjectCallbacks WrapObjectCallbacks = {
     xpc::WrapperFactory::Rewrap,
-    xpc::WrapperFactory::WrapForSameCompartment,
     xpc::WrapperFactory::PrepareForWrapping
 };
 

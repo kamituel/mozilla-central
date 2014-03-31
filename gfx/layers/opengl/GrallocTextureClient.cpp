@@ -169,18 +169,10 @@ GrallocTextureClientOGL::UpdateSurface(gfxASurface* aSurface)
     return false;
   }
 
-  if (gfxPlatform::GetPlatform()->SupportsAzureContent()) {
-    RefPtr<DrawTarget> dt = GetAsDrawTarget();
-    RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
+  RefPtr<DrawTarget> dt = GetAsDrawTarget();
+  RefPtr<SourceSurface> source = gfxPlatform::GetPlatform()->GetSourceSurfaceForSurface(dt, aSurface);
 
-    dt->CopySurface(source, IntRect(IntPoint(), GetSize()), IntPoint());
-  } else {
-    nsRefPtr<gfxASurface> surf = GetAsSurface();
-    nsRefPtr<gfxContext> tmpCtx = new gfxContext(surf.get());
-    tmpCtx->SetOperator(gfxContext::OPERATOR_SOURCE);
-    tmpCtx->DrawSurface(aSurface, gfxSize(GetSize().width,
-                                          GetSize().height));
-  }
+  dt->CopySurface(source, IntRect(IntPoint(), GetSize()), IntPoint());
 
   return true;
 }
@@ -195,6 +187,24 @@ GrallocTextureClientOGL::SetReleaseFenceHandle(FenceHandle aReleaseFenceHandle)
   }
 }
 
+void
+GrallocTextureClientOGL::WaitReleaseFence()
+{
+#if defined(MOZ_WIDGET_GONK) && ANDROID_VERSION >= 17
+   if (mReleaseFenceHandle.IsValid()) {
+     android::sp<Fence> fence = mReleaseFenceHandle.mFence;
+#if ANDROID_VERSION == 17
+     fence->waitForever(1000, "GrallocTextureClientOGL::Lock");
+     // 1000 is what Android uses. It is warning timeout ms.
+     // This timeous is removed since ANDROID_VERSION 18. 
+#else
+     fence->waitForever("GrallocTextureClientOGL::Lock");
+#endif
+     mReleaseFenceHandle = FenceHandle();
+   }
+#endif
+}
+
 bool
 GrallocTextureClientOGL::Lock(OpenMode aMode)
 {
@@ -207,18 +217,7 @@ GrallocTextureClientOGL::Lock(OpenMode aMode)
     return true;
   }
 
-#if MOZ_WIDGET_GONK && ANDROID_VERSION >= 17
-  if (mReleaseFenceHandle.IsValid()) {
-    android::sp<Fence> fence = mReleaseFenceHandle.mFence;
-#if ANDROID_VERSION == 17
-    fence->waitForever(1000, "GrallocTextureClientOGL::Lock");
-    // 1000 is what Android uses. It is warning timeout ms.
-#else
-    fence->waitForever("GrallocTextureClientOGL::Lock");
-#endif
-    mReleaseFenceHandle = FenceHandle();
-  }
-#endif
+  WaitReleaseFence();
 
   uint32_t usage = 0;
   if (aMode & OPEN_READ) {

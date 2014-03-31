@@ -51,12 +51,7 @@ ContentClient::CreateContentClient(CompositableForwarder* aForwarder)
 
   bool useDoubleBuffering = false;
   bool useDeprecatedTextures = true;
-  // XXX We need support for gralloc with non-deprecated textures content before
-  // we can use them with FirefoxOS (bug 946720). We need the same locking for
-  // Windows.
-#if !defined(XP_WIN)
   useDeprecatedTextures = gfxPlatform::GetPlatform()->UseDeprecatedTextures();
-#endif
 
 #ifdef XP_WIN
   if (backend == LayersBackend::LAYERS_D3D11) {
@@ -103,7 +98,6 @@ ContentClientBasic::CreateBuffer(ContentType aType,
                                  RefPtr<gfx::DrawTarget>* aWhiteDT)
 {
   MOZ_ASSERT(!(aFlags & BUFFER_COMPONENT_ALPHA));
-  MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
   gfxImageFormat format =
     gfxPlatform::GetPlatform()->OptimalFormatForContent(aType);
 
@@ -1285,7 +1279,6 @@ ContentClientIncremental::BorrowDrawTargetForPainting(ThebesLayer* aLayer,
                    "BeginUpdate should always modify the draw region in the same way!");
       FillSurface(onBlack, aPaintState.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(0.0, 0.0, 0.0, 1.0));
       FillSurface(onWhite, aPaintState.mRegionToDraw, nsIntPoint(drawBounds.x, drawBounds.y), gfxRGBA(1.0, 1.0, 1.0, 1.0));
-      MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
       RefPtr<DrawTarget> onBlackDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onBlack, onBlack->GetSize().ToIntSize());
       RefPtr<DrawTarget> onWhiteDT = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(onWhite, onWhite->GetSize().ToIntSize());
       mLoanedDrawTarget = Factory::CreateDualDrawTarget(onBlackDT, onWhiteDT);
@@ -1294,7 +1287,6 @@ ContentClientIncremental::BorrowDrawTargetForPainting(ThebesLayer* aLayer,
     }
   } else {
     nsRefPtr<gfxASurface> surf = GetUpdateSurface(BUFFER_BLACK, aPaintState.mRegionToDraw);
-    MOZ_ASSERT(gfxPlatform::GetPlatform()->SupportsAzureContent());
     mLoanedDrawTarget = gfxPlatform::GetPlatform()->CreateDrawTargetForUpdateSurface(surf, surf->GetSize().ToIntSize());
   }
   if (!mLoanedDrawTarget) {

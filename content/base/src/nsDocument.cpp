@@ -120,7 +120,7 @@
 
 #include "nsDateTimeFormatCID.h"
 #include "nsIDateTimeFormat.h"
-#include "nsEventDispatcher.h"
+#include "mozilla/EventDispatcher.h"
 #include "mozilla/InternalMutationEvent.h"
 #include "nsDOMCID.h"
 
@@ -317,6 +317,111 @@ struct FireChangeArgs {
 
 namespace mozilla {
 namespace dom {
+
+static PLDHashOperator
+CustomDefinitionsTraverse(CustomElementHashKey* aKey,
+                          CustomElementDefinition* aDefinition,
+                          void* aArg)
+{
+  nsCycleCollectionTraversalCallback* cb =
+    static_cast<nsCycleCollectionTraversalCallback*>(aArg);
+
+  nsAutoPtr<LifecycleCallbacks>& callbacks = aDefinition->mCallbacks;
+
+  if (callbacks->mAttributeChangedCallback.WasPassed()) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
+      "mCustomDefinitions->mCallbacks->mAttributeChangedCallback");
+    cb->NoteXPCOMChild(aDefinition->mCallbacks->mAttributeChangedCallback.Value());
+  }
+
+  if (callbacks->mCreatedCallback.WasPassed()) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
+      "mCustomDefinitions->mCallbacks->mCreatedCallback");
+    cb->NoteXPCOMChild(aDefinition->mCallbacks->mCreatedCallback.Value());
+  }
+
+  if (callbacks->mAttachedCallback.WasPassed()) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
+      "mCustomDefinitions->mCallbacks->mAttachedCallback");
+    cb->NoteXPCOMChild(aDefinition->mCallbacks->mAttachedCallback.Value());
+  }
+
+  if (callbacks->mDetachedCallback.WasPassed()) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
+      "mCustomDefinitions->mCallbacks->mDetachedCallback");
+    cb->NoteXPCOMChild(aDefinition->mCallbacks->mDetachedCallback.Value());
+  }
+
+  return PL_DHASH_NEXT;
+}
+
+static PLDHashOperator
+CandidatesTraverse(CustomElementHashKey* aKey,
+                   nsTArray<nsRefPtr<Element>>* aData,
+                   void* aArg)
+{
+  nsCycleCollectionTraversalCallback *cb =
+    static_cast<nsCycleCollectionTraversalCallback*>(aArg);
+  for (size_t i = 0; i < aData->Length(); ++i) {
+    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb, "mCandidatesMap->Element");
+    cb->NoteXPCOMChild(aData->ElementAt(i));
+  }
+  return PL_DHASH_NEXT;
+}
+
+struct CustomDefinitionTraceArgs
+{
+  const TraceCallbacks& callbacks;
+  void* closure;
+};
+
+static PLDHashOperator
+CustomDefinitionTrace(CustomElementHashKey *aKey,
+                      CustomElementDefinition *aData,
+                      void *aArg)
+{
+  CustomDefinitionTraceArgs* traceArgs = static_cast<CustomDefinitionTraceArgs*>(aArg);
+  MOZ_ASSERT(aData, "Definition must not be null");
+  traceArgs->callbacks.Trace(&aData->mPrototype, "mCustomDefinitions prototype",
+                             traceArgs->closure);
+  return PL_DHASH_NEXT;
+}
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(Registry)
+
+NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Registry)
+  CustomDefinitionTraceArgs customDefinitionArgs = { aCallbacks, aClosure };
+  tmp->mCustomDefinitions.EnumerateRead(CustomDefinitionTrace,
+                                        &customDefinitionArgs);
+NS_IMPL_CYCLE_COLLECTION_TRACE_END
+
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(Registry)
+  tmp->mCustomDefinitions.EnumerateRead(CustomDefinitionsTraverse, &cb);
+  tmp->mCandidatesMap.EnumerateRead(CandidatesTraverse, &cb);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Registry)
+  tmp->mCustomDefinitions.Clear();
+  tmp->mCandidatesMap.Clear();
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(Registry)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(Registry)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(Registry)
+
+Registry::Registry()
+{
+  mozilla::HoldJSObjects(this);
+}
+
+Registry::~Registry()
+{
+  mozilla::DropJSObjects(this);
+}
 
 void
 CustomElementCallback::Call()
@@ -1559,9 +1664,7 @@ nsDocument::~nsDocument()
   mInDestructor = true;
   mInUnlinkOrDeletion = true;
 
-  if (mRegistry) {
-    mRegistry->Clear();
-  }
+  mRegistry = nullptr;
 
   mozilla::DropJSObjects(this);
 
@@ -1680,7 +1783,7 @@ NS_INTERFACE_MAP_END
 
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsDocument)
-NS_IMETHODIMP_(nsrefcnt)
+NS_IMETHODIMP_(MozExternalRefCountType)
 nsDocument::Release()
 {
   NS_PRECONDITION(0 != mRefCnt, "dup release");
@@ -1729,57 +1832,6 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsDocument)
   return Element::CanSkipThis(tmp);
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
-
-static PLDHashOperator
-CustomDefinitionsTraverse(CustomElementHashKey* aKey,
-                          CustomElementDefinition* aDefinition,
-                          void* aArg)
-{
-  nsCycleCollectionTraversalCallback* cb =
-    static_cast<nsCycleCollectionTraversalCallback*>(aArg);
-
-  nsAutoPtr<LifecycleCallbacks>& callbacks = aDefinition->mCallbacks;
-
-  if (callbacks->mAttributeChangedCallback.WasPassed()) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-      "mCustomDefinitions->mCallbacks->mAttributeChangedCallback");
-    cb->NoteXPCOMChild(aDefinition->mCallbacks->mAttributeChangedCallback.Value());
-  }
-
-  if (callbacks->mCreatedCallback.WasPassed()) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-      "mCustomDefinitions->mCallbacks->mCreatedCallback");
-    cb->NoteXPCOMChild(aDefinition->mCallbacks->mCreatedCallback.Value());
-  }
-
-  if (callbacks->mAttachedCallback.WasPassed()) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-      "mCustomDefinitions->mCallbacks->mAttachedCallback");
-    cb->NoteXPCOMChild(aDefinition->mCallbacks->mAttachedCallback.Value());
-  }
-
-  if (callbacks->mDetachedCallback.WasPassed()) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb,
-      "mCustomDefinitions->mCallbacks->mDetachedCallback");
-    cb->NoteXPCOMChild(aDefinition->mCallbacks->mDetachedCallback.Value());
-  }
-
-  return PL_DHASH_NEXT;
-}
-
-static PLDHashOperator
-CandidatesTraverse(CustomElementHashKey* aKey,
-                   nsTArray<nsRefPtr<Element>>* aData,
-                   void* aArg)
-{
-  nsCycleCollectionTraversalCallback *cb =
-    static_cast<nsCycleCollectionTraversalCallback*>(aArg);
-  for (size_t i = 0; i < aData->Length(); ++i) {
-    NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(*cb, "mCandidatesMap->Element");
-    cb->NoteXPCOMChild(aData->ElementAt(i));
-  }
-  return PL_DHASH_NEXT;
-}
 
 static PLDHashOperator
 SubDocTraverser(PLDHashTable *table, PLDHashEntryHdr *hdr, uint32_t number,
@@ -1931,6 +1983,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mUndoManager)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mTemplateContentsOwner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildrenCollection)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRegistry)
 
   // Traverse all our nsCOMArrays.
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStyleSheets)
@@ -1947,11 +2000,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
     tmp->mAnimationController->Traverse(&cb);
   }
 
-  if (tmp->mRegistry) {
-    tmp->mRegistry->mCustomDefinitions.EnumerateRead(CustomDefinitionsTraverse, &cb);
-    tmp->mRegistry->mCandidatesMap.EnumerateRead(CandidatesTraverse, &cb);
-  }
-
   if (tmp->mSubDocuments && tmp->mSubDocuments->ops) {
     PL_DHashTableEnumerate(tmp->mSubDocuments, SubDocTraverser, &cb);
   }
@@ -1965,32 +2013,9 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsDocument)
   }
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-struct CustomDefinitionTraceArgs
-{
-  const TraceCallbacks& callbacks;
-  void* closure;
-};
-
-static PLDHashOperator
-CustomDefinitionTrace(CustomElementHashKey *aKey,
-                      CustomElementDefinition *aData,
-                      void *aArg)
-{
-  CustomDefinitionTraceArgs* traceArgs = static_cast<CustomDefinitionTraceArgs*>(aArg);
-  MOZ_ASSERT(aData, "Definition must not be null");
-  traceArgs->callbacks.Trace(&aData->mPrototype, "mCustomDefinitions prototype",
-                             traceArgs->closure);
-  return PL_DHASH_NEXT;
-}
-
 NS_IMPL_CYCLE_COLLECTION_CLASS(nsDocument)
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsDocument)
-  CustomDefinitionTraceArgs customDefinitionArgs = { aCallbacks, aClosure };
-  if (tmp->mRegistry) {
-    tmp->mRegistry->mCustomDefinitions.EnumerateRead(CustomDefinitionTrace,
-                                                     &customDefinitionArgs);
-  }
   if (tmp->PreservingWrapper()) {
     NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mExpandoAndGeneration.expando);
   }
@@ -2027,6 +2052,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mUndoManager)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mTemplateContentsOwner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mChildrenCollection)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRegistry)
 
   tmp->mParentDocument = nullptr;
 
@@ -2067,10 +2093,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsDocument)
 
   tmp->mIdentifierMap.Clear();
   tmp->mExpandoAndGeneration.Unlink();
-
-  if (tmp->mRegistry) {
-    tmp->mRegistry->Clear();
-  }
 
   if (tmp->mAnimationController) {
     tmp->mAnimationController->Unlink();
@@ -2274,9 +2296,7 @@ nsDocument::ResetToURI(nsIURI *aURI, nsILoadGroup *aLoadGroup,
   }
   mInUnlinkOrDeletion = oldVal;
 
-  if (mRegistry) {
-    mRegistry->Clear();
-  }
+  mRegistry = nullptr;
 
   // Reset our stylesheets
   ResetStylesheetsToURI(aURI);
@@ -4856,7 +4876,7 @@ nsDocument::DispatchContentLoadedEvents()
         event->SetTrusted(true);
 
         // To dispatch this event we must manually call
-        // nsEventDispatcher::Dispatch() on the ancestor document since the
+        // EventDispatcher::Dispatch() on the ancestor document since the
         // target is not in the same document, so the event would never reach
         // the ancestor document if we used the normal event
         // dispatching code.
@@ -4870,8 +4890,8 @@ nsDocument::DispatchContentLoadedEvents()
             nsRefPtr<nsPresContext> context = shell->GetPresContext();
 
             if (context) {
-              nsEventDispatcher::Dispatch(parent, context, innerEvent, event,
-                                          &status);
+              EventDispatcher::Dispatch(parent, context, innerEvent, event,
+                                        &status);
             }
           }
         }
@@ -5444,9 +5464,10 @@ nsDocument::CustomElementConstructor(JSContext* aCx, unsigned aArgc, JS::Value* 
   }
 
   nsCOMPtr<nsIAtom> typeAtom(do_GetAtom(elemName));
-  CustomElementHashKey key(kNameSpaceID_None, typeAtom);
+  CustomElementHashKey key(kNameSpaceID_Unknown, typeAtom);
   CustomElementDefinition* definition;
-  if (!document->mRegistry->mCustomDefinitions.Get(&key, &definition)) {
+  if (!document->mRegistry ||
+      !document->mRegistry->mCustomDefinitions.Get(&key, &definition)) {
     return true;
   }
 
@@ -5471,6 +5492,14 @@ nsDocument::CustomElementConstructor(JSContext* aCx, unsigned aArgc, JS::Value* 
   NS_ENSURE_SUCCESS(rv, true);
 
   return true;
+}
+
+bool
+nsDocument::IsRegisterElementEnabled(JSContext* aCx, JSObject* aObject)
+{
+  JS::Rooted<JSObject*> obj(aCx, aObject);
+  return Preferences::GetBool("dom.webcomponents.enabled") ||
+    IsInCertifiedApp(aCx, obj);
 }
 
 nsresult
@@ -5762,7 +5791,7 @@ nsDocument::RegisterElement(JSContext* aCx, const nsAString& aType,
   // If there already exists a definition with the same TYPE, set ERROR to
   // DuplicateDefinition and stop.
   // Note that we need to find existing custom elements from either namespace.
-  CustomElementHashKey duplicateFinder(kNameSpaceID_None, typeAtom);
+  CustomElementHashKey duplicateFinder(kNameSpaceID_Unknown, typeAtom);
   if (definitions.Get(&duplicateFinder)) {
     rv.Throw(NS_ERROR_DOM_NOT_SUPPORTED_ERR);
     return nullptr;
@@ -5951,6 +5980,14 @@ nsDocument::RegisterElement(JSContext* aCx, const nsAString& aType,
                                            NS_ConvertUTF16toUTF8(lcType).get());
   JSObject* constructorObject = JS_GetFunctionObject(constructor);
   return constructorObject;
+}
+
+void
+nsDocument::UseRegistryFromDocument(nsIDocument* aDocument)
+{
+  nsDocument* doc = static_cast<nsDocument*>(aDocument);
+  MOZ_ASSERT(!mRegistry, "There should be no existing registry.");
+  mRegistry = doc->mRegistry;
 }
 
 NS_IMETHODIMP
@@ -6614,7 +6651,8 @@ nsDocument::GetTitleFromElement(uint32_t aNamespace, nsAString& aTitle)
   nsIContent* title = GetTitleContent(aNamespace);
   if (!title)
     return;
-  nsContentUtils::GetNodeTextContent(title, false, aTitle);
+  if(!nsContentUtils::GetNodeTextContent(title, false, aTitle))
+    NS_RUNTIMEABORT("OOM");
 }
 
 NS_IMETHODIMP
@@ -7256,7 +7294,10 @@ nsIDocument::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv)
       // Remove from ownerElement.
       nsRefPtr<Attr> adoptedAttr = static_cast<Attr*>(adoptedNode);
 
-      nsCOMPtr<Element> ownerElement = adoptedAttr->GetElement();
+      nsCOMPtr<Element> ownerElement = adoptedAttr->GetOwnerElement(rv);
+      if (rv.Failed()) {
+        return nullptr;
+      }
 
       if (ownerElement) {
         nsRefPtr<Attr> newAttr =
@@ -7636,7 +7677,7 @@ nsDocument::GetExistingListenerManager() const
 }
 
 nsresult
-nsDocument::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
+nsDocument::PreHandleEvent(EventChainPreVisitor& aVisitor)
 {
   aVisitor.mCanHandle = true;
    // FIXME! This is a hack to make middle mouse paste working also in Editor.
@@ -7675,10 +7716,9 @@ nsIDocument::CreateEvent(const nsAString& aEventType, ErrorResult& rv) const
 
   // Create event even without presContext.
   nsCOMPtr<nsIDOMEvent> ev;
-  rv =
-    nsEventDispatcher::CreateEvent(const_cast<nsIDocument*>(this),
-                                   presContext, nullptr, aEventType,
-                                   getter_AddRefs(ev));
+  rv = EventDispatcher::CreateEvent(const_cast<nsIDocument*>(this),
+                                    presContext, nullptr, aEventType,
+                                    getter_AddRefs(ev));
   return ev ? dont_AddRef(ev.forget().take()->InternalDOMEvent()) : nullptr;
 }
 
@@ -8421,9 +8461,7 @@ nsDocument::Destroy()
   // tearing down all those frame trees right now is the right thing to do.
   mExternalResourceMap.Shutdown();
 
-  if (mRegistry) {
-    mRegistry->Clear();
-  }
+  mRegistry = nullptr;
 
   // XXX We really should let cycle collection do this, but that currently still
   //     leaks (see https://bugzilla.mozilla.org/show_bug.cgi?id=406684).
@@ -8669,8 +8707,8 @@ nsDocument::DispatchPageTransition(EventTarget* aDispatchTarget,
                                                                  aPersisted))) {
       event->SetTrusted(true);
       event->SetTarget(this);
-      nsEventDispatcher::DispatchDOMEvent(aDispatchTarget, nullptr, event,
-                                          nullptr, nullptr);
+      EventDispatcher::DispatchDOMEvent(aDispatchTarget, nullptr, event,
+                                        nullptr, nullptr);
     }
   }
 }
@@ -12209,3 +12247,4 @@ nsAutoSyncOperation::~nsAutoSyncOperation()
   }
   nsContentUtils::SetMicroTaskLevel(mMicroTaskLevel);
 }
+

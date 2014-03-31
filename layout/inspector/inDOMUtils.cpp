@@ -557,6 +557,16 @@ static void GetOtherValuesForProperty(const uint32_t aParserVariant,
   if (aParserVariant & VARIANT_URL) {
     InsertNoDuplicates(aArray, NS_LITERAL_STRING("url"));
   }
+  if (aParserVariant & VARIANT_GRADIENT) {
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("linear-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("radial-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("repeating-linear-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("repeating-radial-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("-moz-linear-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("-moz-radial-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("-moz-repeating-linear-gradient"));
+    InsertNoDuplicates(aArray, NS_LITERAL_STRING("-moz-repeating-radial-gradient"));
+  }
 }
 
 NS_IMETHODIMP
@@ -631,7 +641,7 @@ inDOMUtils::ColorNameToRGB(const nsAString& aColorName, JSContext* aCx,
   triple.mG = NS_GET_G(color);
   triple.mB = NS_GET_B(color);
 
-  if (!triple.ToObject(aCx, JS::NullPtr(), aValue)) {
+  if (!triple.ToObject(aCx, aValue)) {
     return NS_ERROR_FAILURE;
   }
 

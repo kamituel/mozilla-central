@@ -17,6 +17,7 @@
 #include "mozilla/layers/LayersMessages.h" // for ShmemSection
 #include "LayersTypes.h"
 #include <vector>
+#include "mozilla/layers/AtomicRefCountedWithFinalize.h"
 
 /*
  * FIXME [bjacob] *** PURE CRAZYNESS WARNING ***
@@ -76,11 +77,13 @@ bool ReleaseOwnedSurfaceDescriptor(const SurfaceDescriptor& aDescriptor);
  * These methods should be only called in the ipdl implementor's thread, unless
  * specified otherwise in the implementing class.
  */
-class ISurfaceAllocator : public AtomicRefCounted<ISurfaceAllocator>
+class ISurfaceAllocator : public AtomicRefCountedWithFinalize<ISurfaceAllocator>
 {
 public:
   MOZ_DECLARE_REFCOUNTED_TYPENAME(ISurfaceAllocator)
   ISurfaceAllocator() {}
+
+  void Finalize();
 
   /**
    * Returns the type of backend that is used off the main thread.
@@ -157,6 +160,11 @@ public:
     return nullptr;
   }
 
+  virtual void DeallocGrallocBuffer(PGrallocBufferChild* aChild)
+  {
+    NS_RUNTIMEABORT("should not be called");
+  }
+
   virtual bool IPCOpen() const { return true; }
   virtual bool IsSameProcess() const = 0;
 
@@ -167,7 +175,7 @@ protected:
   // this method is needed for a temporary fix, will be removed after
   // DeprecatedTextureClient/Host rework.
   virtual bool IsOnCompositorSide() const = 0;
-  static bool PlatformDestroySharedSurface(SurfaceDescriptor* aSurface);
+  bool PlatformDestroySharedSurface(SurfaceDescriptor* aSurface);
   virtual bool PlatformAllocSurfaceDescriptor(const gfx::IntSize& aSize,
                                               gfxContentType aContent,
                                               uint32_t aCaps,
@@ -181,7 +189,7 @@ protected:
   // This is used to implement an extremely simple & naive heap allocator.
   std::vector<mozilla::ipc::Shmem> mUsedShmems;
 
-  friend class detail::RefCounted<ISurfaceAllocator, detail::AtomicRefCount>;
+  friend class AtomicRefCountedWithFinalize<ISurfaceAllocator>;
 };
 
 class GfxMemoryImageReporter MOZ_FINAL : public nsIMemoryReporter

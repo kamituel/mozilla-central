@@ -17,7 +17,6 @@ import org.mozilla.gecko.GeckoApplication;
 import org.mozilla.gecko.GeckoProfile;
 import org.mozilla.gecko.LightweightTheme;
 import org.mozilla.gecko.R;
-import org.mozilla.gecko.ReaderModeUtils;
 import org.mozilla.gecko.Tab;
 import org.mozilla.gecko.Tabs;
 import org.mozilla.gecko.animation.PropertyAnimator;
@@ -208,8 +207,6 @@ public class BrowserToolbar extends GeckoRelativeLayout
         mActionItemBar = (LinearLayout) findViewById(R.id.menu_items);
         mHasSoftMenuButton = !HardwareUtils.hasMenuButton();
 
-        mProgressBar = (ToolbarProgressView) findViewById(R.id.progress);
-
         // We use different layouts on phones and tablets, so adjust the focus
         // order appropriately.
         mFocusOrder = new ArrayList<View>();
@@ -367,6 +364,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
                 }
             });
         }
+    }
+
+    public void setProgressBar(ToolbarProgressView progressBar) {
+        mProgressBar = progressBar;
     }
 
     public void refresh() {
@@ -1350,7 +1351,10 @@ public class BrowserToolbar extends GeckoRelativeLayout
                 tab.toggleReaderMode();
             }
         } else if (event.equals("Reader:LongClick")) {
-            ReaderModeUtils.addToReadingList(Tabs.getInstance().getSelectedTab());
+            Tab tab = Tabs.getInstance().getSelectedTab();
+            if (tab != null) {
+                tab.addToReadingList();
+            }
         }
     }
 

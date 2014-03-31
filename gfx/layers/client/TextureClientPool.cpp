@@ -30,6 +30,11 @@ TextureClientPool::TextureClientPool(gfx::SurfaceFormat aFormat, gfx::IntSize aS
   mTimer = do_CreateInstance("@mozilla.org/timer;1");
 }
 
+TextureClientPool::~TextureClientPool()
+{
+  mTimer->Cancel();
+}
+
 TemporaryRef<TextureClient>
 TextureClientPool::GetTextureClient()
 {
@@ -39,6 +44,7 @@ TextureClientPool::GetTextureClient()
   RefPtr<TextureClient> textureClient;
   if (mTextureClients.size()) {
     textureClient = mTextureClients.top();
+    textureClient->WaitReleaseFence();
     mTextureClients.pop();
     return textureClient;
   }

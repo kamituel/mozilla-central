@@ -608,6 +608,8 @@ ArrayMetaTypeDescr::create(JSContext *cx,
     if (!prototypeObj)
         return nullptr;
 
+    obj->initReservedSlot(JS_DESCR_SLOT_PROTO, ObjectValue(*prototypeObj));
+
     if (!LinkConstructorAndPrototype(cx, obj, prototypeObj))
         return nullptr;
 
@@ -978,6 +980,8 @@ StructMetaTypeDescr::create(JSContext *cx,
         cx, CreatePrototypeObjectForComplexTypeInstance(cx, structTypePrototype));
     if (!prototypeObj)
         return nullptr;
+
+    descr->initReservedSlot(JS_DESCR_SLOT_PROTO, ObjectValue(*prototypeObj));
 
     if (!LinkConstructorAndPrototype(cx, descr, prototypeObj))
         return nullptr;
@@ -1411,8 +1415,7 @@ TypedObject::createUnattachedWithClass(JSContext *cx,
 
     // Tag the type object for this instance with the type
     // representation, if that has not been done already.
-    if (cx->typeInferenceEnabled() && !type->is<SimpleTypeDescr>()) {
-        // FIXME Bug 929651           ^~~~~~~~~~~~~~~~~~~~~~~~~~~
+    if (!type->is<SimpleTypeDescr>()) { // FIXME Bug 929651
         RootedTypeObject typeObj(cx, obj->getType(cx));
         if (typeObj) {
             if (!typeObj->addTypedObjectAddendum(cx, type))
@@ -1438,6 +1441,7 @@ TypedObject::attach(ArrayBufferObject &buffer, int32_t offset)
 void
 TypedObject::attach(TypedObject &typedObj, int32_t offset)
 {
+    JS_ASSERT(!typedObj.owner().isNeutered());
     JS_ASSERT(typedObj.typedMem() != NULL);
 
     attach(typedObj.owner(), typedObj.offset() + offset);
@@ -1469,6 +1473,7 @@ TypedObjLengthFromType(TypeDescr &descr)
 TypedObject::createDerived(JSContext *cx, HandleSizedTypeDescr type,
                            HandleTypedObject typedObj, size_t offset)
 {
+    JS_ASSERT(!typedObj->owner().isNeutered());
     JS_ASSERT(typedObj->typedMem() != NULL);
     JS_ASSERT(offset <= typedObj->size());
     JS_ASSERT(offset + type->size() <= typedObj->size());
@@ -1589,7 +1594,10 @@ TypedObject::obj_trace(JSTracer *trace, JSObject *object)
     if (repr->opaque()) {
         uint8_t *mem = typedObj.typedMem();
         if (!mem)
-            return; // unattached handle or partially constructed
+            return; // partially constructed
+
+        if (typedObj.owner().isNeutered())
+            return;
 
         switch (repr->kind()) {
           case TypeDescr::Scalar:
@@ -1754,7 +1762,7 @@ TypedObject::obj_getGeneric(JSContext *cx, HandleObject obj, HandleObject receiv
       case TypeDescr::SizedArray:
       case TypeDescr::UnsizedArray:
         if (JSID_IS_ATOM(id, cx->names().length)) {
-            if (!typedObj->typedMem()) { // unattached
+            if (typedObj->owner().isNeutered() || !typedObj->typedMem()) { // unattached
                 JS_ReportErrorNumber(
                     cx, js_GetErrorMessage,
                     nullptr, JSMSG_TYPEDOBJECT_HANDLE_UNATTACHED);
@@ -2158,6 +2166,12 @@ TypedObject::obj_enumerate(JSContext *cx, HandleObject obj, JSIterateOp enum_op,
 }
 
 /* static */ size_t
+TypedObject::ownerOffset()
+{
+    return JSObject::getFixedSlotOffset(JS_TYPEDOBJ_SLOT_OWNER);
+}
+
+/* static */ size_t
 TypedObject::dataOffset()
 {
     // the offset of 7 is based on the alloc kind
@@ -2165,12 +2179,12 @@ TypedObject::dataOffset()
 }
 
 void
-TypedObject::neuter(JSContext *cx)
+TypedObject::neuter(void *newData)
 {
     setSlot(JS_TYPEDOBJ_SLOT_LENGTH, Int32Value(0));
     setSlot(JS_TYPEDOBJ_SLOT_BYTELENGTH, Int32Value(0));
     setSlot(JS_TYPEDOBJ_SLOT_BYTEOFFSET, Int32Value(0));
-    setPrivate(nullptr);
+    setPrivate(newData);
 }
 
 /******************************************************************************
@@ -2637,13 +2651,14 @@ bool
 js::SetTypedObjectOffset(ThreadSafeContext *, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    JS_ASSERT(argc == 2);
+    JS_ASSERT(args.length() == 2);
     JS_ASSERT(args[0].isObject() && args[0].toObject().is<TypedObject>());
     JS_ASSERT(args[1].isInt32());
 
     TypedObject &typedObj = args[0].toObject().as<TypedObject>();
     int32_t offset = args[1].toInt32();
 
+    JS_ASSERT(!typedObj.owner().isNeutered());
     JS_ASSERT(typedObj.typedMem() != nullptr); // must be attached already
 
     typedObj.setPrivate(typedObj.owner().dataPointer() + offset);
@@ -2667,6 +2682,20 @@ js::ObjectIsTypeDescr(ThreadSafeContext *, unsigned argc, Value *vp)
 
 JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::ObjectIsTypeDescrJitInfo, ObjectIsTypeDescrJitInfo,
                                       js::ObjectIsTypeDescr);
+
+bool
+js::ObjectIsTypedObject(ThreadSafeContext *, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isObject());
+    args.rval().setBoolean(args[0].toObject().is<TypedObject>());
+    return true;
+}
+
+JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::ObjectIsTypedObjectJitInfo,
+                                      ObjectIsTypedObjectJitInfo,
+                                      js::ObjectIsTypedObject);
 
 bool
 js::ObjectIsOpaqueTypedObject(ThreadSafeContext *, unsigned argc, Value *vp)
@@ -2697,12 +2726,74 @@ JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::ObjectIsTransparentTypedObjectJitInfo,
                                       js::ObjectIsTransparentTypedObject);
 
 bool
+js::TypeDescrIsSimpleType(ThreadSafeContext *, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().is<js::TypeDescr>());
+    args.rval().setBoolean(args[0].toObject().is<js::SimpleTypeDescr>());
+    return true;
+}
+
+JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::TypeDescrIsSimpleTypeJitInfo,
+                                      TypeDescrIsSimpleTypeJitInfo,
+                                      js::TypeDescrIsSimpleType);
+
+bool
+js::TypeDescrIsArrayType(ThreadSafeContext *, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().is<js::TypeDescr>());
+    JSObject& obj = args[0].toObject();
+    args.rval().setBoolean(obj.is<js::SizedArrayTypeDescr>() ||
+                           obj.is<js::UnsizedArrayTypeDescr>());
+    return true;
+}
+
+JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::TypeDescrIsArrayTypeJitInfo,
+                                      TypeDescrIsArrayTypeJitInfo,
+                                      js::TypeDescrIsArrayType);
+
+bool
+js::TypeDescrIsSizedArrayType(ThreadSafeContext *, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().is<js::TypeDescr>());
+    args.rval().setBoolean(args[0].toObject().is<js::SizedArrayTypeDescr>());
+    return true;
+}
+
+JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::TypeDescrIsSizedArrayTypeJitInfo,
+                                      TypeDescrIsSizedArrayTypeJitInfo,
+                                      js::TypeDescrIsSizedArrayType);
+
+bool
+js::TypeDescrIsUnsizedArrayType(ThreadSafeContext *, unsigned argc, Value *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+    JS_ASSERT(args.length() == 1);
+    JS_ASSERT(args[0].isObject());
+    JS_ASSERT(args[0].toObject().is<js::TypeDescr>());
+    args.rval().setBoolean(args[0].toObject().is<js::UnsizedArrayTypeDescr>());
+    return true;
+}
+
+JS_JITINFO_NATIVE_PARALLEL_THREADSAFE(js::TypeDescrIsUnsizedArrayTypeJitInfo,
+                                      TypeDescrIsUnsizedArrayTypeJitInfo,
+                                      js::TypeDescrIsUnsizedArrayType);
+
+bool
 js::TypedObjectIsAttached(ThreadSafeContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args[0].isObject() && args[0].toObject().is<TypedObject>());
     TypedObject &typedObj = args[0].toObject().as<TypedObject>();
-    args.rval().setBoolean(typedObj.typedMem() != nullptr);
+    args.rval().setBoolean(!typedObj.owner().isNeutered() && typedObj.typedMem() != nullptr);
     return true;
 }
 

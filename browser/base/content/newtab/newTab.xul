@@ -31,10 +31,12 @@
                       label="&newtab.undo.restoreButton;"
                       class="newtab-undo-button" />
           <xul:toolbarbutton id="newtab-undo-close-button" tabindex="-1"
-                             class="close-icon"
+                             class="close-icon tabbable"
                              tooltiptext="&newtab.undo.closeTooltip;" />
         </div>
       </div>
+
+      <xul:spacer flex="1"/>
 
       <div id="newtab-horizontal-margin">
         <div class="newtab-side-margin"/>
@@ -45,7 +47,7 @@
         <div class="newtab-side-margin"/>
       </div>
 
-      <div id="newtab-margin-bottom"/>
+      <xul:spacer flex="1"/>
     </div>
     <input id="newtab-toggle" type="button"/>
   </div>

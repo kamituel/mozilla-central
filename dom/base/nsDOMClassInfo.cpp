@@ -158,7 +158,6 @@
 #endif
 
 #include "nsIDOMGlobalObjectConstructor.h"
-#include "nsIDOMLockedFile.h"
 #include "nsDebug.h"
 
 #include "mozilla/dom/BindingUtils.h"
@@ -459,8 +458,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 #endif
 
-  NS_DEFINE_CLASSINFO_DATA(LockedFile, nsEventTargetSH,
-                           EVENTTARGET_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(CSSFontFeatureValuesRule, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
@@ -1153,10 +1150,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_END
 
 #endif
-
-  DOM_CLASSINFO_MAP_BEGIN(LockedFile, nsIDOMLockedFile)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMLockedFile)
-  DOM_CLASSINFO_MAP_END
 
   DOM_CLASSINFO_MAP_BEGIN(CSSFontFeatureValuesRule, nsIDOMCSSFontFeatureValuesRule)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCSSFontFeatureValuesRule)
@@ -3505,6 +3498,8 @@ NS_IMETHODIMP
 nsLocationSH::AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                           JSObject *obj, jsid aId, jsval *vp, bool *_retval)
 {
+  JS::Rooted<JSObject*> rootedObj(cx, obj);
+
   // Shadowing protection. This will go away when nsLocation moves to the new
   // bindings.
   JS::Rooted<jsid> id(cx, aId);
@@ -3512,6 +3507,9 @@ nsLocationSH::AddProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
     JS_ReportError(cx, "Permission denied to shadow native property");
     return NS_ERROR_FAILURE;
   }
+
+  nsLocation* location = static_cast<nsLocation*>(GetNative(wrapper, rootedObj));
+  location->PreserveWrapper(location);
 
   return NS_OK;
 }

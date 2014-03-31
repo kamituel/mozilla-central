@@ -497,6 +497,14 @@ LayerManagerComposite::Render()
   // Render our layers.
   RootLayer()->RenderLayer(clipRect);
 
+  if (!mRegionToClear.IsEmpty()) {
+    nsIntRegionRectIterator iter(mRegionToClear);
+    const nsIntRect *r;
+    while ((r = iter.Next())) {
+      mCompositor->ClearRect(Rect(r->x, r->y, r->width, r->height));
+    }
+  }
+
   // Allow widget to render a custom foreground.
   mCompositor->GetWidget()->DrawWindowOverlay(this, nsIntRect(actualBounds.x,
                                                               actualBounds.y,
@@ -509,6 +517,7 @@ LayerManagerComposite::Render()
   {
     PROFILER_LABEL("LayerManagerComposite", "EndFrame");
     mCompositor->EndFrame();
+    mCompositor->SetFBAcquireFence(mRoot);
   }
 
   mCompositor->GetWidget()->PostRender(this);

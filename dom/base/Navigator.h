@@ -14,13 +14,14 @@
 #include "nsIMozNavigatorNetwork.h"
 #include "nsAutoPtr.h"
 #include "nsWrapperCache.h"
+#include "nsHashKeys.h"
+#include "nsInterfaceHashtable.h"
 #include "nsString.h"
 #include "nsTArray.h"
 
 class nsPluginArray;
 class nsMimeTypeArray;
 class nsPIDOMWindow;
-class nsIDOMMozConnection;
 class nsIDOMMozMobileMessageManager;
 class nsIDOMNavigatorSystemMessages;
 class nsDOMCameraManager;
@@ -197,7 +198,7 @@ public:
                              ErrorResult& aRv);
   nsIDOMMozMobileMessageManager* GetMozMobileMessage();
   Telephony* GetMozTelephony(ErrorResult& aRv);
-  network::Connection* GetMozConnection();
+  network::Connection* GetConnection(ErrorResult& aRv);
   nsDOMCameraManager* GetMozCameras(ErrorResult& aRv);
   void MozSetMessageHandler(const nsAString& aType,
                             systemMessageCallback* aCallback,
@@ -304,6 +305,8 @@ public:
 
   static bool HasDownloadsSupport(JSContext* aCx, JSObject* aGlobal);
 
+  static bool HasPermissionSettingsSupport(JSContext* aCx, JSObject* aGlobal);
+
   nsPIDOMWindow* GetParentObject() const
   {
     return GetWindow();
@@ -348,6 +351,13 @@ private:
   nsTArray<nsRefPtr<nsDOMDeviceStorage> > mDeviceStorageStores;
   nsRefPtr<time::TimeManager> mTimeManager;
   nsCOMPtr<nsPIDOMWindow> mWindow;
+
+  // Hashtable for saving cached objects newresolve created, so we don't create
+  // the object twice if asked for it twice, whether due to use of "delete" or
+  // due to Xrays.  We could probably use a nsJSThingHashtable here, but then
+  // we'd need to figure out exactly how to trace that, and that seems to be
+  // rocket science.  :(
+  nsInterfaceHashtable<nsStringHashKey, nsISupports> mCachedResolveResults;
 };
 
 } // namespace dom
