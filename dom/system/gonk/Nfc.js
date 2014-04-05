@@ -463,6 +463,29 @@ Nfc.prototype = {
   },
 
   /**
+   * Send message to system target
+   *
+   * @param systemMessageType
+   *        A text message type to system
+   * @param message
+   *        A message object
+   */
+  sendMessageToSystem: function sendMessageToSystem(systemMessageType,
+                                                    message) {
+    let systemPageURL = Services.prefs.getCharPref('browser.homescreenURL');
+    let systemManifestURL = Services.prefs.getCharPref('browser.manifestURL');
+    let uriPage = Services.io.newURI(systemPageURL, null, null);
+    let uriManifest = Services.io.newURI(systemManifestURL, null, null);
+
+    if (!uriPage && !uriManifest) {
+      return;
+    }
+
+    gSystemMessenger.sendMessage(systemMessageType, message,
+                                 uriPage, uriManifest, null);
+  },
+
+  /**
    * Process the incoming message from the NFC worker
    */
   onmessage: function onmessage(event) {
@@ -483,7 +506,7 @@ Nfc.prototype = {
         // Do not expose the actual session to the content
         delete message.sessionId;
 
-        gSystemMessenger.broadcastMessage("nfc-manager-tech-discovered", message);
+        this.sendMessageToSystem("nfc-manager-tech-discovered", message);
         break;
       case "techLost":
         gMessageManager._unregisterMessageTarget(this.sessionTokenMap[this._currentSessionId], null);
@@ -493,7 +516,7 @@ Nfc.prototype = {
         // Do not expose the actual session to the content
         delete message.sessionId;
 
-        gSystemMessenger.broadcastMessage("nfc-manager-tech-lost", message);
+        this.sendMessageToSystem("nfc-manager-tech-lost", message);
         // Notify 'PeerLost' to appropriate registered target, if any
         gMessageManager.notifyPeerEvent(this.currentPeerAppId, NFC.NFC_PEER_EVENT_LOST);
         delete this.sessionTokenMap[this._currentSessionId];
