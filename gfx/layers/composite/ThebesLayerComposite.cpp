@@ -54,8 +54,6 @@ bool
 ThebesLayerComposite::SetCompositableHost(CompositableHost* aHost)
 {
   switch (aHost->GetType()) {
-    case BUFFER_CONTENT:
-    case BUFFER_CONTENT_DIRECT:
     case BUFFER_CONTENT_INC:
     case BUFFER_TILED:
     case COMPOSITABLE_CONTENT_SINGLE:
@@ -132,6 +130,7 @@ ThebesLayerComposite::RenderLayer(const nsIntRect& aClipRect)
 
   EffectChain effectChain(this);
   LayerManagerComposite::AutoAddMaskEffect autoMaskEffect(mMaskLayer, effectChain);
+
   nsIntRegion visibleRegion = GetEffectiveVisibleRegion();
 
   TiledLayerProperties tiledLayerProps;

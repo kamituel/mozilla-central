@@ -87,13 +87,16 @@ struct DisplayPortPropertyData {
 
 struct DisplayPortMarginsPropertyData {
   DisplayPortMarginsPropertyData(const LayerMargin& aMargins,
-                                 uint32_t aAlignment, uint32_t aPriority)
+                                 uint32_t aAlignmentX, uint32_t aAlignmentY,
+                                 uint32_t aPriority)
     : mMargins(aMargins)
-    , mAlignment(aAlignment)
+    , mAlignmentX(aAlignmentX)
+    , mAlignmentY(aAlignmentY)
     , mPriority(aPriority)
   {}
   LayerMargin mMargins;
-  uint32_t mAlignment;
+  uint32_t mAlignmentX;
+  uint32_t mAlignmentY;
   uint32_t mPriority;
 };
 
@@ -117,6 +120,7 @@ class nsLayoutUtils
   typedef mozilla::ContainerLayerParameters ContainerLayerParameters;
   typedef mozilla::gfx::SourceSurface SourceSurface;
   typedef mozilla::gfx::DrawTarget DrawTarget;
+  typedef mozilla::gfx::Rect Rect;
 
 public:
   typedef mozilla::layers::FrameMetrics FrameMetrics;
@@ -798,6 +802,16 @@ public:
    * @param aFactor The number of app units per graphics unit.
    * @return The smallest rectangle in app space that contains aRect.
    */
+  static nsRect RoundGfxRectToAppRect(const Rect &aRect, float aFactor);
+
+  /**
+   * Given a graphics rectangle in graphics space, return a rectangle in
+   * app space that contains the graphics rectangle, rounding out as necessary.
+   *
+   * @param aRect The graphics rect to round outward.
+   * @param aFactor The number of app units per graphics unit.
+   * @return The smallest rectangle in app space that contains aRect.
+   */
   static nsRect RoundGfxRectToAppRect(const gfxRect &aRect, float aFactor);
 
   /**
@@ -1195,6 +1209,8 @@ public:
             nsRuleNode::ComputeCoordPercentCalc(aCoord, nscoord_MAX) == 0 &&
             nsRuleNode::ComputeCoordPercentCalc(aCoord, 0) == 0);
   }
+
+  static void MarkDescendantsDirty(nsIFrame *aSubtreeRoot);
 
   /*
    * Calculate the used values for 'width' and 'height' for a replaced element.

@@ -5,6 +5,8 @@
 
 package org.mozilla.gecko.home;
 
+import org.mozilla.gecko.GeckoAppShell;
+import org.mozilla.gecko.GeckoEvent;
 import org.mozilla.gecko.R;
 import org.mozilla.gecko.util.ThreadUtils;
 
@@ -862,17 +864,39 @@ public final class HomeConfig {
      * method.
      */
     public static class State implements Iterable<PanelConfig> {
-        private final HomeConfig mHomeConfig;
+        private HomeConfig mHomeConfig;
         private final List<PanelConfig> mPanelConfigs;
+        private final boolean mIsDefault;
 
-        private State(HomeConfig homeConfig, List<PanelConfig> panelConfigs) {
+        State(List<PanelConfig> panelConfigs, boolean isDefault) {
+            this(null, panelConfigs, isDefault);
+        }
+
+        private State(HomeConfig homeConfig, List<PanelConfig> panelConfigs, boolean isDefault) {
             mHomeConfig = homeConfig;
             mPanelConfigs = Collections.unmodifiableList(panelConfigs);
+            mIsDefault = isDefault;
+        }
+
+        private void setHomeConfig(HomeConfig homeConfig) {
+            if (mHomeConfig != null) {
+                throw new IllegalStateException("Can't set HomeConfig more than once");
+            }
+
+            mHomeConfig = homeConfig;
         }
 
         @Override
         public Iterator<PanelConfig> iterator() {
             return mPanelConfigs.iterator();
+        }
+
+        /**
+         * Returns whether this {@code State} instance represents the default
+         * {@code HomeConfig} configuration or not.
+         */
+        public boolean isDefault() {
+            return mIsDefault;
         }
 
         /**
@@ -904,17 +928,25 @@ public final class HomeConfig {
         private final HomeConfig mHomeConfig;
         private final Map<String, PanelConfig> mConfigMap;
         private final List<String> mConfigOrder;
+        private final List<GeckoEvent> mEventQueue;
         private final Thread mOriginalThread;
 
         private PanelConfig mDefaultPanel;
         private int mEnabledCount;
+
+        private boolean mHasChanged;
+        private final boolean mIsFromDefault;
 
         private Editor(HomeConfig homeConfig, State configState) {
             mHomeConfig = homeConfig;
             mOriginalThread = Thread.currentThread();
             mConfigMap = new HashMap<String, PanelConfig>();
             mConfigOrder = new LinkedList<String>();
+            mEventQueue = new LinkedList<GeckoEvent>();
             mEnabledCount = 0;
+
+            mHasChanged = false;
+            mIsFromDefault = configState.isDefault();
 
             initFromState(configState);
         }
@@ -1050,6 +1082,7 @@ public final class HomeConfig {
             setPanelIsDisabled(panelConfig, false);
 
             mDefaultPanel = panelConfig;
+            mHasChanged = true;
         }
 
         /**
@@ -1076,6 +1109,8 @@ public final class HomeConfig {
             } else if (mEnabledCount == 1) {
                 setDefault(panelId);
             }
+
+            mHasChanged = true;
         }
 
         /**
@@ -1113,8 +1148,12 @@ public final class HomeConfig {
                 }
 
                 installed = true;
+
+                // Add an event to the queue if a new panel is sucessfully installed.
+                mEventQueue.add(GeckoEvent.createBroadcastEvent("HomePanels:Installed", panelConfig.getId()));
             }
 
+            mHasChanged = true;
             return installed;
         }
 
@@ -1146,6 +1185,10 @@ public final class HomeConfig {
                 findNewDefault();
             }
 
+            // Add an event to the queue if a panel is succesfully uninstalled.
+            mEventQueue.add(GeckoEvent.createBroadcastEvent("HomePanels:Uninstalled", panelId));
+
+            mHasChanged = true;
             return true;
         }
 
@@ -1194,6 +1237,7 @@ public final class HomeConfig {
                 updated = true;
             }
 
+            mHasChanged = true;
             return updated;
         }
 
@@ -1209,12 +1253,21 @@ public final class HomeConfig {
             // We're about to save the current state in the background thread
             // so we should use a deep copy of the PanelConfig instances to
             // avoid saving corrupted state.
-            final State newConfigState = new State(mHomeConfig, makeOrderedCopy(true));
+            final State newConfigState =
+                    new State(mHomeConfig, makeOrderedCopy(true), isDefault());
+
+            // Copy the event queue to a new list, so that we only modify mEventQueue on
+            // the original thread where it was created.
+            final LinkedList<GeckoEvent> eventQueueCopy = new LinkedList<GeckoEvent>(mEventQueue);
+            mEventQueue.clear();
 
             ThreadUtils.getBackgroundHandler().post(new Runnable() {
                 @Override
                 public void run() {
                     mHomeConfig.save(newConfigState);
+
+                    // Send pending events after the new config is saved.
+                    sendEventsToGecko(eventQueueCopy);
                 }
             });
 
@@ -1230,17 +1283,38 @@ public final class HomeConfig {
         public State commit() {
             ThreadUtils.assertOnThread(mOriginalThread);
 
-            final State newConfigState = new State(mHomeConfig, makeOrderedCopy(false));
+            final State newConfigState =
+                    new State(mHomeConfig, makeOrderedCopy(false), isDefault());
 
             // This is a synchronous blocking operation, hence no
             // need to deep copy the current PanelConfig instances.
             mHomeConfig.save(newConfigState);
 
+            // Send pending events after the new config is saved.
+            sendEventsToGecko(mEventQueue);
+            mEventQueue.clear();
+
             return newConfigState;
+        }
+
+        /**
+         * Returns whether the {@code Editor} represents the default
+         * {@code HomeConfig} configuration without any unsaved changes.
+         */
+        public boolean isDefault() {
+            ThreadUtils.assertOnThread(mOriginalThread);
+
+            return (!mHasChanged && mIsFromDefault);
         }
 
         public boolean isEmpty() {
             return mConfigMap.isEmpty();
+        }
+
+        private void sendEventsToGecko(List<GeckoEvent> events) {
+            for (GeckoEvent e : events) {
+                GeckoAppShell.sendEventToGecko(e);
+            }
         }
 
         private class EditorIterator implements Iterator<PanelConfig> {
@@ -1275,15 +1349,15 @@ public final class HomeConfig {
         }
     }
 
-    public interface OnChangeListener {
-        public void onChange();
+    public interface OnReloadListener {
+        public void onReload();
     }
 
     public interface HomeConfigBackend {
-        public List<PanelConfig> load();
-        public void save(List<PanelConfig> entries);
+        public State load();
+        public void save(State configState);
         public String getLocale();
-        public void setOnChangeListener(OnChangeListener listener);
+        public void setOnReloadListener(OnReloadListener listener);
     }
 
     // UUIDs used to create PanelConfigs for default built-in panels
@@ -1299,8 +1373,10 @@ public final class HomeConfig {
     }
 
     public State load() {
-        final List<PanelConfig> panelConfigs = mBackend.load();
-        return new State(this, panelConfigs);
+        final State configState = mBackend.load();
+        configState.setHomeConfig(this);
+
+        return configState;
     }
 
     public String getLocale() {
@@ -1308,11 +1384,11 @@ public final class HomeConfig {
     }
 
     public void save(State configState) {
-        mBackend.save(configState.mPanelConfigs);
+        mBackend.save(configState);
     }
 
-    public void setOnChangeListener(OnChangeListener listener) {
-        mBackend.setOnChangeListener(listener);
+    public void setOnReloadListener(OnReloadListener listener) {
+        mBackend.setOnReloadListener(listener);
     }
 
     public static PanelConfig createBuiltinPanelConfig(Context context, PanelType panelType) {

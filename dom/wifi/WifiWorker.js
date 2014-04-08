@@ -111,11 +111,17 @@ var WifiManager = (function() {
       schedScanRecovery: libcutils.property_get("ro.moz.wifi.sched_scan_recover") === "false" ? false : true,
       driverDelay: libcutils.property_get("ro.moz.wifi.driverDelay"),
       p2pSupported: libcutils.property_get("ro.moz.wifi.p2p_supported") === "1",
+      eapSimSupported: libcutils.property_get("ro.moz.wifi.eapsim_supported") === "1",
       ifname: libcutils.property_get("wifi.interface")
     };
   }
 
-  let {sdkVersion, unloadDriverEnabled, schedScanRecovery, driverDelay, p2pSupported, ifname} = getStartupPrefs();
+  let {sdkVersion, unloadDriverEnabled, schedScanRecovery,
+       driverDelay, p2pSupported, eapSimSupported, ifname} = getStartupPrefs();
+
+  let capabilities = {
+    eapSim: eapSimSupported
+  };
 
   let wifiListener = {
     onWaitEvent: function(event, iface) {
@@ -1303,6 +1309,10 @@ var WifiManager = (function() {
     });
   };
 
+  manager.getCapabilities = function() {
+    return capabilities;
+  }
+
   return manager;
 })();
 
@@ -1767,7 +1777,7 @@ function WifiWorker() {
     });
 
     try {
-      self._allowWpaEap = Services.prefs.getBoolPref("b2g.wifi.allow_unsafe_wpa_eap");
+      self._allowWpaEap = WifiManager.getCapabilities().eapSim;
     } catch (e) {
       self._allowWpaEap = false;
     }
@@ -2427,8 +2437,12 @@ WifiWorker.prototype = {
   },
 
   _sendMessage: function(message, success, data, msg) {
-    msg.manager.sendAsyncMessage(message + (success ? ":OK" : ":NO"),
-                                 { data: data, rid: msg.rid, mid: msg.mid });
+    try {
+      msg.manager.sendAsyncMessage(message + (success ? ":OK" : ":NO"),
+                                   { data: data, rid: msg.rid, mid: msg.mid });
+    } catch (e) {
+      debug("sendAsyncMessage error : " + e);
+    }
     this._splicePendingRequest(msg);
   },
 
@@ -2471,7 +2485,11 @@ WifiWorker.prototype = {
       if ((i = this._domManagers.indexOf(msg.manager)) != -1) {
         this._domManagers.splice(i, 1);
       }
-
+      for (i = this._domRequest.length - 1; i >= 0; i--) {
+        if (this._domRequest[i].msg.manager === msg.manager) {
+          this._domRequest.splice(i, 1);
+        }
+      }
       return;
     }
 
@@ -2574,7 +2592,7 @@ WifiWorker.prototype = {
 
           if (count++ >= 3) {
             timer = null;
-            this.wantScanResults.splice(this.wantScanResults.indexOf(waitForScanCallback), 1);
+            self.wantScanResults.splice(self.wantScanResults.indexOf(waitForScanCallback), 1);
             callback.onfailure();
             return;
           }

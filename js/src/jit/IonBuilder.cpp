@@ -1657,18 +1657,10 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_THIS:
         return jsop_this();
 
-      case JSOP_CALLEE:
-      {
-        MDefinition *callee;
-        if (inliningDepth_ == 0) {
-            MInstruction *calleeIns = MCallee::New(alloc());
-            current->add(calleeIns);
-            callee = calleeIns;
-        } else {
-            callee = inlineCallInfo_->fun();
-        }
-        current->push(callee);
-        return true;
+      case JSOP_CALLEE: {
+         MDefinition *callee = getCallee();
+         current->push(callee);
+         return true;
       }
 
       case JSOP_GETPROP:
@@ -3032,7 +3024,7 @@ IonBuilder::filterTypesAtTest(MTest *test)
         return true;
 
     // There is no TypeSet that can get filtered.
-    if (!subject->resultTypeSet())
+    if (!subject->resultTypeSet() || subject->resultTypeSet()->unknown())
         return true;
 
     // Only do this optimization if the typeset does contains null or undefined.
@@ -4109,6 +4101,10 @@ IonBuilder::makeInliningDecision(JSFunction *target, CallInfo &callInfo)
     // TI calls ObjectStateChange to trigger invalidation of the caller.
     types::TypeObjectKey *targetType = types::TypeObjectKey::get(target);
     targetType->watchStateChangeForInlinedCall(constraints());
+
+    // We mustn't relazify functions that have been inlined, because there's
+    // no way to tell if it safe to do so.
+    script()->setHasBeenInlined();
 
     return InliningDecision_Inline;
 }
@@ -6687,7 +6683,7 @@ IonBuilder::getElemTryTypedObject(bool *emitted, MDefinition *obj, MDefinition *
 
     JS_ASSERT(TypeDescr::isSized(elemDescrs.kind()));
 
-    size_t elemSize;
+    int32_t elemSize;
     if (!elemDescrs.allHaveSameSize(&elemSize))
         return true;
 
@@ -6727,7 +6723,7 @@ MIRTypeForTypedArrayRead(ScalarTypeDescr::Type arrayType,
                          bool observedDouble);
 
 bool
-IonBuilder::checkTypedObjectIndexInBounds(size_t elemSize,
+IonBuilder::checkTypedObjectIndexInBounds(int32_t elemSize,
                                           MDefinition *obj,
                                           MDefinition *index,
                                           TypeDescrSet objDescrs,
@@ -6742,7 +6738,7 @@ IonBuilder::checkTypedObjectIndexInBounds(size_t elemSize,
     // Otherwise, load it from the appropriate reserved slot on the
     // typed object.  We know it's an int32, so we can convert from
     // Value to int32 using truncation.
-    size_t lenOfAll;
+    int32_t lenOfAll;
     MDefinition *length;
     if (objDescrs.hasKnownArrayLength(&lenOfAll)) {
         length = constantInt(lenOfAll);
@@ -6783,7 +6779,7 @@ IonBuilder::getElemTryScalarElemOfTypedObject(bool *emitted,
                                               MDefinition *index,
                                               TypeDescrSet objDescrs,
                                               TypeDescrSet elemDescrs,
-                                              size_t elemSize)
+                                              int32_t elemSize)
 {
     JS_ASSERT(objDescrs.allOfArrayKind());
 
@@ -6811,7 +6807,7 @@ IonBuilder::pushScalarLoadFromTypedObject(bool *emitted,
                                           ScalarTypeDescr::Type elemType,
                                           bool canBeNeutered)
 {
-    size_t size = ScalarTypeDescr::size(elemType);
+    int32_t size = ScalarTypeDescr::size(elemType);
     JS_ASSERT(size == ScalarTypeDescr::alignment(elemType));
 
     // Find location within the owner object.
@@ -6851,7 +6847,7 @@ IonBuilder::getElemTryComplexElemOfTypedObject(bool *emitted,
                                                MDefinition *index,
                                                TypeDescrSet objDescrs,
                                                TypeDescrSet elemDescrs,
-                                               size_t elemSize)
+                                               int32_t elemSize)
 {
     JS_ASSERT(objDescrs.allOfArrayKind());
 
@@ -7579,7 +7575,7 @@ IonBuilder::setElemTryTypedObject(bool *emitted, MDefinition *obj,
 
     JS_ASSERT(TypeDescr::isSized(elemTypeDescrs.kind()));
 
-    size_t elemSize;
+    int32_t elemSize;
     if (!elemTypeDescrs.allHaveSameSize(&elemSize))
         return true;
 
@@ -7615,7 +7611,7 @@ IonBuilder::setElemTryScalarElemOfTypedObject(bool *emitted,
                                               TypeDescrSet objTypeDescrs,
                                               MDefinition *value,
                                               TypeDescrSet elemTypeDescrs,
-                                              size_t elemSize)
+                                              int32_t elemSize)
 {
     // Must always be loading the same scalar type
     ScalarTypeDescr::Type elemType;
@@ -9534,6 +9530,14 @@ IonBuilder::jsop_this()
     if (!info().funMaybeLazy())
         return abort("JSOP_THIS outside of a JSFunction.");
 
+    if (info().funMaybeLazy()->isArrow()) {
+        // Arrow functions store their lexical |this| in an extended slot.
+        MLoadArrowThis *thisObj = MLoadArrowThis::New(alloc(), getCallee());
+        current->add(thisObj);
+        current->push(thisObj);
+        return true;
+    }
+
     if (script()->strict() || info().funMaybeLazy()->isSelfHostedBuiltin()) {
         // No need to wrap primitive |this| in strict mode or self-hosted code.
         current->pushSlot(info().thisSlot());
@@ -10133,21 +10137,15 @@ IonBuilder::lookupTypedObjectField(MDefinition *typedObj,
         return true;
 
     // Determine the type/offset of the field `name`, if any.
-    size_t offset;
+    int32_t offset;
     if (!objDescrs.fieldNamed(*this, NameToId(name), &offset,
-                                 fieldDescrs, fieldIndex))
+                              fieldDescrs, fieldIndex))
         return false;
     if (fieldDescrs->empty())
         return true;
 
-    // Field offset must be representable as signed integer.
-    if (offset >= size_t(INT_MAX)) {
-        *fieldDescrs = TypeDescrSet();
-        return true;
-    }
-
-    *fieldOffset = int32_t(offset);
-    JS_ASSERT(*fieldOffset >= 0);
+    JS_ASSERT(offset >= 0);
+    *fieldOffset = offset;
 
     return true;
 }
@@ -10235,4 +10233,16 @@ MConstant *
 IonBuilder::constantInt(int32_t i)
 {
     return constant(Int32Value(i));
+}
+
+MDefinition *
+IonBuilder::getCallee()
+{
+    if (inliningDepth_ == 0) {
+        MInstruction *callee = MCallee::New(alloc());
+        current->add(callee);
+        return callee;
+    }
+
+    return inlineCallInfo_->fun();
 }
